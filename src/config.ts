@@ -100,6 +100,12 @@ export interface Options {
   /** How long an untouched cursor is kept open before being reclaimed. Defaults to 60000. */
   cursorIdleTimeoutMs?: number;
   /**
+   * How many cursors may be open at once. An open cursor keeps one pooled connection for as long as
+   * it is iterated, so a cursor past this number is refused instead of starving every other
+   * statement. Defaults to half of `pool.connectionLimit`, and to at least 1.
+   */
+  maxOpenCursors?: number;
+  /**
    * Read timeout applied to every pooled connection, as `max_execution_time`, which MySQL applies to
    * `SELECT` statements only. Unset or 0 leaves reads unbounded.
    */
@@ -132,6 +138,7 @@ export interface ResolvedOptions {
   migrations: MigrationMode;
   cursorBatchSize: number;
   cursorIdleTimeoutMs: number;
+  maxOpenCursors: number;
   statementTimeoutMs?: number;
   changeRetentionMs: number;
   changeBatchSize: number;
@@ -160,6 +167,7 @@ const DEFAULT_MIGRATIONS: MigrationMode = "safe";
 const DEFAULT_SCHEMA_PREFIX = "";
 const DEFAULT_CURSOR_BATCH_SIZE = 100;
 const DEFAULT_CURSOR_IDLE_TIMEOUT_MS = 60_000;
+const DRIVER_CONNECTION_LIMIT = 10;
 const DEFAULT_CHANGE_RETENTION_MS = 300_000;
 const DEFAULT_CHANGE_BATCH_SIZE = 256;
 const DEFAULT_CHANGE_POLL_INTERVAL_MS = 100;
@@ -228,6 +236,12 @@ function ResolveUrl(mode: Mode, options?: Options): string {
   return DEFAULT_URL;
 }
 
+/** Half of the pool, so cursors cannot take every connection, and never less than one. */
+function DefaultMaxOpenCursors(pool: PoolSettings): number {
+  const limit = pool.connectionLimit ?? DRIVER_CONNECTION_LIMIT;
+  return Math.max(SMALLEST_POSITIVE_INTEGER, Math.floor(limit / 2));
+}
+
 function ResolveDialect(supplied?: DialectSetting): DialectSetting {
   if (supplied === undefined || supplied === AUTO_DIALECT) {
     return AUTO_DIALECT;
@@ -256,10 +270,11 @@ function ResolvePool(pool: PoolSettings = {}): PoolSettings {
 export function SetOptions(options?: Options): ResolvedOptions {
   const mode = ResolveMode(options);
   const url = ResolveUrl(mode, options);
+  const pool = ResolvePool(options?.pool);
   resolved = {
     mode,
     url,
-    pool: ResolvePool(options?.pool),
+    pool,
     dialect: ResolveDialect(options?.dialect),
     schemaPrefix: options?.schemaPrefix ?? DEFAULT_SCHEMA_PREFIX,
     migrations: options?.migrations ?? DEFAULT_MIGRATIONS,
@@ -272,6 +287,11 @@ export function SetOptions(options?: Options): ResolvedOptions {
       "cursorIdleTimeoutMs",
       options?.cursorIdleTimeoutMs,
       DEFAULT_CURSOR_IDLE_TIMEOUT_MS,
+    ),
+    maxOpenCursors: SafeInteger(
+      "maxOpenCursors",
+      options?.maxOpenCursors,
+      DefaultMaxOpenCursors(pool),
     ),
     statementTimeoutMs:
       options?.statementTimeoutMs === undefined

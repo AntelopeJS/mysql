@@ -6,6 +6,7 @@ import { GetOptions, type Options, SetOptions } from "../../config";
 const VALIDATED = [
   "cursorBatchSize",
   "cursorIdleTimeoutMs",
+  "maxOpenCursors",
   "changeRetentionMs",
   "changeBatchSize",
   "changePollIntervalMs",
@@ -16,6 +17,7 @@ type ValidatedOption = (typeof VALIDATED)[number];
 const DEFAULTS: Record<ValidatedOption, number> = {
   cursorBatchSize: 100,
   cursorIdleTimeoutMs: 60_000,
+  maxOpenCursors: 5,
   changeRetentionMs: 300_000,
   changeBatchSize: 256,
   changePollIntervalMs: 100,
@@ -84,6 +86,27 @@ describe("SetOptions on integer options", () => {
     expect(() => SetOptions(Untyped("statementTimeoutMs", "5"))).to.throw(
       /statementTimeoutMs/,
     );
+  });
+
+  it("defaults maxOpenCursors to half of pool.connectionLimit, and to one at the least", () => {
+    const defaults = [
+      [1, 1],
+      [2, 1],
+      [4, 2],
+      [7, 3],
+      [100, 50],
+    ] as const;
+    for (const [connectionLimit, expected] of defaults) {
+      WithOptions({ pool: { connectionLimit } }, () => {
+        expect(GetOptions().maxOpenCursors).to.equal(expected);
+      });
+    }
+  });
+
+  it("keeps a maxOpenCursors that is given, whatever the pool holds", () => {
+    WithOptions({ maxOpenCursors: 9, pool: { connectionLimit: 4 } }, () => {
+      expect(GetOptions().maxOpenCursors).to.equal(9);
+    });
   });
 
   it("leaves the configuration in place when it refuses", () => {
