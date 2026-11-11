@@ -20,7 +20,7 @@ interface Mapping {
   readonly constraint?: RegExp;
 }
 
-const NAMED_COLUMN = /column '((?:[^']|'')*)'/;
+const NAMED_COLUMN = /column '((?:[^']|'')*)'/i;
 const NAMED_FIELD = /^Field '((?:[^']|'')*)'/;
 const NAMED_KEY = /for key '(.*)'$/s;
 const NAMED_FOREIGN_KEY = /CONSTRAINT `((?:[^`]|``)*)` FOREIGN KEY/;

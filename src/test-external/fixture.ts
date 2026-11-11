@@ -18,9 +18,9 @@ function Series(n: number): string {
   return `WITH RECURSIVE seq (g) AS (SELECT 1 UNION ALL SELECT g + 1 FROM seq WHERE g < ${n})`;
 }
 
-/** A UUID-shaped text derived from a seed, as `md5(seed)::uuid` spells one. */
+/** A UUID-shaped text derived from a seed; MySQL 9 has no `MD5`, so it is cut from a SHA-256. */
 function Uuid(seed: string): string {
-  return `INSERT(INSERT(INSERT(INSERT(MD5(${seed}), 9, 0, '-'), 14, 0, '-'), 19, 0, '-'), 24, 0, '-')`;
+  return `INSERT(INSERT(INSERT(INSERT(LEFT(SHA2(${seed}, 256), 32), 9, 0, '-'), 14, 0, '-'), 19, 0, '-'), 24, 0, '-')`;
 }
 
 const ACCOUNTS = `CREATE TABLE sales.accounts (

@@ -5,7 +5,7 @@ import type {
   ExternalTypeSyntax,
   NativeFamily,
 } from "../external";
-import { type Sql, int, join, lit, sql } from "../../statement";
+import { type Sql, join, lit, sql } from "../../statement";
 import {
   BOOL,
   FLOAT,
@@ -15,7 +15,6 @@ import {
   TIMESTAMP,
 } from "../../implementations/database/types";
 import { CheckFor } from "./external-checks";
-import { json } from "./sql-json";
 
 const FAMILY_BY_TYPE = new Map<string, NativeFamily>([
   ["char", "text"],
@@ -58,6 +57,13 @@ const AsBoolean: Value = (column) => sql`(${column} <> 0)`;
 const DayAsInstant: Value = (column) => sql`CAST(${column} AS DATETIME(6))`;
 const AsDay: Value = (value) => sql`CAST(${value} AS DATE)`;
 
+/**
+ * A number written into an exact column as an exact value: a guarded assignment's `CASE` takes the
+ * type of its widest branch, and a `DOUBLE` branch would round the `BIGINT` it keeps.
+ */
+const AsWhole: Value = (value) => sql`CAST(${value} AS DECIMAL(65,0))`;
+const AsExact: Value = (value) => sql`CAST(${value} AS DECIMAL(65,30))`;
+
 const Unconverted: Conversion = (other) => other;
 
 const INTEGER_PATTERN = sql`'^[[:space:]]*[+-]?[0-9]{1,64}[[:space:]]*$'`;
@@ -67,25 +73,37 @@ const INSTANT_PATTERN = sql`'^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])(
 /**
  * Text read as a number where it spells one, and NULL where it does not, so `_id` `42abc` matches
  * nothing instead of failing a statement that writes: strict mode turns a bad cast into an error
- * there. `DECIMAL(65,0)` holds every integer type exactly, unsigned `BIGINT` included.
+ * there. The guard sits inside the cast, since the server folds a cast of a bound value before it
+ * evaluates a `CASE` around it. `DECIMAL(65,0)` holds every integer type exactly, unsigned
+ * `BIGINT` included.
  */
 const IntegerText: Conversion = (other) =>
-  sql`(CASE WHEN ${other} REGEXP ${INTEGER_PATTERN} THEN CAST(${other} AS DECIMAL(65,0)) END)`;
+  sql`CAST(IF(${other} REGEXP ${INTEGER_PATTERN}, ${other}, NULL) AS DECIMAL(65,0))`;
 
 const DecimalText: Conversion = (other) =>
-  sql`(CASE WHEN ${other} REGEXP ${DECIMAL_PATTERN} THEN CAST(${other} AS DECIMAL(65,30)) END)`;
+  sql`CAST(IF(${other} REGEXP ${DECIMAL_PATTERN}, ${other}, NULL) AS DECIMAL(65,30))`;
 
 /**
  * Text read as an instant where it spells a date, or a date and a time, that exists: the day is
- * checked against its month's last day inside nested `CASE`s, so February 30 is NULL rather than
- * an error, and the cast never sees a text the pattern refused.
+ * checked against its month's last day inside nested `IF`s, so February 30 is NULL rather than an
+ * error, and the cast never sees a text the pattern refused.
  */
 const InstantText: Conversion = (other) => {
   const day = sql`CAST(SUBSTRING(${other}, 9, 2) AS UNSIGNED)`;
   const lastDay = sql`DAYOFMONTH(LAST_DAY(CONCAT(SUBSTRING(${other}, 1, 8), '01')))`;
-  const valid = sql`(CASE WHEN ${day} <= ${lastDay} THEN CAST(${other} AS DATETIME(6)) END)`;
-  return sql`(CASE WHEN ${other} REGEXP ${INSTANT_PATTERN} THEN ${valid} END)`;
+  const valid = sql`IF(${day} <= ${lastDay}, ${other}, NULL)`;
+  return sql`CAST(IF(${other} REGEXP ${INSTANT_PATTERN}, ${valid}, NULL) AS DATETIME(6))`;
 };
+
+/**
+ * A number compared with an integer column for equality, kept only where it is whole: with an
+ * index on the column, the server rounds a bound fraction to the column's type and answers the
+ * rows of the rounded value. An ordering keeps its meaning without this.
+ */
+const IntegerNumber: Conversion = (other, operator) =>
+  operator === "="
+    ? sql`IF(${other} = TRUNCATE(${other}, 0), ${other}, NULL)`
+    : other;
 
 /** `FLOAT` equality: the number as the single-precision value the column stores, since 0.1 is not. */
 const FloatConversion: Conversion = (other, operator) =>
@@ -132,19 +150,19 @@ const TEXT_READINGS: Partial<Record<NativeFamily, Reading>> = {
 };
 
 const FLOAT_READINGS: Partial<Record<NativeFamily, Reading>> = {
-  bool: { value: AsDouble, conversion: Unconverted, writing: Bare },
-  int: { value: AsDouble, conversion: Unconverted, writing: Bare },
+  bool: { value: AsDouble, conversion: IntegerNumber, writing: AsWhole },
+  int: { value: AsDouble, conversion: IntegerNumber, writing: AsWhole },
   bigint: {
     value: AsDouble,
     lossy: LOSSY_BIGINT,
-    conversion: Unconverted,
-    writing: Bare,
+    conversion: IntegerNumber,
+    writing: AsWhole,
   },
   decimal: {
     value: AsDouble,
     lossy: LOSSY_DECIMAL,
     conversion: Unconverted,
-    writing: Bare,
+    writing: AsExact,
   },
   float: {
     value: AsDouble,
@@ -296,21 +314,22 @@ function AsRead(kind: SqlType, value: Sql): Sql {
     : value;
 }
 
-/** The array an `_id` spells, where it is valid JSON; the cast never sees text that is not. */
-function IdDocument(id: Sql): Sql {
-  return sql`(CASE WHEN JSON_VALID(${id}) THEN CAST(${id} AS JSON) END)`;
-}
+/** One JSON string inside an array, its escaped characters kept as written. */
+const JSON_STRING = String.raw` *"((?:[^"\\]|\\.)*)" *`;
 
 /**
- * Each part of a composite `_id` as text, from an array of exactly the key's width. The `CASE`s
- * are nested rather than joined by `AND`, whose operands the server may evaluate in any order.
+ * Each part of a composite `_id` as text, from the text of a JSON array of exactly the key's width
+ * of strings, matched with a pattern rather than parsed: the server raises on JSON text it cannot
+ * parse as soon as the statement is prepared, whatever guards it.
  */
 function IdParts(id: Sql, width: number): Sql[] {
-  const document = IdDocument(id);
-  const sized = sql`(${json.is(document, ["array"])} AND JSON_LENGTH(${document}) = ${int(width)})`;
+  const strings = Array.from({ length: width }, () => JSON_STRING).join(",");
+  const pattern = lit(`^\\[${strings}\\]$`);
   return Array.from({ length: width }, (_, position) => {
-    const element = sql`JSON_EXTRACT(${document}, ${lit(`$[${position}]`)})`;
-    return sql`(CASE WHEN ${sized} THEN ${json.as(element, "text")} END)`;
+    const part = sql`REGEXP_REPLACE(${id}, ${pattern}, ${lit(`$${position + 1}`)})`;
+    const quotes = sql`REPLACE(${part}, ${lit('\\"')}, ${lit('"')})`;
+    const unescaped = sql`REPLACE(${quotes}, ${lit("\\\\")}, ${lit("\\")})`;
+    return sql`IF(${id} REGEXP ${pattern}, ${unescaped}, NULL)`;
   });
 }
 

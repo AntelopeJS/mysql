@@ -133,9 +133,19 @@ function Distinguishable(
 /**
  * Compares two values for inequality, keeping a row whose operand is null or absent: `<>` is NULL
  * whenever either side is, so the negated null-safe equality is the total spelling.
+ *
+ * Against a converted operand it is the complement of equality instead: the conversion answers
+ * NULL for a value the column's type cannot hold, and a null-safe test would then drop every row
+ * whose column is NULL too.
  */
 const Distinct: Equality = (dialect, value, other) => {
   const pair = Distinguishable(dialect, value, other);
+  if (pair.converted) {
+    return {
+      sql: sql`((${pair.left.sql} = ${pair.right.sql}) IS NOT TRUE)`,
+      type: BOOL,
+    };
+  }
   const same = dialect.sql.rows.nullSafeEqual(pair.left.sql, pair.right.sql);
   return { sql: sql`(NOT ${same})`, type: BOOL };
 };

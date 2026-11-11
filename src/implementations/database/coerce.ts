@@ -17,6 +17,8 @@ export interface CompiledPair {
   left: Compiled;
   right: Compiled;
   type: SqlType;
+  /** One side is a native column and the other was converted to its type, NULL where it cannot be. */
+  converted?: boolean;
 }
 
 /**
@@ -200,6 +202,7 @@ function NativePair(
       left: NativeSide(left.native, type),
       right: { sql: left.native.bind(pair.right.sql, operator), type },
       type,
+      converted: true,
     };
   }
   if (right.native && type.kind === right.type.kind) {
@@ -208,6 +211,7 @@ function NativePair(
       left: { sql: right.native.bind(pair.left.sql, mirrored), type },
       right: NativeSide(right.native, type),
       type,
+      converted: true,
     };
   }
   return pair;

@@ -131,23 +131,27 @@ function JoinedKey(
   return join(matches, AND);
 }
 
-/** The rows a write changes, as the statement joins them: the hint and the `FROM` it follows. */
-interface TargetedJoin {
+/**
+ * The rows a write changes: the read as a derived table the server materializes first, and the
+ * condition that matches a row of the written table to it.
+ */
+interface TargetedRows {
   readonly hint: Sql;
-  readonly from: Sql;
+  readonly table: Sql;
+  readonly derived: Sql;
+  readonly on: Sql;
 }
 
 /**
- * The rows the read pipeline selected, joined by their key as a derived table the server
- * materializes first. The read projects the bare key column where it can, so the client's key
- * index serves the join; a wide key is joined part by part off its `_id`, and a read past a wrap
- * that hid the columns compares `_id` itself.
+ * The rows the read pipeline selected, matched by their key. The read projects the bare key
+ * column where it can, so the client's key index serves the match; a wide key is matched part by
+ * part off its `_id`, and a read past a wrap that hid the columns compares `_id` itself.
  */
 function TargetedRows(
   target: WriteTarget,
   key: ColumnDescriptor[],
   context: DecodingContext,
-): TargetedJoin {
+): TargetedRows {
   const dialect = context.dialect;
   const id = target.relation.source.field(ID_COLUMN);
   const native = id.native;
@@ -157,14 +161,48 @@ function TargetedRows(
     single ? { ...id, sql: native.sql } : id,
   );
   const value = QualifiedColumn(SOURCE_ALIAS, OUTPUT_COLUMN);
-  const derived = sql`(${Render(projected)}) AS ${ident(SOURCE_ALIAS)}`;
-  const on = single
-    ? sql`${WriteColumn(key[0].column)} = ${value}`
-    : JoinedKey(dialect, key, value, native !== undefined);
   return {
     hint: dialect.sql.rows.materialize(SOURCE_ALIAS),
-    from: sql`${AliasedTable(ExternalOf(target))} JOIN ${derived} ON ${on}`,
+    table: AliasedTable(ExternalOf(target)),
+    derived: sql`(${Render(projected)}) AS ${ident(SOURCE_ALIAS)}`,
+    on: single
+      ? sql`${WriteColumn(key[0].column)} = ${value}`
+      : JoinedKey(dialect, key, value, native !== undefined),
   };
+}
+
+/** The written table joined to the rows the read selected, as a multiple-table statement names it. */
+function Joined(rows: TargetedRows): Sql {
+  return sql`${rows.table} JOIN ${rows.derived} ON ${rows.on}`;
+}
+
+/**
+ * Whether an update resets a column to a `DEFAULT` the server computes, such as
+ * `CURRENT_TIMESTAMP`: a multiple-table `UPDATE` sets such a column to its type's zero instead, so
+ * that update names the rows with a subquery rather than a join.
+ */
+function ResetsComputedDefault(assignments: ExternalAssignment[]): boolean {
+  return assignments.some(
+    (assignment) =>
+      assignment.toDefault === true &&
+      assignment.descriptor.defaultExpression !== null,
+  );
+}
+
+/** The `UPDATE` of the targeted rows, by join where it can be and by subquery where it cannot. */
+function UpdateOf(
+  rows: TargetedRows,
+  sets: Sql,
+  conditions: Sql[],
+  computedDefault: boolean,
+): Sql {
+  if (!computedDefault) {
+    const where =
+      conditions.length === 0 ? sql`` : sql` WHERE ${join(conditions, AND)}`;
+    return sql`UPDATE ${rows.hint} ${Joined(rows)} SET ${sets}${where}`;
+  }
+  const targeted = sql`EXISTS (SELECT 1 FROM ${rows.derived} WHERE ${rows.on})`;
+  return sql`UPDATE ${rows.hint} ${rows.table} SET ${sets} WHERE ${join([targeted, ...conditions], AND)}`;
 }
 
 function DocumentOf(stage: QueryStage): DocumentView {
@@ -197,16 +235,18 @@ function ChangeStatement(
       assignments.filter((assignment) => !assignment.toDefault),
     ),
   ];
-  const rows = TargetedRows(target, key, context);
   const sets = join(
     assignments.map((assignment) => GuardedAssignment(dialect, assignment)),
     COMMA,
   );
-  const where =
-    conditions.length === 0 ? sql`` : sql` WHERE ${join(conditions, AND)}`;
   return {
     kind: "count",
-    statement: sql`UPDATE ${rows.hint} ${rows.from} SET ${sets}${where}`,
+    statement: UpdateOf(
+      TargetedRows(target, key, context),
+      sets,
+      conditions,
+      ResetsComputedDefault(assignments),
+    ),
   };
 }
 
@@ -228,7 +268,7 @@ const ExternalDelete: ExternalWriteCompiler = (target, _stage, context) => {
   const rows = TargetedRows(target, RequireKey(target), context);
   return {
     kind: "count",
-    statement: sql`DELETE ${rows.hint} ${ident(WRITE_ALIAS)} FROM ${rows.from}`,
+    statement: sql`DELETE ${rows.hint} ${ident(WRITE_ALIAS)} FROM ${Joined(rows)}`,
   };
 };
 
@@ -241,7 +281,7 @@ const EXTERNAL_WRITES = new Map<string, ExternalWriteCompiler>([
 ]);
 
 /** Compiles a terminal write to an external relation; `atomicMutation` is refused before this. */
-function CompileExternalWrite(
+export function CompileExternalWrite(
   target: WriteTarget,
   stage: QueryStage,
   context: DecodingContext,
