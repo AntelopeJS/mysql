@@ -326,6 +326,9 @@ function InstanceOf(stages: QueryStage[]): FeedTarget["instance"] {
  *
  * A change committed before this point is not delivered. One whose transaction is still open is
  * numbered once it commits, so it is delivered: the at-least-once edge, in the right direction.
+ * Numbering what committed is what an open waits on, so it takes longer the more rows no feed
+ * and no reaper pass has numbered yet. A feed closed while it opened never subscribes: the clock
+ * would otherwise tick for it until the pool ends.
  */
 async function Open(state: FeedState, stages: QueryStage[]): Promise<void> {
   const schemaId = RootId(stages, 0);
