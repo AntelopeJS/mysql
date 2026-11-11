@@ -6,6 +6,7 @@ import type {
   Walk,
   WalkKind,
 } from "../sql-types";
+import type { KeyColumn } from "../../implementations/database/paths";
 import { type Sql, ident, int, join, lit, param, sql } from "../../statement";
 import { IsoText, ParseInstant } from "./sql-time";
 
@@ -61,6 +62,18 @@ const READS: Record<ScalarKind, (value: Sql) => Sql> = {
     sql`(CASE WHEN ${Is(value, ["boolean"])} THEN (${value} = ${JSON_TRUE}) END)`,
   timestamp: (value) =>
     sql`(CASE WHEN ${Is(value, ["string"])} THEN ${ParseInstant(Unquoted(value))} END)`,
+};
+
+/**
+ * How a key column's source value reads as what the column holds: a declared string column's own
+ * text, a JSON string, number or boolean by kind, and any other JSON value as its canonical text.
+ */
+const KEY_READS: Record<KeyColumn["read"], (value: Sql) => Sql> = {
+  text: (value) => value,
+  string: READS.text,
+  double: READS.float,
+  bool: READS.bool,
+  json: (value) => sql`CAST(${value} AS CHAR)`,
 };
 
 /**
@@ -242,6 +255,7 @@ export const json: JsonSyntax = {
     sql`JSON_EXTRACT(${document}, ${DynamicPath(key)})`,
   is: Is,
   as: (value, kind) => READS[kind](value),
+  key: (read, value) => KEY_READS[read](value),
   of: (value, kind) => WRITINGS[kind](value),
   parse: (text) => sql`CAST(${text} AS JSON)`,
   text: (value) => sql`CAST(${value} AS CHAR)`,

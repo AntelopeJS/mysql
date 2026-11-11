@@ -1,4 +1,5 @@
 import type { Sql } from "../statement";
+import type { KeyColumn } from "../implementations/database/paths";
 import type { SqlType } from "../implementations/database/types";
 
 /** The kinds of JSON value, in one vocabulary whatever names the engine gives them. */
@@ -72,6 +73,12 @@ export interface JsonSyntax {
   is(value: Sql, kinds: readonly JsonKind[]): Sql;
   /** A value read as a scalar of `kind`; SQL NULL where it holds another kind. */
   as(value: Sql, kind: ScalarKind): Sql;
+  /**
+   * What a key column of `read` holds for the value read out of its source, before it is cut to its
+   * width. The column's generation expression and the compiler's read of the same value are this
+   * member, so an index serves what a statement reads.
+   */
+  key(read: KeyColumn["read"], value: Sql): Sql;
   /** A scalar of `kind` as a JSON value. */
   of(value: Sql, kind: ScalarKind): Sql;
   /** JSON text, parsed. */

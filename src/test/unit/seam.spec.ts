@@ -40,6 +40,7 @@ const MASKED_JSON: JsonSyntax = {
   dynamicMember: (document, key) => Marked(document, key),
   is: (value) => Marked(value),
   as: (value) => Marked(value),
+  key: (_read, value) => Marked(value),
   of: (value) => Marked(value),
   parse: (text) => Marked(text),
   text: (value) => Marked(value),

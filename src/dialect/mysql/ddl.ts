@@ -24,6 +24,8 @@ import {
 } from "../../implementations/database/utils";
 import { session } from "./session";
 import { sqlCore } from "./sql-core";
+import { json } from "./sql-json";
+import { scalar } from "./sql-scalar";
 
 /**
  * The widest element a multi-valued index holds, in characters: the largest `CHAR(N) ARRAY` the
@@ -49,12 +51,6 @@ const ROW_KEY = sql`${ident(INSTANCE_COLUMN)}, ${ident(ID_COLUMN)}`;
 
 function JsonPath(path: readonly string[]): Sql {
   return lit(`$${path.map((key) => `.${JSON.stringify(key)}`).join("")}`);
-}
-
-function Extract(source: Sql, path: readonly string[]): Sql {
-  return path.length === 0
-    ? source
-    : sql`JSON_EXTRACT(${source}, ${JsonPath(path)})`;
 }
 
 /**
@@ -111,15 +107,6 @@ const REPRESENTATIONS: Record<SqlType["kind"], (value: Sql) => Sql> = {
   array: DocumentOf,
 };
 
-type TextKeyColumn = Extract<KeyColumn, { fit: unknown }>;
-
-/** How a text key column reads its source, before it is cut to its width. */
-const TEXT_READS: Record<TextKeyColumn["read"], (value: Sql) => Sql> = {
-  text: (value) => value,
-  string: StringOf,
-  json: (value) => sql`CAST(${value} AS CHAR)`,
-};
-
 function KeyType(key: KeyColumn): Sql {
   switch (key.read) {
     case "double":
@@ -131,21 +118,19 @@ function KeyType(key: KeyColumn): Sql {
   }
 }
 
-/** What a key column holds, as the generation expression the server evaluates per row. */
+/**
+ * What a key column holds, as the generation expression the server evaluates per row. Its read is
+ * the members the compiler reads the same value through, so the two cannot drift apart.
+ */
 function KeyExpression(key: KeyColumn): Sql {
-  const value = Extract(ident(key.source), key.path);
-  switch (key.read) {
-    case "double":
-      return NumberOf(value);
-    case "bool":
-      return BooleanOf(value);
-    default: {
-      const text = TEXT_READS[key.read](value);
-      return key.fit.kind === "prefix"
-        ? sql`LEFT(${text}, ${int(key.fit.width)})`
-        : text;
-    }
-  }
+  const source = key.path.reduce(
+    (document, segment) => json.member(document, segment),
+    ident(key.source),
+  );
+  const value = json.key(key.read, source);
+  return "fit" in key && key.fit.kind === "prefix"
+    ? scalar.left(value, key.fit.width)
+    : value;
 }
 
 function KeyColumnDefinition(key: KeyColumn): Sql {

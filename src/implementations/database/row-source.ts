@@ -1,5 +1,4 @@
 import type { Dialect } from "../../dialect";
-import type { ScalarKind } from "../../dialect/sql-types";
 import { type Sql, sql } from "../../statement";
 import { Cast, WithDefault } from "./coerce";
 import { Defaulted } from "./readings";
@@ -96,15 +95,16 @@ export interface IndexedValue {
   readonly order: Sql;
 }
 
-/** The scalar a key column's read of a JSON value is, and the type that read has. */
-const SCALAR_KEY_READS = new Map<
-  KeyColumn["read"],
-  { readonly kind: ScalarKind; readonly type: SqlType }
->([
-  ["string", { kind: "text", type: TEXT }],
-  ["double", { kind: "float", type: FLOAT }],
-  ["bool", { kind: "bool", type: BOOL }],
-]);
+/**
+ * The type a key column's read has. A `json` key holds the canonical text of its value, which the
+ * compiler reads as the value itself.
+ */
+const KEY_READ_TYPES: Record<Exclude<KeyColumn["read"], "json">, SqlType> = {
+  text: TEXT,
+  string: TEXT,
+  double: FLOAT,
+  bool: BOOL,
+};
 
 /**
  * A row of a table the adapter owns: declared fields are their own typed columns, anything else a
@@ -150,13 +150,12 @@ export class ColumnRowSource implements RowSource {
   }
 
   private keyRead(read: KeyColumn["read"], value: Sql): Compiled {
-    const scalar = SCALAR_KEY_READS.get(read);
-    if (!scalar) {
-      return { sql: value, type: read === "text" ? TEXT : OPAQUE };
+    if (read === "json") {
+      return { sql: value, type: OPAQUE };
     }
     return {
-      sql: this.dialect.sql.json.as(value, scalar.kind),
-      type: scalar.type,
+      sql: this.dialect.sql.json.key(read, value),
+      type: KEY_READ_TYPES[read],
     };
   }
 
