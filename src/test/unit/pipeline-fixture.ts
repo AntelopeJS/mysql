@@ -50,7 +50,7 @@ interface Meta {
 
 /**
  * A person as a caller declares one: its own row type, which spells keys the schema leaves to the
- * overflow column, and the index names a selection reads by.
+ * overflow column, the index names a selection reads by, and a dotted path a lookup reads by.
  */
 export interface Person {
   _id: string;
@@ -63,6 +63,7 @@ export interface Person {
   rev: string;
   byName: string;
   _internal: { owner: string };
+  "meta.title": string;
 }
 
 interface Product {
@@ -75,11 +76,17 @@ interface Profile {
   skills: string[];
 }
 
+/** A row whose declared field takes the name a numbered subselect would give its row numbers. */
+interface Entry {
+  _row: number;
+}
+
 interface Directory {
   people: Person;
   products: Product;
   logs: Record<string, number>;
   profiles: Profile;
+  entries: Entry;
 }
 
 /**
@@ -109,6 +116,7 @@ const DIRECTORY: SchemaDefinition = {
     fields: { name: "string", skills: "string[]" },
     indexes: { skills: { fields: ["skills"], multi: true } },
   },
+  entries: { fields: { _row: "number" }, indexes: {} },
 };
 
 const MODEL = ParseSchema(SCHEMA_ID, DIRECTORY);
@@ -184,6 +192,11 @@ export function LogsRoot() {
 /** The table declaring a field whose type is a list, with a `multi` index over it. */
 export function ProfilesRoot() {
   return Table("profiles", undefined);
+}
+
+/** The table declaring a field named `_row`. */
+export function EntriesRoot() {
+  return Table("entries", undefined);
 }
 
 /** A read compiled as `RunQuery` compiles one: root, fold, render. */

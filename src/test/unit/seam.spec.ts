@@ -115,6 +115,7 @@ const MASKED_ROWS: RowSyntax = {
   nullSafeEqual: (left, right) => Marked(left, right),
   limit: () => Marked(),
   materialize: () => Marked(),
+  lookup: (subselect) => ({ join: Marked(subselect), value: Marked() }),
 };
 
 const MASKED_SYNTAX: CompilerSyntax = {
@@ -138,6 +139,9 @@ const MASKED: Dialect = {
  * does not have, `||`, which MySQL reads as OR, and `LATERAL`, which MariaDB does not have.
  */
 const FORBIDDEN = ["->", "->>", "||", "LATERAL"];
+
+/** What the MySQL dialect never spells either; its lookup is a lateral, which MariaDB's replaces. */
+const MYSQL_FORBIDDEN = FORBIDDEN.filter((token) => token !== "LATERAL");
 
 /** One pipeline of each shape the compiler emits, reads and writes alike. */
 const READS: [string, () => StagedObject][] = [
@@ -276,6 +280,63 @@ const READS: [string, () => StagedObject][] = [
         has: doc.key("meta").hasfields("title", "owner"),
       })),
   ],
+  [
+    "an inner join",
+    () =>
+      Root().joinInner(
+        Other(),
+        (left, right) => left.key("name").eq(right.key("name")),
+        (left, right) => ({ person: left, product: right }),
+      ),
+  ],
+  [
+    "a left join",
+    () =>
+      Root().join(
+        Other(),
+        (left, right) => left.key("name").eq(right.key("name")),
+        (left, right) => ({ person: left, product: right }),
+      ),
+  ],
+  ["a lookup of one row", () => Other().lookup(Root(), "name", "name")],
+  [
+    "a lookup by a nested path",
+    () => Other().lookup(Root(), "name", "meta.title"),
+  ],
+  [
+    "a lookup against a plucked stream",
+    () => Other().lookup(Root().pluck("name"), "name", "name"),
+  ],
+  [
+    "a lookup of a list",
+    () => ProfilesRoot().lookup(Other(), "skills", "name"),
+  ],
+  [
+    "a group with sub-stream aggregates",
+    () =>
+      Root().group("name", (stream, name) => ({
+        name,
+        count: stream.count(),
+        total: stream.sum("age"),
+        mean: stream.map((row) => row.key("age")).avg(),
+        first: stream.min("joined"),
+        last: stream.max("name"),
+        ages: stream.distinct("age"),
+      })),
+  ],
+  [
+    "a group on a compound index",
+    () => Root().group("byAgeActive", (stream, group) => ({ group })),
+  ],
+  ["a sum", () => Root().sum("age")],
+  ["an average", () => Root().avg("age")],
+  ["a minimum", () => Root().min("isActive")],
+  ["a maximum", () => Root().max("rev")],
+  ["a distinct", () => Root().orderBy("age").distinct("name")],
+  [
+    "a slice bounded by another query's count",
+    () => Root().orderBy("age").slice(1, Other().count()),
+  ],
 ];
 
 const WRITES: [string, () => StagedObject][] = [
@@ -370,6 +431,7 @@ describe("The dialect seam", () => {
       .map(([, statement]) => statement.sql)
       .join("\n");
     expect(real).to.match(/JSON_EXTRACT|JSON_MERGE_PRESERVE|CAST\(/);
+    expect(real).to.include("LEFT JOIN LATERAL (");
     expect(masked).to.not.match(/JSON_|CAST\(|DATE_FORMAT|NO_MERGE|<=>|LIMIT/);
   });
 
@@ -406,7 +468,7 @@ describe("The dialect seam", () => {
 
   it("compiles every pipeline of the corpus with the MySQL dialect too", () => {
     for (const [name, statement] of CompiledCorpus(DIALECTS.mysql)) {
-      for (const token of FORBIDDEN) {
+      for (const token of MYSQL_FORBIDDEN) {
         expect(statement.sql, `${name} spells '${token}'`).to.not.include(
           token,
         );

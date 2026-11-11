@@ -140,12 +140,6 @@ describe("A read's order and bounds", () => {
     expect(Compile(Root().slice(-2, 2.7)).args).to.deep.equal(["", 2, 0]);
   });
 
-  it("refuses a row bound computed by the statement, naming the stage", () => {
-    expect(() => Compile(Root().slice(ValueProxy.constant(1)))).to.throw(
-      /'slice' takes a constant number/,
-    );
-  });
-
   it("answers nth as one row", () => {
     const relation = CompiledRelation(Root().orderBy("age").nth(2));
     expect(relation.single).to.equal(true);
@@ -225,11 +219,5 @@ describe("A reshaping stage", () => {
       "COALESCE(CAST(CONCAT('[', GROUP_CONCAT(COALESCE(CAST(",
     );
     expect(bound.sql).to.include("JSON_ARRAY())");
-  });
-
-  it("names a stage whose family is not implemented yet rather than calling it unknown", () => {
-    expect(() => Compile(Root().sum("age"))).to.throw(
-      /'sum' stage \(aggregate family\) is not implemented/,
-    );
   });
 });

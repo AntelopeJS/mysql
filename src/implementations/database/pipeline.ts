@@ -6,6 +6,8 @@ import type { Relation } from "./relation";
 import { ROW_STAGES } from "./stages-rows";
 import type { DecodingContext } from "./context";
 import { AGGREGATE_STAGES } from "./stages-aggregate";
+import { GROUP_STAGES } from "./stages-group";
+import { JOIN_STAGES } from "./stages-join";
 import { SELECTION_STAGES } from "./stages-selection";
 import { PROJECTION_STAGES } from "./stages-projection";
 
@@ -31,22 +33,9 @@ const PIPELINE_STAGES = {
   ...SELECTION_STAGES,
   ...PROJECTION_STAGES,
   ...AGGREGATE_STAGES,
+  ...GROUP_STAGES,
+  ...JOIN_STAGES,
 } satisfies PipelineStageMap;
-
-const RELATIONAL = "relational";
-const AGGREGATE = "aggregate";
-
-/** The pipeline stages whose family is not implemented yet, by the family that will own them. */
-const DEFERRED_STAGES: ReadonlyMap<string, string> = new Map([
-  ["join", RELATIONAL],
-  ["lookup", RELATIONAL],
-  ["group", RELATIONAL],
-  ["sum", AGGREGATE],
-  ["avg", AGGREGATE],
-  ["min", AGGREGATE],
-  ["max", AGGREGATE],
-  ["distinct", AGGREGATE],
-]);
 
 /** The stage that opens a change feed, which only an iterated query's last stage may be. */
 export const CHANGES_STAGE = "changes";
@@ -67,12 +56,6 @@ function StageError(name: string): Error {
   const refusal = REJECTED_STAGES.get(name);
   if (refusal !== undefined) {
     return new Error(refusal);
-  }
-  const family = DEFERRED_STAGES.get(name);
-  if (family !== undefined) {
-    return new Error(
-      `The '${name}' stage (${family} family) is not implemented by @antelopejs/mysql yet`,
-    );
   }
   return new Error(`Unsupported query stage '${name}'`);
 }
