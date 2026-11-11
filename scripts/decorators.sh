@@ -2,10 +2,19 @@
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 source=$(cd "$root" && node -p 'path.dirname(require.resolve("@antelopejs/interface-database-decorators/package.json"))')
+dependencies=$(dirname "$(dirname "$source")")
 wrapper=$(mktemp -d "${TMPDIR:-/tmp}/ajs-mysql-decorators.XXXXXX")
 trap 'rm -rf "$wrapper"' EXIT
 cp -R "$source/dist" "$wrapper/dist"
-ln -s "$root/node_modules" "$wrapper/node_modules"
+mkdir -p "$wrapper/node_modules/@antelopejs"
+for entry in "$dependencies"/* "$dependencies"/@antelopejs/*; do
+  name=${entry#"$dependencies"/}
+  case $name in
+    @antelopejs | @antelopejs/interface-database-decorators) ;;
+    *) ln -s "$entry" "$wrapper/node_modules/$name" ;;
+  esac
+done
+ln -s "$root/node_modules/chai" "$wrapper/node_modules/chai"
 node -e '
 const fs = require("node:fs");
 const [manifest, config, target] = process.argv.slice(1);
