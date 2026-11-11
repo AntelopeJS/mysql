@@ -1,6 +1,6 @@
 import { ImplementInterface } from "@antelopejs/interface-core";
 
-import type { Options } from "./config";
+import { IsExternal, type Options } from "./config";
 import { Connect, Disconnect } from "./connection";
 
 export type {
@@ -14,6 +14,9 @@ export type {
 
 export async function construct(options?: Options) {
   await Connect(options);
+  if (!IsExternal()) {
+    (await import("./implementations/database/reaper")).StartReaper();
+  }
 
   void ImplementInterface(
     await import("@antelopejs/interface-database/query"),
