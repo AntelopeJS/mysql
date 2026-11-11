@@ -109,8 +109,9 @@ async function SuiteDatabase(url: string): Promise<string> {
 async function ClientDatabase(url: string): Promise<string> {
   await Run(url, [
     `DROP DATABASE IF EXISTS ${CLIENT_DATABASE}`,
+    `DROP USER IF EXISTS '${CLIENT_USER}'@'%'`,
     `CREATE DATABASE ${CLIENT_DATABASE}`,
-    `CREATE USER IF NOT EXISTS '${CLIENT_USER}'@'%' IDENTIFIED BY '${READER_PASSWORD}'`,
+    `CREATE USER '${CLIENT_USER}'@'%' IDENTIFIED BY '${READER_PASSWORD}'`,
     ...FIXTURE,
     ...ReaderGrants(CLIENT_USER),
     ...WriterGrants(CLIENT_USER),

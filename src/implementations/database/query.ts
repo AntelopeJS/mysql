@@ -2,6 +2,7 @@ import type { QueryStage } from "@antelopejs/interface-database/common";
 import type { AtomicMutationOutcome } from "@antelopejs/interface-database";
 import { ValidateAtomicMutationTable } from "@antelopejs/interface-database/atomic";
 
+import { IsExternal } from "../../config";
 import { GetDialect, Read, type Row, Write } from "../../connection";
 import { DecodingContext } from "./context";
 import { CompileSubquery } from "./subquery";
@@ -34,6 +35,12 @@ import {
   SCHEMA_STAGE,
 } from "./selection";
 import { IsString } from "./guards";
+import {
+  ExternalFeedRefusal,
+  ExternalInstanceRefusal,
+  ExternalWriteRefusal,
+} from "./external-refusals";
+import { RunExternalWrite } from "./external-writes";
 
 type WriteAnswer = string[] | number | AtomicMutationOutcome;
 
@@ -67,6 +74,22 @@ const LIFECYCLE_HANDLERS = new Map<string, LifecycleHandler>([
   ["listInstances", ListInstances],
 ]);
 
+/**
+ * An external instance's relations have no instances: creating or destroying one is refused, and
+ * the list of them is empty.
+ */
+const EXTERNAL_LIFECYCLE = new Map<string, LifecycleHandler>([
+  [
+    "createInstance",
+    (_schemaId, stage) => Promise.reject(ExternalInstanceRefusal(stage.stage)),
+  ],
+  [
+    "destroyInstance",
+    (_schemaId, stage) => Promise.reject(ExternalInstanceRefusal(stage.stage)),
+  ],
+  ["listInstances", () => Promise.resolve([])],
+]);
+
 /** Dispatches a schema-rooted instance lifecycle query, after the schema's readiness gate. */
 function Lifecycle(stages: QueryStage[]): Promise<LifecycleAnswer> | undefined {
   if (
@@ -76,7 +99,9 @@ function Lifecycle(stages: QueryStage[]): Promise<LifecycleAnswer> | undefined {
     return undefined;
   }
   const stage = stages[1];
-  const handler = LIFECYCLE_HANDLERS.get(stage.stage);
+  const handler = (IsExternal() ? EXTERNAL_LIFECYCLE : LIFECYCLE_HANDLERS).get(
+    stage.stage,
+  );
   if (!handler) {
     return undefined;
   }
@@ -176,6 +201,9 @@ async function RunWrite(
   stage: QueryStage,
   context: DecodingContext,
 ): Promise<WriteAnswer> {
+  if (target.origin.model.external) {
+    return RunExternalWrite(target, stage, context);
+  }
   const statement = CompileWrite(target, stage, context);
   await WaitForUniqueIndexes(target.origin.schemaId);
   try {
@@ -234,6 +262,10 @@ export async function RunQuery(
     const rows = await Read(Render(compiled.relation));
     return DecodeResult(compiled.relation, rows);
   }
+  const external = compiled.root.external;
+  if (external && compiled.split.write.stage === ATOMIC_MUTATION) {
+    throw ExternalWriteRefusal(external, compiled.split.write.stage);
+  }
   return RunWrite(
     WriteTargetOf(compiled.root, compiled.relation),
     compiled.split.write,
@@ -268,15 +300,25 @@ function IsFeed(stages: QueryStage[]): boolean {
   return stages.at(-1)?.stage === CHANGES_STAGE;
 }
 
+/** Refuses a change feed: an external relation's by name, since nothing is installed on it. */
+async function RefuseFeed(stages: QueryStage[]): Promise<never> {
+  if (IsExternal()) {
+    await Promise.all(CollectSchemaIds(stages).map(WaitForSchemaReady));
+    const external = BuildRoot(stages, QueryContext()).external;
+    if (external) {
+      throw ExternalFeedRefusal(external);
+    }
+  }
+  throw new Error("Change feeds are not implemented by @antelopejs/mysql yet");
+}
+
 /** Answers one element of the cursor `reqId` names; a change feed is refused until feeds exist. */
 export function ReadCursor(
   reqId: number,
   stages: QueryStage[],
 ): Promise<IteratorResult<RowValue, void>> {
   if (IsFeed(stages)) {
-    return Promise.reject(
-      new Error("Change feeds are not implemented by @antelopejs/mysql yet"),
-    );
+    return RefuseFeed(stages);
   }
   return ReadCursorRow(reqId, () => CompileCursor(stages));
 }

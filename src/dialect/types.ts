@@ -3,6 +3,7 @@ import type { SqlType } from "../implementations/database/types";
 import type { CompilerSyntax } from "./sql-types";
 import type { ErrorSyntax } from "./error-types";
 import type { CatalogSyntax, DdlSyntax } from "./ddl";
+import type { ExternalSyntax } from "./external";
 
 /**
  * The only thing the compiler, the planners and the runtimes know about an engine.
@@ -20,6 +21,7 @@ export interface Dialect {
   readonly errors: ErrorSyntax;
   readonly ddl: DdlSyntax;
   readonly catalog: CatalogSyntax;
+  readonly external: ExternalSyntax;
 }
 
 /** The module options a session pin depends on. */

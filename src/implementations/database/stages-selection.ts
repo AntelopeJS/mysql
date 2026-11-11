@@ -11,11 +11,17 @@ import { StoredAs } from "./readings";
 import { DecodeValue } from "./value";
 import type { DecodingContext } from "./context";
 import { type Compiled, QualifiedColumn } from "./sql";
-import { Compare, EqualityKey } from "./json";
+import { Compare, EqualityKey, type Ordering } from "./json";
+import { KeylessRefusal } from "./external-refusals";
 import type { PipelineStage, PipelineStageMap } from "./pipeline";
 import { ID_COLUMN, INSTANCE_COLUMN, OptionsOf } from "./utils";
 import { FIRST_OPERAND, RequireOperand, SECOND_OPERAND } from "./stage";
-import { type Relation, RequireOrigin, ScanColumns } from "./relation";
+import {
+  type Relation,
+  RequireOrigin,
+  ScanColumns,
+  type TableOrigin,
+} from "./relation";
 import { Prepare, SINGLE_ROW, WHERE_BLOCKERS } from "./render";
 import { IsString } from "./guards";
 import { ClassifyMember, IsList, StageOperand } from "./member";
@@ -47,12 +53,35 @@ function Selected(
   indexId: string | undefined,
 ): KeySelection {
   const prepared = Prepare(relation, WHERE_BLOCKERS, context);
-  RequireOrigin(prepared);
+  RequireKey(RequireOrigin(prepared), indexId);
   const columns =
     indexId === undefined
       ? [prepared.source.field(ID_COLUMN)]
       : ScanColumns(prepared, indexId).map((column) => column.value);
-  return { relation: prepared, columns, indexId, stage, context };
+  return {
+    relation: prepared,
+    columns: columns.map(Addressed),
+    indexId,
+    stage,
+    context,
+  };
+}
+
+/** Refuses reading by `_id` a relation that has no key to alias, rather than matching nothing. */
+function RequireKey(origin: TableOrigin, indexId: string | undefined): void {
+  const external = origin.model.external;
+  const byKey = indexId === undefined || indexId === ID_COLUMN;
+  if (external && !external.key && byKey) {
+    throw KeylessRefusal(external);
+  }
+}
+
+/**
+ * A key column as the stage compares it: the bare column of an external relation, so its index
+ * serves the match, keeping the native operand that converts each key into its type.
+ */
+function Addressed(column: Compiled): Compiled {
+  return column.native ? { ...column, sql: column.native.sql } : column;
 }
 
 function IndexOption(stage: QueryStage): string | undefined {
@@ -76,12 +105,16 @@ function KeyValue(
   key: QueryValue,
   column: Compiled,
   index: number,
+  operator: Ordering = "=",
 ): Compiled {
-  return StoredAs(
+  const stored = StoredAs(
     selection.context.dialect,
     Decoded(selection, key, index),
     column.type,
   );
+  return column.native
+    ? { sql: column.native.bind(stored.sql, operator), type: stored.type }
+    : stored;
 }
 
 function Decoded(
@@ -281,12 +314,14 @@ const BetweenStage: PipelineStage = (relation, stage, context) => {
     StageOperand(stage, FIRST_OPERAND),
     column,
     FIRST_OPERAND,
+    ">=",
   );
   const high = KeyValue(
     selection,
     StageOperand(stage, SECOND_OPERAND),
     column,
     SECOND_OPERAND,
+    "<",
   );
   selection.relation.where.push(
     Compare(context.dialect, column, low, ">="),

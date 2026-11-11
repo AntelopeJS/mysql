@@ -6,6 +6,7 @@ import type {
 } from "@antelopejs/interface-database/schema";
 
 import { IsObject, IsString } from "./guards";
+import type { ColumnDescriptor } from "./external-types";
 import { MysqlIdentifier } from "./identifier";
 import { ID_COLUMN, INSTANCE_COLUMN, RESERVED_COLUMNS } from "./utils";
 import {
@@ -31,10 +32,23 @@ interface FieldSpec {
   column: string;
   type: SqlType;
   codec?: IoTsCodec;
+  /** How the column is read, present only on a field of an external relation. */
+  native?: ColumnDescriptor;
+}
+
+/**
+ * What an external relation adds to its shape: where it lives, verbatim, and the columns `_id`
+ * aliases, in key order. No `key` means the relation has none, and its rows answer no `_id`.
+ */
+export interface ExternalRelation {
+  schema: string;
+  table: string;
+  key?: ColumnDescriptor[];
 }
 
 export interface TableModel {
   fields: Record<string, FieldSpec>;
+  external?: ExternalRelation;
 }
 
 /**

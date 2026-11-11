@@ -84,11 +84,18 @@ function Applied(func: Sql, argument: Sql, distinct = false): Sql {
 export const Total: Aggregation = (dialect, operand, distinct) =>
   AsFloat(
     dialect,
-    sql`COALESCE(${Applied(SUM, Numeric(dialect, operand).sql, distinct)}, 0)`,
+    sql`COALESCE(${Applied(SUM, Summand(dialect, operand), distinct)}, 0)`,
   );
 
 export const Mean: Aggregation = (dialect, operand, distinct) =>
-  AsFloat(dialect, Applied(AVG, Numeric(dialect, operand).sql, distinct));
+  AsFloat(dialect, Applied(AVG, Summand(dialect, operand), distinct));
+
+/** An external column of an exact numeric type is summed as itself, so the total stays exact. */
+function Summand(dialect: Dialect, operand: Compiled): Sql {
+  return operand.native?.numeric
+    ? operand.native.sql
+    : Numeric(dialect, operand).sql;
+}
 
 /** The kinds an extremum compares as themselves; any other operand is compared as a number. */
 const ORDERED_KINDS: ReadonlySet<SqlType["kind"]> = new Set([

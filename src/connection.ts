@@ -296,6 +296,11 @@ function GetPool(): Pool {
   return pool;
 }
 
+/** Refuses with why there is no connection, when there is none; an external catalog's guard. */
+export function AssertConnected(): void {
+  GetPool();
+}
+
 /** The dialect of the connected server, or a refusal with why there is none. */
 export function GetDialect(): Dialect {
   if (!dialect) {

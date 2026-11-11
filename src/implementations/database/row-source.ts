@@ -39,7 +39,7 @@ export interface DocumentMember extends Compiled {
   name: string;
 }
 
-function MemberKeyTypes(members: DocumentMember[]): KeyTypes {
+export function MemberKeyTypes(members: DocumentMember[]): KeyTypes {
   const keyTypes: Record<string, SqlType> = {};
   for (const member of members) {
     keyTypes[member.name] = member.type;
@@ -71,7 +71,7 @@ export function BuildDocument(
 }
 
 /** Names a key in the message {@link Defaulted} raises for a default the column cannot hold. */
-function KeySubject(name: string): string {
+export function KeySubject(name: string): string {
   return `The default for key '${name}'`;
 }
 

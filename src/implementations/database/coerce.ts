@@ -1,7 +1,7 @@
 import type { Dialect } from "../../dialect";
 import { sql } from "../../statement";
-import type { Compiled } from "./sql";
-import { PathReference } from "./json";
+import type { Compiled, NativeOperand } from "./sql";
+import { type Ordering, PathReference } from "./json";
 import {
   ArrayOf,
   IsJsonBacked,
@@ -17,6 +17,8 @@ export interface CompiledPair {
   left: Compiled;
   right: Compiled;
   type: SqlType;
+  /** One side is a native column and the other was converted to its type, NULL where it cannot be. */
+  converted?: boolean;
 }
 
 /**
@@ -141,18 +143,78 @@ export function UnifyAll(types: SqlType[]): SqlType {
   );
 }
 
-/** The two operands of a comparison at their common type. */
+/**
+ * The two operands of a comparison at their common type.
+ *
+ * A column of an external relation carries its bare self beside its converted value (see
+ * `NativeOperand`). When it meets an operand of its own declared kind, the column stays bare and
+ * that operand is converted to the column's type for `operator` instead, which is what lets the
+ * database's own index serve the comparison; two such columns of one native type compare bare.
+ * Anything else compares by value, as every owned column does.
+ */
 export function UnifyOperands(
   dialect: Dialect,
   left: Compiled,
   right: Compiled,
+  operator: Ordering = "=",
 ): CompiledPair {
   const type = Unify(left.type, right.type);
-  return {
+  const pair = {
     left: Cast(dialect, left, type),
     right: Cast(dialect, right, type),
     type,
   };
+  return NativePair(left, right, pair, operator);
+}
+
+/** The operator as seen from the other side, for a native column on the right. */
+const MIRRORED: Record<Ordering, Ordering> = {
+  "=": "=",
+  "<": ">",
+  "<=": ">=",
+  ">": "<",
+  ">=": "<=",
+};
+
+function NativeSide(native: NativeOperand, type: SqlType): Compiled {
+  return { sql: native.sql, type };
+}
+
+function NativePair(
+  left: Compiled,
+  right: Compiled,
+  pair: CompiledPair,
+  operator: Ordering,
+): CompiledPair {
+  const type = pair.type;
+  if (left.native && right.native) {
+    if (left.native.type !== right.native.type) {
+      return pair;
+    }
+    return {
+      left: NativeSide(left.native, type),
+      right: NativeSide(right.native, type),
+      type,
+    };
+  }
+  if (left.native && type.kind === left.type.kind) {
+    return {
+      left: NativeSide(left.native, type),
+      right: { sql: left.native.bind(pair.right.sql, operator), type },
+      type,
+      converted: true,
+    };
+  }
+  if (right.native && type.kind === right.type.kind) {
+    const mirrored = MIRRORED[operator];
+    return {
+      left: { sql: right.native.bind(pair.left.sql, mirrored), type },
+      right: NativeSide(right.native, type),
+      type,
+      converted: true,
+    };
+  }
+  return pair;
 }
 
 /**
