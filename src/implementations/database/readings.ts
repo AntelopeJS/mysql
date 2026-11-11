@@ -54,7 +54,7 @@ const NUMERATION: Partial<Record<SqlType["kind"], Rendering>> = {
  * decimal literal, so `""` is NULL where `Number("")` is `0` and `"0x10"` is NULL where JavaScript
  * reads 16. A JSON operand keeps the guarded projection, NULL for anything but a JSON number.
  */
-function Numeric(dialect: Dialect, value: Compiled): Compiled {
+export function Numeric(dialect: Dialect, value: Compiled): Compiled {
   const numeration = NUMERATION[value.type.kind];
   if (!numeration) {
     return Cast(dialect, value, FLOAT);

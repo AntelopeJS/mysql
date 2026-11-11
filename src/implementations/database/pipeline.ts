@@ -34,18 +34,12 @@ const PIPELINE_STAGES = {
 } satisfies PipelineStageMap;
 
 const RELATIONAL = "relational";
-const AGGREGATE = "aggregate";
 
 /** The pipeline stages whose family is not implemented yet, by the family that will own them. */
 const DEFERRED_STAGES: ReadonlyMap<string, string> = new Map([
   ["join", RELATIONAL],
   ["lookup", RELATIONAL],
   ["group", RELATIONAL],
-  ["sum", AGGREGATE],
-  ["avg", AGGREGATE],
-  ["min", AGGREGATE],
-  ["max", AGGREGATE],
-  ["distinct", AGGREGATE],
 ]);
 
 /** The stage that opens a change feed, which only an iterated query's last stage may be. */
