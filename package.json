@@ -58,6 +58,8 @@
   },
   "devDependencies": {
     "@antelopejs/core": "^1.21.0",
+    "@antelopejs/interface-api": "^0.3.2",
+    "@antelopejs/interface-database-decorators": "^0.3.2",
     "@antelopejs/tooling-configs": "^0.5.3",
     "@testcontainers/mysql": "^12.2.1",
     "@types/chai": "^4.3.20",
