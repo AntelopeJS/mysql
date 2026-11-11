@@ -6,17 +6,9 @@ import { param, sql } from "../statement";
 import { Read } from "../connection";
 import { IsReaperRunning } from "../implementations/database/reaper";
 import { PhysicalTable } from "./tables";
+import { DeliveredRow, Opened, type Row } from "./watch";
 
 const SCHEMA_ID = "feeds-swap";
-
-/** Long enough for a feed to open, triggers included. */
-const OPEN_MS = 400;
-
-interface Item {
-  _id: string;
-  name?: string;
-  size?: number;
-}
 
 const NARROW = {
   items: { fields: { name: "string" }, indexes: {} },
@@ -28,12 +20,6 @@ const WIDE = {
   others: { fields: { name: "string", size: "number" }, indexes: {} },
 } as const;
 
-function Pause(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
 async function Triggers(tableId: string): Promise<string[]> {
   const rows = await Read(
     sql`SELECT TRIGGER_NAME AS name FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = DATABASE() AND EVENT_OBJECT_TABLE = ${param(PhysicalTable(SCHEMA_ID, tableId))} ORDER BY TRIGGER_NAME`,
@@ -43,17 +29,14 @@ async function Triggers(tableId: string): Promise<string[]> {
 
 /** Opens a feed on `items`, inserts `row`, and answers the event the feed delivers for it. */
 async function Delivered(
-  schema: Schema<{ items: Item; others: Item }>,
-  row: Item,
-): Promise<Changes<Item> | undefined> {
+  schema: Schema<{ items: Row; others: Row }>,
+  row: Row,
+): Promise<Changes<Row>> {
   const items = schema.instance().table("items");
-  const feed = items.changes().cursor();
+  const feed = await Opened(items, `probe-${row._id}`);
   try {
-    const next = feed.next();
-    await Pause(OPEN_MS);
     await items.insert(row);
-    const step = await next;
-    return step.done ? undefined : step.value;
+    return await DeliveredRow(feed, row._id);
   } finally {
     await feed.return?.();
   }
@@ -67,13 +50,13 @@ describe("a watched table across convergence", function () {
   });
 
   it("swaps a watched table's triggers for ones that log a column added later, leaving an unwatched table without any", async () => {
-    const narrow = new Schema<{ items: Item; others: Item }>(SCHEMA_ID, NARROW);
+    const narrow = new Schema<{ items: Row; others: Row }>(SCHEMA_ID, NARROW);
     expect(
       await Delivered(narrow, { _id: "a", name: "a" }),
     ).to.have.nested.property("newValue.name", "a");
     const before = await Triggers("items");
     expect(before).to.have.length(3);
-    const wide = new Schema<{ items: Item; others: Item }>(SCHEMA_ID, WIDE);
+    const wide = new Schema<{ items: Row; others: Row }>(SCHEMA_ID, WIDE);
     const change = await Delivered(wide, { _id: "b", name: "b", size: 3 });
     expect(change).to.have.nested.property("newValue.size", 3);
     const after = await Triggers("items");

@@ -1,73 +1,29 @@
 import { expect } from "chai";
 import type { PoolConnection } from "mysql2/promise";
 import { Schema } from "@antelopejs/interface-database/schema";
-import type { Changes } from "@antelopejs/interface-database/common";
 
 import { type Sql, ident, param, sql } from "../statement";
 import { AcquireConnection, GetDialect } from "../connection";
 import { OnDedicatedSession } from "../implementations/database/locks";
 import { ReapOnce } from "../implementations/database/reaper";
 import { PhysicalTable, Run } from "./tables";
-
-/** Long enough for the change clock to tick a few times; a delivery never takes this long. */
-const QUIET_MS = 400;
+import {
+  Delivered,
+  type Feed,
+  Opened,
+  Pause,
+  QUIET_MS,
+  type Row,
+  SettlesWithin,
+} from "./watch";
 
 /** A retention every row logged before the pause exceeds. */
 const RETENTION_MS = 1;
 const PAUSE_MS = 20;
 
-interface Row {
-  _id: string;
-  label?: string;
-  meta?: Record<string, number> | null;
-}
-
 const sequenced = new Schema<{ rows: Row }>("feeds-sequencer", {
   rows: { fields: { label: "string", meta: "object" }, indexes: {} },
 });
-
-type Table = ReturnType<ReturnType<typeof sequenced.instance>["table"]>;
-
-type Feed = ReturnType<ReturnType<Table["changes"]>["cursor"]>;
-
-function Pause(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
-/** Whether `pending` settles within `ms`, without consuming what it settles to. */
-async function SettlesWithin(pending: Promise<unknown>, ms: number) {
-  const late = Symbol("late");
-  const first = await Promise.race([
-    pending.then(
-      () => true,
-      () => true,
-    ),
-    Pause(ms).then(() => late),
-  ]);
-  return first !== late;
-}
-
-async function Delivered(
-  pending: Promise<IteratorResult<Changes<Row>, void>>,
-): Promise<Changes<Row>> {
-  const step = await pending;
-  if (step.done) {
-    expect.fail("the feed delivers an event");
-  }
-  return step.value;
-}
-
-/** Opens a feed and waits for a row it must deliver, so the feed is known open before a test acts. */
-async function Opened(table: Table, probe: string): Promise<Feed> {
-  const feed = table.changes().cursor();
-  const first = feed.next();
-  await Pause(QUIET_MS);
-  await table.insert({ _id: probe });
-  expect(await Delivered(first)).to.have.nested.property("newValue._id", probe);
-  return feed;
-}
 
 describe("change feeds in commit order", function () {
   this.timeout(30_000);
