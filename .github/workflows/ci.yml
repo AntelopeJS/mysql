@@ -16,6 +16,7 @@ jobs:
       node-versions: "[22, 24]"
       docs-files: |
         README.md
+        docs
       renovate-sync: false
       test-job: true
     permissions:

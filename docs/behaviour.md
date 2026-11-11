@@ -1,0 +1,90 @@
+---
+title: Behaviour worth knowing
+description: Reference for the MySQL module's queries that answer instead of throwing where the answer may surprise you, and where it differs from the PostgreSQL backend.
+mode: reference
+---
+
+These queries answer instead of throwing, and the answer may not be the one you expected.
+
+## Reading a value
+
+| Behaviour                                                                              | Detail                                                                                                               |
+| -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Truthiness follows JavaScript, so `[]`, `{}` and the string `"false"` are all **true** | Only `null`, `false`, `0` and `""` are false                                                                         |
+| `not()` on a key that is absent or of the wrong type answers **true**                  | It matches `!undefined`. A plain SQL `NOT NULL` is NULL and would drop the row from the filter that reads it         |
+| `ne` counts a value that is not there as unequal to one that is                        | The row is kept. A plain `<>` is NULL whenever either side is, and would drop it                                     |
+| A string never equals a number                                                         | `"1"` and `1` are different JSON values. A key column that reads a path as text holds NULL for a number stored there |
+
+## Selecting rows
+
+| Behaviour                                                                               | Detail                                                                                                                                                                   |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| An ascending `orderBy` puts rows **without** the field first, and a descending one last | MySQL sorts NULL lowest. Spelling another order would stop an index from serving the sort                                                                                |
+| Text compares by code point and is case-sensitive                                       | Every column and every connection is `utf8mb4_0900_bin`, so `"Vase"` sorts before `"bulb"` and `eq("vase")` does not match `"Vase"`. Trailing spaces are significant     |
+| `orderBy` on an index over text is exact up to the key column's width                   | A non-unique index keys on the first `w` characters, 640 for one text field. Rows that share them come back in no defined order. See [storage](./storage.md#key-columns) |
+| `get(k)` under `CROSS_INSTANCE` picks the lowest `_instance` holding the key            | `_id` is unique _per instance_, so one key names one row per instance. The same row is chosen on every call, and it is the row a subsequent delete removes               |
+| `getAll` cannot address a single array-valued key                                       | An array at the top level is always read as a _key list_, since the interface supplies no marker telling the two apart                                                   |
+| Every document carries the instance it came from under `_instance`                      | Which is what lets a `CROSS_INSTANCE` read tell its rows apart. The default instance carries no key at all                                                               |
+
+## Shaping a stream
+
+| Behaviour                                                                       | Detail                                                                                                                                             |
+| ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `without` over a value that is not an object answers `null`                     | An array or a scalar has no keys to remove, so the row survives with a null in place of the value                                                  |
+| Successive `orderBy` stages are stable sorts, so the **last one written wins**  | Sort by name, then by age, and ties in age stay in name order                                                                                      |
+| A `slice` bound on a _stream_ is clamped; one on an _array_ counts from the end | `slice(-3)` over an array is the last three elements, and a fractional bound truncates toward zero. Over a stream a negative bound is clamped to 0 |
+| `union` never deduplicates                                                      | The interface asserts that a stream unioned with itself is twice as long                                                                           |
+| `distinct` discards the ordering ahead of it                                    | MySQL refuses `SELECT DISTINCT … ORDER BY` a term outside the select list, so the sort is moved inside, where it no longer orders the result       |
+
+## Storing a value
+
+| Behaviour                                                                                                                                                           | Detail                                                                                                                                                                                           |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A `Date` written under an _undeclared_ key loses its type                                                                                                           | It is stored, and read back, as its ISO text with milliseconds and `Z`, such as `"2024-03-01T10:00:00.000Z"`. Declare the field to keep the type                                                 |
+| A declared field set to `null` holds SQL NULL and **reads back as an absent key**; an _undeclared_ key set to `null` holds a stored JSON null and reads back as one | A typed column cannot represent the difference between a stored null and an absent value, and `_extra` can                                                                                       |
+| A declared column wins over an `_extra` key of the same name                                                                                                        | A value that a new column could not take stays in `_extra` but no longer reads back. See [Schema convergence](./storage.md#schema-convergence)                                                   |
+| An `_id` over 512 characters fails, and so does an instance id over 128                                                                                             | The key columns are `VARCHAR(512)` and `VARCHAR(128)`, which keeps the primary key within InnoDB's key limit. `createInstance` refuses a long instance id by name; a write fails with errno 1406 |
+
+## Writing
+
+| Behaviour                                                                                                  | Detail                                                                                                                                                                                  |
+| ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| An `insert` argument that is an array is always a **batch**, never one document                            | This is the reading every write shares                                                                                                                                                  |
+| A duplicate `_id` within one batch stores none of the batch                                                | Without a conflict mode the batch is one `INSERT`, which MySQL refuses whole. With one, the module refuses the batch before any statement runs. Both throw `DuplicateKeyError` on `_id` |
+| An upsert never rewrites the row a secondary unique key collided with                                      | `conflict: "update"` and `"replace"` match on `_id` only, and do not use `ON DUPLICATE KEY UPDATE`, which fires on any unique key. A clash on a secondary unique index still throws     |
+| A payload `_instance` is _dropped_, not written and not refused                                            | No write moves a row between instances. Dropping it is what lets a document be read, changed and written straight back                                                                  |
+| A payload `_id` is an _assertion_, so naming a different row's key answers `0`                             | It states which row you believe you addressed, and never what to write. Over a selection of many rows it is refused instead                                                             |
+| A write that changes nothing answers `0`                                                                   | `update` and `replace` count the rows they changed, not the rows they matched                                                                                                           |
+| `update(fn)` with an _expression_ body answers rows matched, where every other write answers rows modified | The modified test cannot be spelled for that one shape without evaluating the mapper twice per row                                                                                      |
+| A write that hits a deadlock or a lock-wait timeout runs again                                             | Each write unit runs at READ COMMITTED and is retried up to three times in all, since it reads what it writes against inside its transaction                                            |
+
+## Atomic single-record mutations
+
+`table.atomicMutation(id, request)` implements the atomic contract of `@antelopejs/interface-database`, in the range that the README compatibility table lists. `pnpm test` runs the interface's shared conformance suite against MySQL 8.4 and 9.7, beside this module's own tests.
+
+The adapter puts the instance, the identity, and the revision or scalar equality condition in the `WHERE` clause of one `UPDATE` or `DELETE`, and reads the rows it matched: one is `applied`, none is `not-applied`. MySQL checks the condition against the row it locks, so a competing writer cannot slip between the test and the write. An error the server answered throws, since the statement did not apply. Any other failure, such as a lost connection or a lost acknowledgement after commit, returns `unknown`. Callers must reconcile an `unknown` outcome and must not treat it as a failed match.
+
+An absent-only `{ kind: "missing" }` revision condition works on undeclared fields stored in `_extra`. It does not match a JSON null or an absent record. A declared column cannot tell an absent field from null, so the adapter refuses a missing-revision bootstrap there. Every variant requires one instance and refuses `CROSS_INSTANCE`.
+
+## Matching text
+
+| Behaviour                                | Detail                                                                                                                                                                                                            |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `match` uses MySQL's ICU regex engine    | `REGEXP_LIKE` with the case-sensitive flag. A literal pattern's `.` is rewritten to stop only at JavaScript's four line terminators, its `$` to match only at the end, and `[` and `&` inside a class are escaped |
+| Only a **literal** pattern is translated | A pattern computed from a value is bound as it is, and no compiler here has its text to rewrite. Write the pattern out to get the JavaScript reading                                                              |
+
+## Coming from PostgreSQL
+
+|                                                |                                                                                                                     |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Where the tables live                          | One table per schema table in the URL's database, `<schemaId>__<tableId>`. PostgreSQL uses one schema per schema id |
+| A dotted index field such as `title.fr`        | A nested JSON path. PostgreSQL reads it as one undeclared key literally named `title.fr`                            |
+| NULL in an ascending sort                      | First. PostgreSQL puts it last                                                                                      |
+| Text comparison                                | By code point, case-sensitive. PostgreSQL follows the database's collation                                          |
+| `without` over an array                        | `null`. PostgreSQL removes the matching elements                                                                    |
+| A `Date` under an undeclared key               | ISO text with `Z`. PostgreSQL answers its `timestamptz` text form                                                   |
+| A value left in `_extra` under a declared name | Not read. PostgreSQL reads the `_extra` value                                                                       |
+| A `multi` index                                | Multi-valued over a `string[]` field only. PostgreSQL builds a GIN index over any JSON field                        |
+| Building an index                              | Online, except a multi-valued one, which blocks writes while it builds. PostgreSQL builds every index concurrently  |
+| Schema convergence                             | One statement per step, with progress in the catalog. PostgreSQL converges tables and columns in one transaction    |
+| `_id` and instance id widths                   | 512 and 128 characters. PostgreSQL's `text` columns have no limit                                                   |
