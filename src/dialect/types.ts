@@ -1,5 +1,7 @@
 import type { Sql } from "../statement";
 import type { SqlType } from "../implementations/database/types";
+import type { CompilerSyntax } from "./sql-types";
+import type { ErrorSyntax } from "./error-types";
 
 /**
  * The only thing the compiler, the planners and the runtimes know about an engine.
@@ -14,6 +16,7 @@ export interface Dialect {
   readonly id: string;
   readonly session: SessionSyntax;
   readonly sql: SqlSyntax;
+  readonly errors: ErrorSyntax;
 }
 
 /** The module options a session pin depends on. */
@@ -45,7 +48,7 @@ export interface SessionSyntax {
 }
 
 /** Expression fragments. The compiler never spells an engine type or a quoting rule itself. */
-export interface SqlSyntax {
+export interface SqlSyntax extends CompilerSyntax {
   quote(identifier: string): Sql;
   /** The column type a value of this type is stored in. */
   physical(type: SqlType): Sql;

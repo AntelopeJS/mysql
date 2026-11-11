@@ -16,7 +16,7 @@ const PHYSICAL_TYPES: Record<SqlType["kind"], Sql> = {
   json: sql`JSON`,
 };
 
-export const sqlCore: SqlSyntax = {
+export const sqlCore: Pick<SqlSyntax, "quote" | "physical"> = {
   quote: ident,
   physical: (type) => PHYSICAL_TYPES[type.kind],
 };
