@@ -24,7 +24,7 @@ export const MAX_KEY_CHARS = 512;
 export const MAX_INSTANCE_ID_CHARS = 128;
 
 /** Instance id stored for the unnamed (default) instance. */
-const DEFAULT_INSTANCE_ID = "";
+export const DEFAULT_INSTANCE_ID = "";
 
 const CREATE_INSTANCE = "createInstance";
 const DESTROY_INSTANCE = "destroyInstance";
@@ -68,7 +68,9 @@ type StageOptions = { readonly [Name in OptionName]?: OptionType<Name> };
  * The options a stage records, read whatever its name, for readers that check each option they
  * read: `OptionsOf(stage)?.id` reads what `stage.options?.id` reads.
  */
-function OptionsOf(stage: QueryStage | undefined): StageOptions | undefined {
+export function OptionsOf(
+  stage: QueryStage | undefined,
+): StageOptions | undefined {
   return stage?.options;
 }
 

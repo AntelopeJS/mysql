@@ -1,24 +1,265 @@
 import type { QueryStage } from "@antelopejs/interface-database/common";
+import type { AtomicMutationOutcome } from "@antelopejs/interface-database";
+import { ValidateAtomicMutationTable } from "@antelopejs/interface-database/atomic";
+
+import { GetDialect, Read, type Row, Write } from "../../connection";
+import { DecodingContext } from "./context";
+import { CompileSubquery } from "./subquery";
+import { CompileExpression } from "./expression";
+import { DecodeCell, DecodeRow, type RowValue } from "./result";
+import { ApplyStages, CHANGES_STAGE, CompileRelation } from "./pipeline";
+import { DuplicateKeyFailure, IsPrimaryKeyDuplicate } from "./duplicate-key";
+import { WaitForSchemaReady } from "./schema";
+import {
+  type WriteStatement,
+  type WriteTarget,
+  WriteTargetOf,
+} from "./writes-shared";
+import { CompileWrite, SplitWrite, type WriteSplit } from "./writes";
+import { ATOMIC_MUTATION, ExecuteAtomicWrite } from "./writes-atomic";
+import { InTransaction } from "./transaction";
+import { ID_COLUMN } from "./utils";
+import { CloseOneCursor, type CursorRequest, ReadCursorRow } from "./cursors";
+import { OUTPUT_COLUMN, type Relation, RequireOrigin } from "./relation";
+import { Render } from "./render";
+import {
+  BuildRoot,
+  CollectSchemaIds,
+  type RootSelection,
+  SCHEMA_STAGE,
+} from "./selection";
+import { IsString } from "./guards";
+
+type WriteAnswer = string[] | number | AtomicMutationOutcome;
+
+/** The root, the terminal write split off after it, and the fold over what was left. */
+interface CompiledQuery {
+  context: DecodingContext;
+  root: RootSelection;
+  split: WriteSplit;
+  relation: Relation;
+}
+
+const LIFECYCLE_STAGE_COUNT = 2;
+
+/** The instance lifecycle stages, which address a schema rather than a table. */
+const LIFECYCLE_STAGES: readonly string[] = [
+  "createInstance",
+  "destroyInstance",
+  "listInstances",
+];
 
 /**
- * Refuses every query, naming this module. The query compiler replaces this file; until then a
- * refusal that names the module proves a caller's interface call reached this implementation.
+ * Refuses a schema-rooted instance lifecycle query by name: the instance registry is created with
+ * the schema's tables, which this module does not converge yet.
  */
-function NotImplemented(operation: string): Error {
-  return new Error(`${operation} is not implemented by @antelopejs/mysql yet`);
+function Lifecycle(stages: QueryStage[]): Promise<never> | undefined {
+  if (
+    stages.length !== LIFECYCLE_STAGE_COUNT ||
+    stages[0].stage !== SCHEMA_STAGE ||
+    !LIFECYCLE_STAGES.includes(stages[1].stage)
+  ) {
+    return undefined;
+  }
+  return Promise.reject(
+    new Error(
+      `The '${stages[1].stage}' stage is not implemented by @antelopejs/mysql yet`,
+    ),
+  );
 }
 
-export async function RunQuery(stages: QueryStage[]): Promise<never> {
-  throw NotImplemented(`RunQuery (${stages.length} stages)`);
+/**
+ * Decodes every row the driver returned, in order and one value per row, on the same `projection`
+ * the select list was built from. A cursor decodes through this and never through
+ * {@link DecodeResult}, which applies the relation's single-row answers.
+ */
+export function DecodeRows(relation: Relation, rows: Row[]): RowValue[] {
+  const projection = relation.projection;
+  if (projection) {
+    return rows.map((row) =>
+      DecodeCell(row.get(OUTPUT_COLUMN), projection.type),
+    );
+  }
+  const model = RequireOrigin(relation).model;
+  return rows.map((row) => DecodeRow(row, model));
 }
 
-export async function ReadCursor(
+/**
+ * Turns the driver's rows into what the caller asked for: a single-row relation hands back that row,
+ * or the absent value it carries when it read none, decided by the row count rather than by the
+ * decoded value, so a `get` whose row decodes to `null` answers `null`.
+ */
+export function DecodeResult(relation: Relation, rows: Row[]): RowValue {
+  const decoded = DecodeRows(relation, rows);
+  if (!relation.single) {
+    return decoded;
+  }
+  return decoded.length > 0 ? decoded[0] : relation.absent;
+}
+
+/** The keys of an upsert's batch that its lock read found. */
+function LockedIds(rows: Row[]): Set<string> {
+  const ids = new Set<string>();
+  for (const row of rows) {
+    const id = row.get(ID_COLUMN);
+    if (IsString(id)) {
+      ids.add(id);
+    }
+  }
+  return ids;
+}
+
+/** Runs a compiled write and answers what its stage promised. */
+async function Execute(
+  statement: WriteStatement,
+  target: WriteTarget,
+): Promise<WriteAnswer> {
+  const dialect = target.relation.dialect;
+  switch (statement.kind) {
+    case "count":
+      return Write(statement.statement);
+    case "atomic":
+      return ExecuteAtomicWrite(dialect, () => Write(statement.statement));
+    case "insert": {
+      const statements = statement.statements;
+      if (statements.length === 1) {
+        await Write(statements[0]);
+      } else if (statements.length > 1) {
+        await InTransaction(async (connection) => {
+          for (const one of statements) {
+            await Write(one, connection);
+          }
+        });
+      }
+      return statement.ids;
+    }
+    case "upsert":
+      await InTransaction(
+        async (connection) => {
+          const existing = LockedIds(await Read(statement.lock, connection));
+          for (const one of statement.write(existing)) {
+            await Write(one, connection);
+          }
+        },
+        (err) => IsPrimaryKeyDuplicate(err, target.origin, dialect),
+      );
+      return statement.ids;
+  }
+}
+
+/**
+ * Executes a terminal write and answers what its stage promised: `insert` its keys in input order,
+ * an atomic mutation its outcome, everything else the rows it matched. A failure the server reports
+ * against a unique key is answered as the interface's error for it.
+ */
+async function RunWrite(
+  target: WriteTarget,
+  stage: QueryStage,
+  context: DecodingContext,
+): Promise<WriteAnswer> {
+  const statement = CompileWrite(target, stage, context);
+  try {
+    return await Execute(statement, target);
+  } catch (err) {
+    throw err instanceof Error
+      ? DuplicateKeyFailure(err, target.origin, context.dialect)
+      : err;
+  }
+}
+
+/** The one production construction of a compiling context, fresh per statement. */
+function QueryContext(): DecodingContext {
+  return new DecodingContext(
+    {
+      expression: CompileExpression,
+      subquery: CompileSubquery,
+      relation: CompileRelation,
+    },
+    GetDialect(),
+  );
+}
+
+/** Root, split, fold — kept apart, and `root` kept visible, because the split runs between them. */
+function CompileQuery(
+  stages: QueryStage[],
+  context: DecodingContext,
+): CompiledQuery {
+  if (stages.at(-1)?.stage === ATOMIC_MUTATION) {
+    ValidateAtomicMutationTable(stages.slice(0, -1));
+  }
+  const root = BuildRoot(stages, context);
+  const split = SplitWrite(root.rest);
+  const relation = ApplyStages(root.relation, split.pipeline, context);
+  return { context, root, split, relation };
+}
+
+/** Awaits every schema the stage tree reads, then compiles it in one synchronous pass. */
+async function ReadyQuery(
+  stages: QueryStage[],
+  context: DecodingContext,
+): Promise<CompiledQuery> {
+  await Promise.all(CollectSchemaIds(stages).map(WaitForSchemaReady));
+  return CompileQuery(stages, context);
+}
+
+export async function RunQuery(stages: QueryStage[]): Promise<RowValue> {
+  const lifecycle = Lifecycle(stages);
+  if (lifecycle) {
+    return lifecycle;
+  }
+  const compiled = await ReadyQuery(stages, QueryContext());
+  if (!compiled.split.write) {
+    const rows = await Read(Render(compiled.relation));
+    return DecodeResult(compiled.relation, rows);
+  }
+  return RunWrite(
+    WriteTargetOf(compiled.root, compiled.relation),
+    compiled.split.write,
+    compiled.context,
+  );
+}
+
+function RefuseCursorWrite(write: QueryStage): never {
+  throw new Error(
+    `The '${write.stage}' stage writes, so it cannot be read through a cursor`,
+  );
+}
+
+/**
+ * Compiles the relation a cursor reads, or refuses a query that has none: a terminal write is
+ * refused by name rather than executed, so iterating a write never runs it.
+ */
+async function CompileCursor(stages: QueryStage[]): Promise<CursorRequest> {
+  const compiled = await ReadyQuery(stages, QueryContext());
+  if (compiled.split.write) {
+    RefuseCursorWrite(compiled.split.write);
+  }
+  const relation = compiled.relation;
+  return {
+    statement: Render(relation),
+    decode: (rows) => DecodeRows(relation, rows),
+  };
+}
+
+/** A query is a feed exactly when it ends in `changes`. */
+function IsFeed(stages: QueryStage[]): boolean {
+  return stages.at(-1)?.stage === CHANGES_STAGE;
+}
+
+/** Answers one element of the cursor `reqId` names; a change feed is refused until feeds exist. */
+export function ReadCursor(
   reqId: number,
   stages: QueryStage[],
-): Promise<never> {
-  throw NotImplemented(`ReadCursor #${reqId} (${stages.length} stages)`);
+): Promise<IteratorResult<RowValue, void>> {
+  if (IsFeed(stages)) {
+    return Promise.reject(
+      new Error("Change feeds are not implemented by @antelopejs/mysql yet"),
+    );
+  }
+  return ReadCursorRow(reqId, () => CompileCursor(stages));
 }
 
-export async function CloseCursor(reqId: number): Promise<void> {
-  throw NotImplemented(`CloseCursor #${reqId}`);
+/** Closes the cursor `reqId` names; total for an id that never opened. */
+export function CloseCursor(reqId: number): Promise<void> {
+  return CloseOneCursor(reqId);
 }

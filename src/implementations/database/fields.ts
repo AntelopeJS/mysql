@@ -220,3 +220,8 @@ export function ParseSchema(
   }
   return tables;
 }
+
+/** The physical columns of the declared fields, in declaration order. */
+export function DeclaredColumns(model: TableModel): string[] {
+  return Object.values(model.fields).map((spec) => spec.column);
+}

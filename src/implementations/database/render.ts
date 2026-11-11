@@ -1,0 +1,212 @@
+import assert from "node:assert";
+
+import { Bind, type Sql, ident, join, sql } from "../../statement";
+import type { DecodingContext } from "./context";
+import { EXTRA_COLUMN, ID_COLUMN, INSTANCE_COLUMN } from "./utils";
+import { QualifiedColumn } from "./sql";
+import { DeclaredColumns, PhysicalOrder } from "./fields";
+import {
+  type JoinClause,
+  OUTPUT_COLUMN,
+  type Relation,
+  RequireOrigin,
+  TableRelation,
+  ValueRelation,
+} from "./relation";
+
+const COMMA = sql`, `;
+const AND = sql` AND `;
+
+function RowColumns(relation: Relation): Sql[] {
+  const origin = RequireOrigin(relation);
+  const columns = PhysicalOrder(
+    ID_COLUMN,
+    INSTANCE_COLUMN,
+    DeclaredColumns(origin.model),
+    EXTRA_COLUMN,
+  );
+  return columns.map((column) => QualifiedColumn(relation.alias, column));
+}
+
+function SelectList(relation: Relation): Sql {
+  const projection = relation.projection;
+  if (!projection) {
+    return join(RowColumns(relation), COMMA);
+  }
+  return sql`${projection.sql} AS ${ident(OUTPUT_COLUMN)}`;
+}
+
+type ClauseBuilder = (relation: Relation) => Sql | undefined;
+
+function SelectClause(relation: Relation): Sql {
+  const modifier = relation.distinct ? sql`DISTINCT ` : sql``;
+  return sql`SELECT ${modifier}${SelectList(relation)}`;
+}
+
+function FromItem(from: Sql, alias: string): Sql {
+  return sql`${from} AS ${ident(alias)}`;
+}
+
+function FromClause(relation: Relation): Sql {
+  return sql`FROM ${FromItem(relation.from, relation.alias)}`;
+}
+
+const JOIN_KEYWORDS = { JOIN: sql`JOIN`, "LEFT JOIN": sql`LEFT JOIN` };
+
+function RenderJoin(clause: JoinClause): Sql {
+  return sql`${JOIN_KEYWORDS[clause.kind]} ${FromItem(clause.from, clause.alias)} ON ${clause.on}`;
+}
+
+function JoinClauses(relation: Relation): Sql | undefined {
+  if (relation.joins.length === 0) {
+    return undefined;
+  }
+  return join(relation.joins.map(RenderJoin), sql` `);
+}
+
+function WhereClause(relation: Relation): Sql | undefined {
+  if (relation.where.length === 0) {
+    return undefined;
+  }
+  return sql`WHERE ${join(relation.where, AND)}`;
+}
+
+function GroupByClause(relation: Relation): Sql | undefined {
+  if (relation.groupBy.length === 0) {
+    return undefined;
+  }
+  return sql`GROUP BY ${join(
+    relation.groupBy.map((term) => term.sql),
+    COMMA,
+  )}`;
+}
+
+function OrderTerms(relation: Relation): Sql | undefined {
+  if (relation.orderBy.length === 0) {
+    return undefined;
+  }
+  const terms = relation.orderBy.map((term) =>
+    term.descending ? sql`${term.sql} DESC` : sql`${term.sql} ASC`,
+  );
+  return join(terms, COMMA);
+}
+
+function OrderByClause(relation: Relation): Sql | undefined {
+  const terms = OrderTerms(relation);
+  return terms === undefined ? undefined : sql`ORDER BY ${terms}`;
+}
+
+/**
+ * Takes the order terms off the relation, spelled exactly as the clause spells them.
+ *
+ * The one door for a stage that absorbs an aggregate: a stream aggregate discards the terms, since
+ * no ordering can change what it reduces to, while a subquery's aggregate re-emits them inside its
+ * array aggregate. The refusal asserts that a term carries no bound value: a discarded term holding
+ * one would leave nothing wrong in the text, but an order term that ever decodes an argument has to
+ * be rendered into a subselect instead, and this says so where that edit lands.
+ */
+export function AbsorbOrder(relation: Relation): Sql | undefined {
+  const terms = OrderTerms(relation);
+  assert(
+    terms === undefined || Bind(terms).args.length === 0,
+    "An order term must carry no bound value, since absorbing an aggregate discards it",
+  );
+  relation.orderBy = [];
+  return terms;
+}
+
+/** The row count that makes a relation answer at most one row, which `nth` and a lookup take. */
+export const SINGLE_ROW = 1;
+
+function LimitClause(relation: Relation): Sql | undefined {
+  return relation.dialect.sql.rows.limit(relation.limit, relation.offset);
+}
+
+const CLAUSES: ClauseBuilder[] = [
+  SelectClause,
+  FromClause,
+  JoinClauses,
+  WhereClause,
+  GroupByClause,
+  OrderByClause,
+  LimitClause,
+];
+
+export function Render(relation: Relation): Sql {
+  const clauses = CLAUSES.map((build) => build(relation)).filter(
+    (clause) => clause !== undefined,
+  );
+  return join(clauses, sql` `);
+}
+
+/**
+ * Renders the relation into a subselect and starts a fresh one over it, addressing its output at a
+ * new alias.
+ *
+ * `Prepare` is the door to a *conditional* wrap; `Nested` is the door for a relation becoming a
+ * FROM item of another relation, where the wrap is unconditional. Row mode survives, because the
+ * rendered select list keeps the physical column names, but the key columns do not: the select
+ * list holds the stored columns only. `single` and `absent` carry through; `aggregated` does not.
+ */
+export function Nested(relation: Relation, context: DecodingContext): Relation {
+  const from = sql`(${Render(relation)})`;
+  const alias = context.nextAlias();
+  const projection = relation.projection;
+  const wrapped = projection
+    ? ValueRelation(relation.dialect, from, alias, projection.type)
+    : TableRelation(
+        relation.dialect,
+        from,
+        alias,
+        RequireOrigin(relation),
+        "output",
+      );
+  wrapped.single = relation.single;
+  wrapped.absent = relation.absent;
+  return wrapped;
+}
+
+export type RelationFlag =
+  | "projection"
+  | "limit"
+  | "offset"
+  | "distinct"
+  | "ordered"
+  | "aggregated";
+
+/**
+ * The flags that block absorbing a predicate into `WHERE`, which is the relation's own clause order.
+ * A `WHERE` runs before the clauses that choose rows and cannot mention an aggregate, and a pending
+ * projection blocks it as it blocks every stage that resolves a field.
+ */
+export const WHERE_BLOCKERS: readonly RelationFlag[] = [
+  "projection",
+  "limit",
+  "offset",
+  "distinct",
+  "aggregated",
+];
+
+type RelationPredicate = (relation: Relation) => boolean;
+
+const FLAG_PREDICATES: Record<RelationFlag, RelationPredicate> = {
+  projection: (relation) => relation.projection !== undefined,
+  limit: (relation) => relation.limit !== undefined,
+  offset: (relation) => relation.offset !== undefined,
+  distinct: (relation) => relation.distinct,
+  ordered: (relation) => relation.orderBy.length > 0,
+  aggregated: (relation) => relation.aggregated,
+};
+
+/**
+ * The one place a *conditional* wrap is decided: every stage continuing its own relation opens by
+ * naming the flags that block it, and reaches {@link Nested} through nothing else.
+ */
+export function Prepare(
+  relation: Relation,
+  blockedBy: readonly RelationFlag[],
+  context: DecodingContext,
+): Relation {
+  const blocked = blockedBy.some((flag) => FLAG_PREDICATES[flag](relation));
+  return blocked ? Nested(relation, context) : relation;
+}

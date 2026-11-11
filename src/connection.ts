@@ -2,6 +2,7 @@ import type { EventEmitter } from "node:events";
 import {
   type Pool,
   type PoolConnection,
+  type ResultSetHeader,
   type RowDataPacket,
   createPool,
 } from "mysql2/promise";
@@ -346,6 +347,39 @@ export async function Read(
   const connection = await AcquireConnection();
   try {
     return await ReadOn(connection, statement);
+  } finally {
+    connection.release();
+  }
+}
+
+async function WriteOn(
+  connection: PoolConnection,
+  statement: Sql,
+): Promise<number> {
+  const bound = Bind(statement);
+  const [result] = await connection.execute<ResultSetHeader>(bound.sql, [
+    ...bound.args,
+  ]);
+  return result.affectedRows;
+}
+
+/**
+ * Runs a statement that writes through the prepared-statement protocol and answers the rows it
+ * matched: the pool connects with `FOUND_ROWS`, so a row a write matched and left unchanged counts.
+ *
+ * On `held` when given, which stays checked out; otherwise on a pooled connection taken for this
+ * statement alone.
+ */
+export async function Write(
+  statement: Sql,
+  held?: PoolConnection,
+): Promise<number> {
+  if (held) {
+    return WriteOn(held, statement);
+  }
+  const connection = await AcquireConnection();
+  try {
+    return await WriteOn(connection, statement);
   } finally {
     connection.release();
   }
