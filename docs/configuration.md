@@ -31,6 +31,7 @@ Every value above is the module's own default. Two are derived. `maxOpenCursors`
 
 The module uses the `mysql2` driver and leaves pooling to its pool:
 
+- The account in `url` needs the privileges that [the README](../README.md#install) lists. A change feed needs `SUPER` or a server with `log_bin_trust_function_creators = 1` besides, as [Change feeds](./change-feeds.md#what-the-account-needs) explains.
 - The module passes `url` as `uri` and merges everything in `pool` under it. The URL wins over a connection setting given in both.
 - `pool` refuses the options the module sets itself, because the module's decoding and statements depend on them: `charset`, `timezone`, `jsonStrings`, `dateStrings`, `supportBigNumbers`, `bigNumberStrings`, `decimalNumbers`, `typeCast`, `namedPlaceholders`, `rowsAsArray`, `nestTables`, `multipleStatements`, `flags`, `maxPreparedStatements`, `resetOnRelease`, `uri`, `charsetNumber` and `queryFormat`. Connection limits, timeouts, TLS and `connectAttributes` are yours to set.
 - `construct` opens the pool and checks one connection, so a bad configuration fails at startup, not on the first query. An external instance where the catalog answers is the exception. See [A connection that fails at startup](./external-mode.md#a-connection-that-fails-at-startup).

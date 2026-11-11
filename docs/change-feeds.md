@@ -24,6 +24,17 @@ A table with these triggers is watched, and stays watched: the adapter never rem
 
 Convergence keeps a watched table's triggers in step with its columns. The trigger name carries a digest of the trigger bodies, so a changed column list is a set of new names. After the columns are added or retyped, and before values move out of `_extra` or a column is dropped, the adapter locks the table with `LOCK TABLES … WRITE`, creates the new triggers, drops the old ones and unlocks. Writes wait for the few milliseconds the lock lasts. A process that stops between the two leaves both sets in place, so a write is logged twice until the next registration, and never not at all.
 
+## What the account needs
+
+Creating a trigger takes the `TRIGGER` privilege, which [the README](../README.md#install) lists with the others. On a server with binary logging on, which is MySQL's default, it takes one more thing. MySQL treats a trigger as a stored program that the binary log replays, so it accepts `CREATE TRIGGER` only from an account that holds `SUPER`, unless the global `log_bin_trust_function_creators` is `1`. The rule is in MySQL's [Stored Program Binary Logging](https://dev.mysql.com/doc/refman/8.4/en/stored-programs-logging.html). A server run with the `mysql` image defaults, 8.4 or 9.7, has binary logging on and the variable at `0`.
+
+An account with neither is refused with errno 1419. The feed's open fails, and so does any registration that has to swap the triggers of a table that is already watched, with an error that names both remedies:
+
+- Grant the account `SUPER` with `GRANT SUPER ON *.* TO`. `SYSTEM_VARIABLES_ADMIN` and `SET_ANY_DEFINER` do not stand in for it, which the module's tests check on 8.4 and 9.7. MySQL has deprecated `SUPER`, but a trigger still requires it.
+- Set `log_bin_trust_function_creators = 1` on the server, with `SET GLOBAL` and in its configuration file so the setting survives a restart. The variable applies to every stored program on the server, which is the trade a replicated server weighs. Setting it takes `SYSTEM_VARIABLES_ADMIN` or `SUPER`, so an administrator does it, not the module's account.
+
+The module does not read `@@log_bin`, the variable or the account's grants first, and words the server's own refusal instead. A check could refuse an account whose `SUPER` comes through a role, which the module cannot see. The refusal also costs nothing: `CREATE TRIGGER` is the first statement of a swap after its lock, so a refused swap creates and drops no trigger and gives the table back.
+
 ## Ordering
 
 A log row has no `seq` when it is written. A sequencer numbers the rows whose transactions have committed, in the order they were logged, under a lock on one clock row, and skips the rows of transactions still open. Those are numbered once they commit. So `seq` order is commit order, and a reader that has seen `seq = n` has seen every change numbered before it.

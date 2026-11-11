@@ -39,7 +39,7 @@ The command writes the module's default configuration, the URL `mysql://root@loc
 
 The account in the URL needs `CREATE`, `ALTER`, `INDEX`, `TRIGGER`, `LOCK TABLES`, `SELECT`, `INSERT`, `UPDATE` and `DELETE` on that one database. The module creates no database of its own.
 
-The first `changes()` on a table creates triggers on it. With binary logging on, which is the server's default, MySQL refuses `CREATE TRIGGER` from an account without `SUPER` (errno 1419). Set `log_bin_trust_function_creators = 1` on the server, or grant `SUPER`, before you open a change feed.
+The first `changes()` on a table creates triggers on it. With binary logging on, which is the server's default, MySQL refuses `CREATE TRIGGER` (errno 1419) unless the account holds `SUPER` or the server runs with `log_bin_trust_function_creators = 1`. Before you open a change feed, either `GRANT SUPER ON *.* TO` the account, or run `SET GLOBAL log_bin_trust_function_creators = 1` and put it in the server's configuration file. `SYSTEM_VARIABLES_ADMIN` and `SET_ANY_DEFINER` do not replace `SUPER` for a trigger, on 8.4 or 9.7. Without either, the feed fails with an error that names both remedies. See [Change feeds](./docs/change-feeds.md#what-the-account-needs).
 
 ## Configuration
 
