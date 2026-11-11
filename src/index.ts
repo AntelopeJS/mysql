@@ -23,6 +23,10 @@ export async function construct(options?: Options) {
     await import("@antelopejs/interface-database/schema"),
     await import("./implementations/database/schema"),
   );
+  void ImplementInterface(
+    await import("@antelopejs/interface-database-catalog"),
+    await import("./implementations/catalog"),
+  );
 }
 
 export async function destroy() {
