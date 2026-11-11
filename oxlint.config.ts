@@ -8,4 +8,18 @@ export default defineConfig({
   extends: [antelopePreset()],
   ignorePatterns: ANTELOPE_IGNORE_PATTERNS,
   options: { typeAware: true },
+  rules: {
+    "eslint/no-restricted-imports": [
+      "error",
+      {
+        patterns: [
+          {
+            group: ["**/dialect/mysql", "**/dialect/mysql/**"],
+            message:
+              "An engine's dialect is reached through `src/dialect` (DIALECTS, or the connection's dialect), never imported directly.",
+          },
+        ],
+      },
+    ],
+  },
 });
