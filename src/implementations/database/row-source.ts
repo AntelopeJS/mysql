@@ -101,10 +101,11 @@ export function LoggedColumns(dialect: Dialect, row: Sql): ColumnAddress {
   };
 }
 
-/** The key columns of a table as one row of it addresses them. */
+/** The key columns of a table as one row of it addresses them, and the columns its multi-valued indexes cover. */
 export interface RowKeys {
   readonly alias: string;
   readonly columns: readonly KeyColumn[];
+  readonly elements: readonly string[];
 }
 
 /** One part of an index key, read off a row: the value it compares, and what it orders by. */
@@ -194,7 +195,13 @@ export class ColumnRowSource implements RowSource {
     if (!this.keys) {
       return undefined;
     }
-    return { alias: this.keys.alias, keys: this.keys.columns, source, path };
+    return {
+      alias: this.keys.alias,
+      keys: this.keys.columns,
+      elements: this.keys.elements,
+      source,
+      path,
+    };
   }
 
   /**

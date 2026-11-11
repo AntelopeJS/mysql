@@ -161,7 +161,7 @@ function IndexPart(part: KeyPart): Sql {
     case "key":
       return ident(part.key.name);
     case "elements":
-      return sql`(CAST(JSON_EXTRACT(${ident(part.column)}, '$') AS CHAR(${int(ELEMENT_CHARS)}) ARRAY))`;
+      return sql`(CAST(${json.indexedElements(ident(part.column))} AS CHAR(${int(ELEMENT_CHARS)}) ARRAY))`;
   }
 }
 

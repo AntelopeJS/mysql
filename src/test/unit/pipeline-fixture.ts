@@ -76,6 +76,10 @@ interface Profile {
   skills: string[];
 }
 
+interface Tagged {
+  labels: string[];
+}
+
 /** A row whose declared field takes the name a numbered subselect would give its row numbers. */
 interface Entry {
   _row: number;
@@ -86,13 +90,15 @@ interface Directory {
   products: Product;
   logs: Record<string, number>;
   profiles: Profile;
+  tagged: Tagged;
   entries: Entry;
 }
 
 /**
  * The tables the specs compile against. `people` declares an index on two stored fields, one on a
  * declared string (a prefix key column), a unique one on a path below a declared object (an exact
- * key column) and one on a path below the overflow column; `profiles` holds a list.
+ * key column) and one on a path below the overflow column; `profiles` holds a list with a
+ * multi-valued index over it, and `tagged` a list with no index.
  */
 const DIRECTORY: SchemaDefinition = {
   people: {
@@ -116,6 +122,7 @@ const DIRECTORY: SchemaDefinition = {
     fields: { name: "string", skills: "string[]" },
     indexes: { skills: { fields: ["skills"], multi: true } },
   },
+  tagged: { fields: { labels: "string[]" }, indexes: {} },
   entries: { fields: { _row: "number" }, indexes: {} },
 };
 
@@ -192,6 +199,11 @@ export function LogsRoot() {
 /** The table declaring a field whose type is a list, with a `multi` index over it. */
 export function ProfilesRoot() {
   return Table("profiles", undefined);
+}
+
+/** The table declaring a list field that no index covers. */
+export function TaggedRoot() {
+  return Table("tagged", undefined);
 }
 
 /** The table declaring a field named `_row`. */

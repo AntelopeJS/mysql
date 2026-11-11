@@ -165,7 +165,7 @@ describe("A selection by key", () => {
   it("matches a list column by membership, one test per key", () => {
     const bound = Compile(ProfilesRoot().getAll(["ts", "go"], "skills"));
     expect(bound.sql).to.include(
-      "((? MEMBER OF (`t0`.`skills`)) OR (? MEMBER OF (`t0`.`skills`)))",
+      "((? MEMBER OF (JSON_EXTRACT(`t0`.`skills`, '$'))) OR (? MEMBER OF (JSON_EXTRACT(`t0`.`skills`, '$'))))",
     );
     expect(bound.args).to.deep.equal(["", "ts", "go"]);
   });

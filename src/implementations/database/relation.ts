@@ -3,7 +3,7 @@ import assert from "node:assert";
 import type { Dialect } from "../../dialect";
 import type { Sql } from "../../statement";
 import type { SqlType } from "./types";
-import type { TablePlan } from "./plan";
+import { ElementColumns, type TablePlan } from "./plan";
 import type { TableModel } from "./fields";
 import { type Compiled, QualifiedColumn } from "./sql";
 import {
@@ -201,7 +201,13 @@ function TableSource(
     return new ExternalRowSource(dialect, alias, origin.model, reads);
   }
   const keys =
-    reads === "table" ? { alias, columns: origin.plan.keyColumns } : undefined;
+    reads === "table"
+      ? {
+          alias,
+          columns: origin.plan.keyColumns,
+          elements: ElementColumns(origin.plan),
+        }
+      : undefined;
   return new ColumnRowSource(
     dialect,
     AliasedColumns(alias),

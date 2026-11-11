@@ -5,7 +5,7 @@ import type { Walk } from "../../dialect/sql-types";
 import { type Sql, join, sql } from "../../statement";
 import { Cast } from "./coerce";
 import type { Compiled } from "./sql";
-import { Collected } from "./json";
+import { Collected, Contains } from "./json";
 import { GuardJson } from "./json-guard";
 import { DecodeFunction, RecordedLambda } from "./value";
 import type { DecodingContext } from "./context";
@@ -95,7 +95,7 @@ const IncludesStage = Lift((value, args, stage, context) => {
     RequireOperand(args[FIRST_OPERAND], stage, FIRST_OPERAND),
   );
   return {
-    sql: dialect.sql.json.includes(AsJson(dialect, value).sql, other.sql),
+    sql: Contains(dialect, AsJson(dialect, value), other.sql),
     type: BOOL,
   };
 });

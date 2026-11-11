@@ -70,6 +70,23 @@ export function PathReference(
   return KeyAt(path.alias, path.keys, path.source, path.path, read);
 }
 
+/**
+ * Whether a JSON array holds the element. A column a multi-valued index is built over is named
+ * through the index's own expression, which is what lets the server serve the test from the index;
+ * any other array is named as it is.
+ */
+export function Contains(dialect: Dialect, array: Compiled, element: Sql): Sql {
+  const path = array.path;
+  const isIndexed =
+    path !== undefined &&
+    path.path.length === 0 &&
+    path.elements.includes(path.source);
+  const operand = isIndexed
+    ? dialect.sql.json.indexedElements(array.sql)
+    : array.sql;
+  return dialect.sql.json.includes(operand, element);
+}
+
 /** The comparisons a key column can serve, in the operand order they are written. */
 export type Ordering = "=" | "<" | "<=" | ">" | ">=";
 

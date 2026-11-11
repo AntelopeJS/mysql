@@ -56,6 +56,7 @@ const MASKED_JSON: JsonSyntax = {
     Marked(document, ...entries.map(([, value]) => value)),
   hasKey: (document) => Marked(document),
   includes: (array, element) => Marked(array, element),
+  indexedElements: (column) => Marked(column),
   truthy: (value) => Marked(value),
   collect: (element, order) => Marked(element, ...Present(order)),
   length: (container) => Marked(container),

@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { ValueProxy } from "@antelopejs/interface-database";
 
-import { Compile, ProfilesRoot } from "./pipeline-fixture";
+import { Compile, ProfilesRoot, TaggedRoot } from "./pipeline-fixture";
 import { Occurrences, Projected } from "./expression-fixture";
 
 const SKILLS = "`t0`.`skills`";
@@ -36,9 +36,20 @@ describe("The array stages", () => {
     expect(bound.args.slice(0, 2)).to.deep.equal([-1, -1]);
   });
 
-  it("test an element with MEMBER OF and no guard, which a multi-valued index serves", () => {
+  it("test an element with MEMBER OF and no guard, naming the column as its multi-valued index is built on", () => {
     const sql = Projected(Skills((doc) => doc.key("skills").includes("ts")));
-    expect(sql).to.equal(`(CAST(JSON_QUOTE(?) AS JSON) MEMBER OF (${SKILLS}))`);
+    expect(sql).to.equal(
+      `(CAST(JSON_QUOTE(?) AS JSON) MEMBER OF (JSON_EXTRACT(${SKILLS}, '$')))`,
+    );
+  });
+
+  it("test an element of a list no multi-valued index covers against the bare column", () => {
+    const sql = Projected(
+      Compile(TaggedRoot().map((doc) => doc.key("labels").includes("a"))),
+    );
+    expect(sql).to.equal(
+      "(CAST(JSON_QUOTE(?) AS JSON) MEMBER OF (`t0`.`labels`))",
+    );
   });
 
   it("slice onto 1-based ordinals, the lower bound strict and the upper inclusive", () => {

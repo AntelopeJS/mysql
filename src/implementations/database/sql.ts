@@ -21,11 +21,13 @@ export interface KeyReference {
  * Where a value read from a table's row comes from: a physical column and the JSON path below it.
  * Carried while the value is still that read, so a read that lands on what a key column holds can
  * name the key column instead. `keys` are the table's key columns at the row's alias, present only
- * where the row is the table itself and not a subselect that left them out.
+ * where the row is the table itself and not a subselect that left them out. `elements` are the
+ * columns a multi-valued index is built over.
  */
 export interface ValuePath {
   readonly alias: string;
   readonly keys: readonly KeyColumn[];
+  readonly elements: readonly string[];
   readonly source: string;
   readonly path: readonly string[];
 }

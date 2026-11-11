@@ -270,6 +270,7 @@ export const json: JsonSyntax = {
   hasKey: (document, key) =>
     sql`JSON_CONTAINS_PATH(${document}, 'one', ${KeyPath(key)})`,
   includes: (array, element) => sql`(${element} MEMBER OF (${array}))`,
+  indexedElements: (column) => sql`JSON_EXTRACT(${column}, '$')`,
   truthy: (value) => sql`(NOT (${value} MEMBER OF (${FALSY})))`,
   collect: Collect,
   length: (container) => sql`JSON_LENGTH(${container})`,

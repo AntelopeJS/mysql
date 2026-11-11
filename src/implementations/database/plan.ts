@@ -227,6 +227,14 @@ function DistinctKeyColumns(indexes: readonly IndexPlan[]): KeyColumn[] {
   return [...byName.values()];
 }
 
+/** The columns a table's multi-valued indexes are built over, where a membership test can be served by one. */
+export function ElementColumns(plan: TablePlan): string[] {
+  const columns = plan.indexes
+    .flatMap((index) => index.parts)
+    .flatMap((part) => (part.kind === "elements" ? [part.column] : []));
+  return [...new Set(columns)];
+}
+
 /** Refuses two names MySQL would read as one: names compare without case. */
 function AssertDistinct(claims: readonly (readonly [string, string])[]): void {
   const owners = new Map<string, string>();

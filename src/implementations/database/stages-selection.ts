@@ -11,7 +11,7 @@ import { StoredAs } from "./readings";
 import { DecodeValue } from "./value";
 import type { DecodingContext } from "./context";
 import { type Compiled, QualifiedColumn } from "./sql";
-import { Compare, EqualityKey, type Ordering } from "./json";
+import { Compare, Contains, EqualityKey, type Ordering } from "./json";
 import { KeylessRefusal } from "./external-refusals";
 import type { PipelineStage, PipelineStageMap } from "./pipeline";
 import { ID_COLUMN, INSTANCE_COLUMN, OptionsOf } from "./utils";
@@ -168,7 +168,7 @@ function Contained(selection: KeySelection, keys: readonly QueryValue[]): Sql {
   const tests = keys.map((key) => {
     const value = Decoded(selection, key, FIRST_OPERAND);
     const element = StoredAs(dialect, value, elem).sql;
-    return dialect.sql.json.includes(column.sql, element);
+    return Contains(dialect, column, element);
   });
   return join(tests, sql` OR `);
 }

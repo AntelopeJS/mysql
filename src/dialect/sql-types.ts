@@ -104,6 +104,11 @@ export interface JsonSyntax {
   hasKey(document: Sql, key: string): Sql;
   /** Whether a JSON array holds the scalar or JSON element, as an index over its elements serves. */
   includes(array: Sql, element: Sql): Sql;
+  /**
+   * The array a column's multi-valued index is built on. A test that names the column through it,
+   * as `includes` does, is served by the index; one that names the bare column is not.
+   */
+  indexedElements(column: Sql): Sql;
   /** Whether a value is truthy in JavaScript's sense; SQL NULL stays SQL NULL. */
   truthy(value: Sql): Sql;
   /**
