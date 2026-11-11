@@ -81,3 +81,17 @@ export function IsArray(type: SqlType): type is ArrayType {
 export function KeyTypesOf(type: SqlType): KeyTypes | undefined {
   return type.kind === "json" ? type.keys : undefined;
 }
+
+/**
+ * The type of two objects merged one level deep, the right's members over the left's, so a date
+ * that survives a merge still decodes as a date. Either side whose members are unknown makes the
+ * whole result unknown, because the merge may then add a key nothing declared.
+ */
+export function MergeKeyTypes(left: SqlType, right: SqlType): SqlType {
+  const known = KeyTypesOf(left);
+  const overriding = KeyTypesOf(right);
+  if (!known || !overriding) {
+    return OPAQUE;
+  }
+  return JsonOf({ ...known, ...overriding });
+}

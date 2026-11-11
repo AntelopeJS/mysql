@@ -43,6 +43,22 @@ export interface DocumentMember {
   readonly container: boolean;
 }
 
+/** What a walk iterates: a list's elements, an object's keys, or an object's member values. */
+export type WalkKind = "elements" | "keys" | "members";
+
+/**
+ * Rows over a container's contents, in the container's own order, for a scalar subquery that
+ * aggregates them. A non-container yields no row; a JSON null element reads as SQL NULL.
+ */
+export interface Walk {
+  /** The 1-based place of a row in the container's order. */
+  readonly ordinal: Sql;
+  /** An element, a key as a JSON string, or a member's value. */
+  readonly value: Sql;
+  /** The scalar subquery that evaluates `select` over the rows `where` keeps, or over all of them. */
+  aggregate(select: Sql, where?: Sql): Sql;
+}
+
 /**
  * JSON access and construction. Every value going in and coming out is a JSON value except where a
  * member says it reads or takes a scalar; SQL NULL stays SQL NULL throughout.
@@ -88,6 +104,65 @@ export interface JsonSyntax {
    * deduplicated, never both.
    */
   collect(element: Sql, order: Sql | undefined, distinct: boolean): Sql;
+  /** The number of elements of an array, or of members of an object. */
+  length(container: Sql): Sql;
+  /**
+   * The element at a 0-based position of an array, counted from the end when negative; SQL NULL
+   * beyond either end. The position is a number, truncated and clamped to the range an array can
+   * hold. Only an array is meant to reach it.
+   */
+  at(array: Sql, position: Sql): Sql;
+  /** An array followed by the elements of another, or by a single value; a non-array is left to the engine. */
+  concatArrays(left: Sql, right: Sql): Sql;
+  /**
+   * Two objects merged one level deep, the right's members winning and any null kept. SQL NULL
+   * where either is not an object. `alias` names the derived tables the merge holds each side in,
+   * so it spells each operand once however many merges are chained.
+   */
+  shallowMerge(left: Sql, right: Sql, alias: string): Sql;
+  /**
+   * Text split at every occurrence of a non-empty separator into a JSON array of texts, the first
+   * `limit` of them when given; SQL NULL for SQL NULL. An empty text is one empty piece, as in
+   * JavaScript. `alias` names the derived tables, as for {@link JsonSyntax.shallowMerge}.
+   */
+  split(
+    text: Sql,
+    separator: string,
+    limit: number | undefined,
+    alias: string,
+  ): Sql;
+  /** The rows over a container's contents; `alias` names them. */
+  walk(kind: WalkKind, source: Sql, alias: string): Walk;
+}
+
+/**
+ * Integer arithmetic as JavaScript's bitwise operators do it. Every operand and every result is an
+ * integer read through {@link Int32Syntax.read}; none of them ever fails the statement.
+ */
+export interface Int32Syntax {
+  /** A number as `ToInt32` reads it: truncated, wrapped modulo 2^32 and signed. SQL NULL stays SQL NULL. */
+  read(value: Sql): Sql;
+  and(left: Sql, right: Sql): Sql;
+  or(left: Sql, right: Sql): Sql;
+  xor(left: Sql, right: Sql): Sql;
+  not(value: Sql): Sql;
+  /** `value << count`, the count taken modulo 32. */
+  shiftLeft(value: Sql, count: Sql): Sql;
+  /** `value >> count`, which keeps the sign. */
+  shiftRight(value: Sql, count: Sql): Sql;
+  /** `value >>> count`, which fills with zeros: the unsigned 32-bit result. */
+  shiftRightUnsigned(value: Sql, count: Sql): Sql;
+}
+
+/** Regular expressions, in the flavour of the engine and written in JavaScript's. */
+export interface RegexSyntax {
+  /**
+   * A JavaScript pattern rewritten for the engine, where the two flavours disagree on what `.`,
+   * `$` and a nested class mean.
+   */
+  translate(pattern: string): string;
+  /** Whether text matches a pattern, case-sensitively; SQL NULL where either is. */
+  matches(text: Sql, pattern: Sql): Sql;
 }
 
 /** Text and number readings an engine spells its own way. */
@@ -103,10 +178,31 @@ export interface ScalarSyntax {
   concat(parts: readonly Sql[]): Sql;
   /** The first `width` characters of a text. */
   left(text: Sql, width: number): Sql;
+  readonly int32: Int32Syntax;
+  readonly regex: RegexSyntax;
 }
+
+/** The calendar and clock readings of an instant. */
+export type TimePart =
+  | "year"
+  | "month"
+  | "day"
+  | "weekday"
+  | "dayOfYear"
+  | "hour"
+  | "minute"
+  | "second"
+  | "timeOfDay";
 
 /** Instants: stored in UTC, read and written in JavaScript's spellings. */
 export interface TimeSyntax {
+  /**
+   * A reading of an instant as a number: the weekday runs from Monday 1 to Sunday 7, and `second`
+   * and `timeOfDay` (in seconds since midnight) carry the fraction.
+   */
+  part(moment: Sql, part: TimePart): Sql;
+  /** The wall-clock reading of an instant in a named or offset zone; SQL NULL for a zone the engine does not know. */
+  inZone(moment: Sql, zone: Sql): Sql;
   /** An instant as `Date.prototype.toISOString` spells it. */
   isoText(value: Sql): Sql;
   /** An instant as epoch milliseconds. */

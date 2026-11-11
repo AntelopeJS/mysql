@@ -4,7 +4,9 @@ import type { StagedObject } from "@antelopejs/interface-database/common";
 import { DIALECTS, type Dialect } from "../../dialect";
 import type {
   CompilerSyntax,
+  Int32Syntax,
   JsonSyntax,
+  RegexSyntax,
   RowSyntax,
   ScalarSyntax,
   TimeSyntax,
@@ -55,6 +57,32 @@ const MASKED_JSON: JsonSyntax = {
   includes: (array, element) => Marked(array, element),
   truthy: (value) => Marked(value),
   collect: (element, order) => Marked(element, ...Present(order)),
+  length: (container) => Marked(container),
+  at: (array, position) => Marked(array, position),
+  concatArrays: (left, right) => Marked(left, right),
+  shallowMerge: (left, right) => Marked(left, right),
+  split: (text) => Marked(text),
+  walk: (_kind, source) => ({
+    ordinal: Marked(),
+    value: Marked(),
+    aggregate: (select, where) => Marked(source, select, ...Present(where)),
+  }),
+};
+
+const MASKED_INT32: Int32Syntax = {
+  read: (value) => Marked(value),
+  and: (left, right) => Marked(left, right),
+  or: (left, right) => Marked(left, right),
+  xor: (left, right) => Marked(left, right),
+  not: (value) => Marked(value),
+  shiftLeft: (value, count) => Marked(value, count),
+  shiftRight: (value, count) => Marked(value, count),
+  shiftRightUnsigned: (value, count) => Marked(value, count),
+};
+
+const MASKED_REGEX: RegexSyntax = {
+  translate: (pattern) => pattern,
+  matches: (text, pattern) => Marked(text, pattern),
 };
 
 const MASKED_SCALAR: ScalarSyntax = {
@@ -70,9 +98,13 @@ const MASKED_SCALAR: ScalarSyntax = {
   truncate: (value) => Marked(value),
   concat: (parts) => Marked(...parts),
   left: (text) => Marked(text),
+  int32: MASKED_INT32,
+  regex: MASKED_REGEX,
 };
 
 const MASKED_TIME: TimeSyntax = {
+  part: (moment) => Marked(moment),
+  inZone: (moment, zone) => Marked(moment, zone),
   isoText: (value) => Marked(value),
   toEpochMs: (value) => Marked(value),
   fromEpochMs: (value) => Marked(value),
@@ -172,6 +204,78 @@ const READS: [string, () => StagedObject][] = [
     "an overflow-only table",
     () => LogsRoot().filter((doc) => doc.key("x").ge(1)),
   ],
+  [
+    "string stages",
+    () =>
+      Root()
+        .filter((doc) =>
+          doc
+            .key("name")
+            .match("^A.b$")
+            .and(doc.key("name").concat("!").upcase().strlen().gt(3)),
+        )
+        .map((doc) => doc.key("name").split(",", 2)),
+  ],
+  [
+    "numeric and bitwise stages",
+    () =>
+      Root().map((doc) => ({
+        sum: doc.key("age").add(1).mul(2).sub(3),
+        quotient: doc.key("age").div(2).mod(5).round().ceil().floor(),
+        bits: doc.key("age").band(3).bor(4).bxor(5).bnot(),
+        shifts: doc.key("age").blshift(2).brshift(1).brshiftPreserveSign(1),
+      })),
+  ],
+  [
+    "date stages",
+    () =>
+      Root()
+        .filter((doc) =>
+          doc
+            .key("joined")
+            .year("Europe/Paris")
+            .eq(2020)
+            .and(doc.key("joined").during(0, 10)),
+        )
+        .map((doc) => ({
+          later: doc.key("joined").add(60),
+          elapsed: doc.key("joined").sub(new Date(0)),
+          parts: [
+            doc.key("joined").dayofweek(),
+            doc.key("joined").seconds(),
+            doc.key("joined").timeofday(),
+            doc.key("joined").epoch(),
+          ],
+        })),
+  ],
+  [
+    "array stages",
+    () =>
+      ProfilesRoot().map((doc) => ({
+        measures: [doc.key("skills").count(), doc.key("skills").isempty()],
+        picks: [
+          doc.key("skills").index(-1),
+          doc.key("skills").includes("ts"),
+          doc.key("skills").slice(1, -1),
+        ],
+        walked: [
+          doc.key("skills").map((skill) => skill.upcase()),
+          doc.key("skills").filter((skill) => skill.eq("ts")),
+          doc.key("skills").min(),
+        ],
+        joined: doc.key("skills").add(["x"]),
+      })),
+  ],
+  [
+    "object stages",
+    () =>
+      Root().map((doc) => ({
+        merged: doc.key("meta").merge({ owner: "x" }).merge({ title: "y" }),
+        keys: doc.key("meta").keys(),
+        values: doc.key("meta").values(),
+        has: doc.key("meta").hasfields("title", "owner"),
+      })),
+  ],
 ];
 
 const WRITES: [string, () => StagedObject][] = [
@@ -267,6 +371,37 @@ describe("The dialect seam", () => {
       .join("\n");
     expect(real).to.match(/JSON_EXTRACT|JSON_MERGE_PRESERVE|CAST\(/);
     expect(masked).to.not.match(/JSON_|CAST\(|DATE_FORMAT|NO_MERGE|<=>|LIMIT/);
+  });
+
+  it("masks the members the value stages read, so each engine spelling comes from the dialect alone", () => {
+    const masked = CompiledCorpus(MASKED)
+      .map(([, statement]) => statement.sql)
+      .join("\n");
+    const real = CompiledCorpus(DIALECTS.mysql)
+      .map(([, statement]) => statement.sql)
+      .join("\n");
+    const SPELLINGS = [
+      "REGEXP_LIKE",
+      "CONCAT(",
+      "JSON_TABLE",
+      "JSON_OBJECTAGG",
+      "SUBSTRING_INDEX",
+      "TIMESTAMPADD",
+      "CONVERT_TZ",
+      "MEMBER OF",
+      "MOD(MOD(",
+      " & ",
+      " ^ ",
+      "~(",
+      " << ",
+      " >> ",
+    ];
+    for (const spelling of SPELLINGS) {
+      expect(real, `the real dialect spells ${spelling}`).to.include(spelling);
+      expect(masked, `a compiler file spells ${spelling}`).to.not.include(
+        spelling,
+      );
+    }
   });
 
   it("compiles every pipeline of the corpus with the MySQL dialect too", () => {

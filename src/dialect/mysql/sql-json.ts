@@ -3,8 +3,10 @@ import type {
   JsonKind,
   JsonSyntax,
   ScalarKind,
+  Walk,
+  WalkKind,
 } from "../sql-types";
-import { type Sql, join, lit, sql } from "../../statement";
+import { type Sql, ident, int, join, lit, param, sql } from "../../statement";
 import { IsoText, ParseInstant } from "./sql-time";
 
 /** What `JSON_TYPE` answers for each kind; a JSON number has four. */
@@ -140,10 +142,104 @@ function Collect(element: Sql, order: Sql | undefined, distinct: boolean): Sql {
   return sql`COALESCE(CAST(CONCAT('[', GROUP_CONCAT(${ordered} SEPARATOR ','), ']') AS JSON), JSON_ARRAY())`;
 }
 
+/** A path to the one key a statement computes, quoted as {@link KeyPath} quotes a static one. */
+function DynamicPath(key: Sql): Sql {
+  return sql`CONCAT('$.', CAST(JSON_QUOTE(${key}) AS CHAR))`;
+}
+
+/** The most an array position is clamped to either way, which no array reaches. */
+const POSITION_LIMIT = 2147483647;
+
+/**
+ * `$[n]` counts from the start and `$[last-n]` from the end, so a negative position is the
+ * distance from the end less one. The position is spelled in each branch.
+ */
+function At(array: Sql, position: Sql): Sql {
+  const clamped = sql`LEAST(GREATEST(TRUNCATE(${position}, 0), ${int(-POSITION_LIMIT - 1)}), ${int(POSITION_LIMIT)})`;
+  const index = sql`CAST(${clamped} AS SIGNED)`;
+  const path = sql`CONCAT('$[', IF(${index} >= 0, CAST(${index} AS CHAR), CONCAT('last-', CAST(-1 - ${index} AS CHAR))), ']')`;
+  return sql`JSON_EXTRACT(${array}, ${path})`;
+}
+
+const ORDINAL = ident("ord");
+const VALUE = ident("value");
+const WALK_COLUMNS = sql`COLUMNS (${ORDINAL} FOR ORDINALITY, ${VALUE} JSON PATH '$')`;
+
+/**
+ * An object's keys and its member values come from the server's own order of the object, which is
+ * the same for both, so a walk of each lines up element for element.
+ */
+const WALK_ROWS: Record<WalkKind, (source: Sql) => Sql> = {
+  elements: (source) => sql`JSON_TABLE(${source}, '$[*]' ${WALK_COLUMNS})`,
+  keys: (source) =>
+    sql`JSON_TABLE(JSON_KEYS(${source}), '$[*]' ${WALK_COLUMNS})`,
+  members: (source) => sql`JSON_TABLE(${source}, '$.*' ${WALK_COLUMNS})`,
+};
+
+function WalkRows(kind: WalkKind, source: Sql, alias: string): Walk {
+  const rows = ident(alias);
+  return {
+    ordinal: sql`${rows}.${ORDINAL}`,
+    value: sql`${rows}.${VALUE}`,
+    aggregate: (select, where) =>
+      sql`(SELECT ${select} FROM ${WALK_ROWS[kind](source)} AS ${rows}${where ? sql` WHERE ${where}` : sql``})`,
+  };
+}
+
+/**
+ * Each side is held once on a derived table, so a merge chained N deep spells its operands once
+ * rather than 2^N times. The keys of both go through one walk: a key in both rows reads the right's
+ * value for each, and `JSON_OBJECTAGG` keeps the one. The guard is outside the aggregate, which
+ * answers a row over no input, so a side that is not an object yields NULL and not `{}`.
+ */
+function ShallowMerge(left: Sql, right: Sql, alias: string): Sql {
+  const held = ident(alias);
+  const keys = ident(`${alias}_k`);
+  const name = sql`${keys}.${ident("name")}`;
+  const leftSide = sql`${held}.${ident("l")}`;
+  const rightSide = sql`${held}.${ident("r")}`;
+  const value = sql`IF(JSON_CONTAINS_PATH(${rightSide}, 'one', ${DynamicPath(name)}), JSON_EXTRACT(${rightSide}, ${DynamicPath(name)}), JSON_EXTRACT(${leftSide}, ${DynamicPath(name)}))`;
+  const merged = sql`(SELECT COALESCE(JSON_OBJECTAGG(${name}, ${value}), ${EMPTY_OBJECT}) FROM JSON_TABLE(JSON_MERGE_PRESERVE(JSON_KEYS(${leftSide}), JSON_KEYS(${rightSide})), '$[*]' COLUMNS (${ident("name")} LONGTEXT PATH '$')) AS ${keys})`;
+  const bothObjects = sql`${Is(leftSide, ["object"])} AND ${Is(rightSide, ["object"])}`;
+  return sql`(SELECT CASE WHEN ${bothObjects} THEN ${merged} END FROM (SELECT ${left} AS ${ident("l")}, ${right} AS ${ident("r")}) AS ${held})`;
+}
+
+/**
+ * The server has no split, so the text is counted for its separators and cut once for each piece
+ * by `SUBSTRING_INDEX`, which matches in the binary collation like every other comparison here. A
+ * row per piece comes from walking a list as long as the count. An empty separator occurs nowhere,
+ * so the whole text is the one piece.
+ */
+function Split(
+  text: Sql,
+  separator: string,
+  limit: number | undefined,
+  alias: string,
+): Sql {
+  const held = ident(alias);
+  const whole = sql`${held}.${ident("t")}`;
+  const pieces = ident(`${alias}_p`);
+  const ordinal = sql`${pieces}.${ORDINAL}`;
+  const bound = param(separator);
+  const occurrences =
+    separator === ""
+      ? sql`0`
+      : sql`((CHAR_LENGTH(${whole}) - CHAR_LENGTH(REPLACE(${whole}, ${bound}, ''))) DIV ${int(Array.from(separator).length)})`;
+  const piece =
+    separator === ""
+      ? whole
+      : sql`SUBSTRING_INDEX(SUBSTRING_INDEX(${whole}, ${bound}, ${ordinal}), ${bound}, -1)`;
+  const rows = sql`JSON_TABLE(CAST(CONCAT('[', REPEAT('0,', ${occurrences}), '0]') AS JSON), '$[*]' COLUMNS (${ORDINAL} FOR ORDINALITY))`;
+  const kept =
+    limit === undefined ? sql`` : sql` WHERE ${ordinal} <= ${int(limit)}`;
+  const array = Collect(WRITINGS.text(piece), ordinal, false);
+  return sql`(SELECT CASE WHEN ${whole} IS NULL THEN NULL ELSE (SELECT ${array} FROM ${rows} AS ${pieces}${kept}) END FROM (SELECT ${text} AS ${ident("t")}) AS ${held})`;
+}
+
 export const json: JsonSyntax = {
   member: (document, key) => sql`JSON_EXTRACT(${document}, ${KeyPath(key)})`,
   dynamicMember: (document, key) =>
-    sql`JSON_EXTRACT(${document}, CONCAT('$.', CAST(JSON_QUOTE(${key}) AS CHAR)))`,
+    sql`JSON_EXTRACT(${document}, ${DynamicPath(key)})`,
   is: Is,
   as: (value, kind) => READS[kind](value),
   of: (value, kind) => WRITINGS[kind](value),
@@ -162,4 +258,10 @@ export const json: JsonSyntax = {
   includes: (array, element) => sql`(${element} MEMBER OF (${array}))`,
   truthy: (value) => sql`(NOT (${value} MEMBER OF (${FALSY})))`,
   collect: Collect,
+  length: (container) => sql`JSON_LENGTH(${container})`,
+  at: At,
+  concatArrays: (left, right) => sql`JSON_MERGE_PRESERVE(${left}, ${right})`,
+  shallowMerge: ShallowMerge,
+  split: Split,
+  walk: WalkRows,
 };
