@@ -231,8 +231,5 @@ describe("A reshaping stage", () => {
     expect(() => Compile(Root().sum("age"))).to.throw(
       /'sum' stage \(aggregate family\) is not implemented/,
     );
-    expect(() =>
-      Compile(Root().filter((doc) => doc.key("age").add(1).gt(2))),
-    ).to.throw(/'add' expression stage \(numeric family\) is not implemented/);
   });
 });

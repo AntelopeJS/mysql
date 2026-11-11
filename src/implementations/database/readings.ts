@@ -33,13 +33,25 @@ const RENDERING: Partial<Record<SqlType["kind"], Rendering>> = {
  * magnitudes a caller renders in practice; the engine reaches for exponent notation at different
  * magnitudes than `Number.prototype.toString` does.
  */
-function Text(dialect: Dialect, value: Compiled): Compiled {
+export function Text(dialect: Dialect, value: Compiled): Compiled {
   const rendering = RENDERING[value.type.kind];
   if (!rendering) {
     return Cast(dialect, value, TEXT);
   }
   return { sql: rendering(dialect, value.sql), type: TEXT };
 }
+
+/**
+ * The kinds the engine orders, each mapped to the type an ordering of it answers with. A boolean
+ * or a JSON operand has no ordering, so every comparison the compiler emits either reads one of
+ * these directly or falls back to {@link Numeric}. The array reducers share the table rather than
+ * each carrying one, so `min` over a stream and over an array cannot answer the same data apart.
+ */
+export const ORDERED_KINDS: Partial<Record<SqlType["kind"], SqlType>> = {
+  text: TEXT,
+  float: FLOAT,
+  timestamp: TIMESTAMP,
+};
 
 const NUMERATION: Partial<Record<SqlType["kind"], Rendering>> = {
   bool: (dialect, value) => dialect.sql.scalar.cast(value, "float"),
@@ -54,7 +66,7 @@ const NUMERATION: Partial<Record<SqlType["kind"], Rendering>> = {
  * decimal literal, so `""` is NULL where `Number("")` is `0` and `"0x10"` is NULL where JavaScript
  * reads 16. A JSON operand keeps the guarded projection, NULL for anything but a JSON number.
  */
-function Numeric(dialect: Dialect, value: Compiled): Compiled {
+export function Numeric(dialect: Dialect, value: Compiled): Compiled {
   const numeration = NUMERATION[value.type.kind];
   if (!numeration) {
     return Cast(dialect, value, FLOAT);
@@ -78,7 +90,7 @@ const INSTANT: Partial<Record<SqlType["kind"], Instant>> = {
  * epoch milliseconds, a boolean through its numeric reading, and text where it spells an ISO 8601
  * date or date-time. Anything outside the range an instant column holds is NULL.
  */
-function Moment(dialect: Dialect, value: Compiled): Compiled {
+export function Moment(dialect: Dialect, value: Compiled): Compiled {
   const instant = INSTANT[value.type.kind];
   if (!instant) {
     return Cast(dialect, value, TIMESTAMP);

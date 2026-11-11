@@ -113,6 +113,23 @@ export function Lift(handler: ValueStage): StageHandler {
   };
 }
 
+export type RawValueStage = (
+  value: Compiled,
+  stage: QueryStage,
+  context: DecodingContext,
+) => Compiled;
+
+/**
+ * {@link Lift} for a stage that reads its arguments raw, because they are not values: a list of
+ * field names, a regular expression pattern, a recorded lambda. Same materialization and the same
+ * dropping of a pending timezone, and no argument decoded.
+ */
+export function LiftRaw(handler: RawValueStage): StageHandler {
+  return (state, stage, context) => ({
+    current: handler(AsValue(state), stage, context),
+  });
+}
+
 /** Builds one handler per entry of an operator table, so a family declares only its table. */
 export function BuildStages<Operator>(
   operators: Record<string, Operator>,
