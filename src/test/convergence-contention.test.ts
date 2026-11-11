@@ -11,11 +11,10 @@ import {
   GetSchemaPrefix,
   Read,
 } from "../connection";
-import { type Sql, ident, lit, sql } from "../statement";
+import { ident, lit, sql } from "../statement";
 import { ParseTable } from "../implementations/database/fields";
 import { BuildTablePlan } from "../implementations/database/plan";
 import { PENDING } from "../implementations/database/convergence";
-import { TableName } from "../implementations/database/identifier";
 import { ConvergeTable } from "../implementations/database/migrate-tables";
 import { ConvergeIndexes } from "../implementations/database/migrate-indexes";
 import {
@@ -29,7 +28,7 @@ import {
   SCHEMA_VARIABLE,
   URL_VARIABLE,
 } from "./contention-schema";
-import { Snapshot } from "./snapshot";
+import { Numbers, PhysicalTable, Run, Snapshot } from "./tables";
 
 interface Exit {
   readonly code: number | null;
@@ -42,29 +41,15 @@ const OTHER_PROCESSES = 2;
 const HELD_MS = 6000;
 const IN_THIS_PROCESS = 2;
 const REGISTERING_PROCESS = path.join(__dirname, "register-process.js");
-const DIGITS = sql`(SELECT 0 AS d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9)`;
-
-function Table(schemaId: string): string {
-  return TableName(GetSchemaPrefix(), schemaId, "items");
-}
-
-async function Run(statement: Sql): Promise<void> {
-  const connection = await AcquireConnection();
-  try {
-    await SessionOf(connection).apply(statement);
-  } finally {
-    connection.release();
-  }
-}
 
 /** The table as {@link BEFORE} declares it, with 3000 rows over two instances holding `b` in `_extra`. */
 async function Prepare(schemaId: string): Promise<void> {
-  const table = ident(Table(schemaId));
+  const table = ident(PhysicalTable(schemaId));
   await Run(sql`DROP TABLE IF EXISTS ${table}`);
   await Schemas.register(schemaId, BEFORE);
   await WaitForIndexes(schemaId);
   await Run(
-    sql`INSERT INTO ${table} (_id, _instance, a, _extra) SELECT LPAD(n, 4, '0'), IF(n % 2 = 0, '', 'tenant'), CONCAT('a-', n), JSON_OBJECT('b', CONCAT('b-', n % 100), 'note', JSON_OBJECT('text', CONCAT('note ', n))) FROM (SELECT a.d + 10 * b.d + 100 * c.d + 1000 * e.d AS n FROM ${DIGITS} AS a CROSS JOIN ${DIGITS} AS b CROSS JOIN ${DIGITS} AS c CROSS JOIN ${DIGITS} AS e) AS numbers WHERE n < 3000`,
+    sql`INSERT INTO ${table} (_id, _instance, a, _extra) SELECT LPAD(n, 4, '0'), IF(n % 2 = 0, '', 'tenant'), CONCAT('a-', n), JSON_OBJECT('b', CONCAT('b-', n % 100), 'note', JSON_OBJECT('text', CONCAT('note ', n))) FROM ${Numbers(4)} AS numbers WHERE n < 3000`,
   );
 }
 
@@ -125,7 +110,7 @@ describe("one schema registered by several module instances at once", function (
   it("converges to what one registration alone builds, every registration succeeding", async () => {
     await Prepare("contention_alone");
     await RegisterHere("contention_alone");
-    const alone = await Snapshot(Table("contention_alone"));
+    const alone = await Snapshot(PhysicalTable("contention_alone"));
     expect(alone.indexes, "the reference built its indexes").to.not.deep.equal(
       [],
     );
@@ -145,7 +130,7 @@ describe("one schema registered by several module instances at once", function (
     expect(exits.map(({ code, stderr }) => ({ code, stderr }))).to.deep.equal(
       Array.from({ length: OTHER_PROCESSES }, () => ({ code: 0, stderr: "" })),
     );
-    expect(await Snapshot(Table(schemaId))).to.deep.equal(alone);
+    expect(await Snapshot(PhysicalTable(schemaId))).to.deep.equal(alone);
     const converged = [...here, ...exits.flatMap((exit) => exit.logged)].filter(
       (line) => line.startsWith(`converged the tables of schema '${schemaId}'`),
     );
@@ -169,7 +154,10 @@ describe("a convergence step that meets another session", function () {
     await Prepare(schemaId);
     const holder = await AcquireConnection();
     await SessionOf(holder).apply(sql`START TRANSACTION`);
-    await Read(sql`SELECT _id FROM ${ident(Table(schemaId))} LIMIT 1`, holder);
+    await Read(
+      sql`SELECT _id FROM ${ident(PhysicalTable(schemaId))} LIMIT 1`,
+      holder,
+    );
     const started = Date.now();
     const released = delay(HELD_MS).then(async () => {
       await SessionOf(holder).apply(sql`COMMIT`);
@@ -182,8 +170,8 @@ describe("a convergence step that meets another session", function () {
     );
     await Prepare("contention_reference");
     await RegisterHere("contention_reference");
-    expect(await Snapshot(Table(schemaId))).to.deep.equal(
-      await Snapshot(Table("contention_reference")),
+    expect(await Snapshot(PhysicalTable(schemaId))).to.deep.equal(
+      await Snapshot(PhysicalTable("contention_reference")),
     );
   });
 
@@ -191,7 +179,7 @@ describe("a convergence step that meets another session", function () {
     const schemaId = "contention_raced";
     await Prepare(schemaId);
     Schemas.unregister(schemaId);
-    const table = ident(Table(schemaId));
+    const table = ident(PhysicalTable(schemaId));
     const plan = BuildTablePlan(
       schemaId,
       "items",
@@ -223,8 +211,8 @@ describe("a convergence step that meets another session", function () {
     expect(isRaced).to.equal(true);
     await Prepare("contention_reference");
     await RegisterHere("contention_reference");
-    expect(await Snapshot(Table(schemaId))).to.deep.equal(
-      await Snapshot(Table("contention_reference")),
+    expect(await Snapshot(PhysicalTable(schemaId))).to.deep.equal(
+      await Snapshot(PhysicalTable("contention_reference")),
     );
   });
 });

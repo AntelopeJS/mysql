@@ -3,15 +3,14 @@ import type { QueryStage } from "@antelopejs/interface-database/common";
 import type { SchemaDefinition } from "@antelopejs/interface-database/schema";
 
 import { type Sql, ident, sql } from "../statement";
-import { AcquireConnection, GetSchemaPrefix, Read } from "../connection";
-import { TableName } from "../implementations/database/identifier";
-import { SessionOf } from "../implementations/database/locks";
+import { Read } from "../connection";
 import {
   CreateInstance,
   DestroyInstance,
   ListInstances,
 } from "../implementations/database/instances";
 import { Schemas } from "../implementations/database/schema";
+import { PhysicalTable, Run } from "./tables";
 
 const SCHEMA_ID = "instances_registry";
 const OTHER_SCHEMA_ID = "instances_neighbour";
@@ -30,16 +29,7 @@ function Destroy(id?: string): QueryStage {
 }
 
 function Table(schemaId: string, tableId: string): Sql {
-  return ident(TableName(GetSchemaPrefix(), schemaId, tableId));
-}
-
-async function Run(statement: Sql): Promise<void> {
-  const connection = await AcquireConnection();
-  try {
-    await SessionOf(connection).apply(statement);
-  } finally {
-    connection.release();
-  }
+  return ident(PhysicalTable(schemaId, tableId));
 }
 
 /** One row per table for each of the default instance, `alpha` and `beta`. */

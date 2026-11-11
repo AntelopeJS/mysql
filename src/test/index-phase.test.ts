@@ -3,9 +3,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { PoolConnection } from "mysql2/promise";
 import type { SchemaDefinition } from "@antelopejs/interface-database/schema";
 
-import { type Sql, ident, param, sql } from "../statement";
-import { AcquireConnection, GetSchemaPrefix, Read } from "../connection";
-import { TableName } from "../implementations/database/identifier";
+import { ident, param, sql } from "../statement";
+import { AcquireConnection, Read } from "../connection";
 import {
   FailureOf,
   Interrupt,
@@ -18,6 +17,7 @@ import {
   WaitForIndexes,
   WaitForUniqueIndexes,
 } from "../implementations/database/schema";
+import { Numbers, PhysicalTable, Run } from "./tables";
 
 interface Settling {
   isSettled: boolean;
@@ -43,33 +43,15 @@ const POLL_MS = 5;
 const POLL_ATTEMPTS = 2000;
 const BLOCKED_MS = 300;
 
-const DIGITS = sql`(SELECT 0 AS d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9)`;
-
-function Table(schemaId: string): string {
-  return TableName(GetSchemaPrefix(), schemaId, "items");
-}
-
-async function Run(statement: Sql, held?: PoolConnection): Promise<void> {
-  const connection = held ?? (await AcquireConnection());
-  try {
-    await SessionOf(connection).apply(statement);
-  } finally {
-    if (!held) {
-      connection.release();
-    }
-  }
-}
-
 /** `rows` rows in the default instance, each with its own `sku` and `_extra.color`. */
 async function Seed(schemaId: string, rows: number): Promise<void> {
-  const numbers = sql`(SELECT a.d + 10 * b.d + 100 * c.d + 1000 * e.d + 10000 * f.d + 100000 * g.d AS n FROM ${DIGITS} AS a CROSS JOIN ${DIGITS} AS b CROSS JOIN ${DIGITS} AS c CROSS JOIN ${DIGITS} AS e CROSS JOIN ${DIGITS} AS f CROSS JOIN ${DIGITS} AS g)`;
   await Run(
-    sql`INSERT INTO ${ident(Table(schemaId))} (_id, _instance, sku, price, _extra) SELECT LPAD(n, 7, '0'), '', CONCAT('sku-', n), n, JSON_OBJECT('color', CONCAT('color-', n % 1000)) FROM ${numbers} AS numbers WHERE n < ${param(rows)}`,
+    sql`INSERT INTO ${ident(PhysicalTable(schemaId))} (_id, _instance, sku, price, _extra) SELECT LPAD(n, 7, '0'), '', CONCAT('sku-', n), n, JSON_OBJECT('color', CONCAT('color-', n % 1000)) FROM ${Numbers(6)} AS numbers WHERE n < ${param(rows)}`,
   );
 }
 
 async function Fresh(schemaId: string, rows: number): Promise<void> {
-  await Run(sql`DROP TABLE IF EXISTS ${ident(Table(schemaId))}`);
+  await Run(sql`DROP TABLE IF EXISTS ${ident(PhysicalTable(schemaId))}`);
   await Schemas.register(schemaId, BARE);
   await WaitForIndexes(schemaId);
   await Seed(schemaId, rows);
@@ -77,14 +59,14 @@ async function Fresh(schemaId: string, rows: number): Promise<void> {
 
 async function IndexNames(schemaId: string): Promise<string[]> {
   const rows = await Read(
-    sql`SELECT DISTINCT INDEX_NAME AS name FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${param(Table(schemaId))} AND INDEX_NAME <> 'PRIMARY' ORDER BY INDEX_NAME`,
+    sql`SELECT DISTINCT INDEX_NAME AS name FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${param(PhysicalTable(schemaId))} AND INDEX_NAME <> 'PRIMARY' ORDER BY INDEX_NAME`,
   );
   return rows.map((row) => String(row.get("name")));
 }
 
 /** Whether a statement adding an index to the table is running on the server right now. */
 async function IsBuilding(schemaId: string): Promise<boolean> {
-  const pattern = `ALTER TABLE \`${Table(schemaId)}\` ADD INDEX%`;
+  const pattern = `ALTER TABLE \`${PhysicalTable(schemaId)}\` ADD INDEX%`;
   const rows = await Read(
     sql`SELECT ID FROM performance_schema.processlist WHERE INFO LIKE ${param(pattern)}`,
   );
@@ -116,7 +98,7 @@ async function HoldTable(schemaId: string): Promise<PoolConnection> {
   const connection = await AcquireConnection();
   await Run(sql`START TRANSACTION`, connection);
   await Read(
-    sql`SELECT _id FROM ${ident(Table(schemaId))} LIMIT 1`,
+    sql`SELECT _id FROM ${ident(PhysicalTable(schemaId))} LIMIT 1`,
     connection,
   );
   return connection;
@@ -143,7 +125,7 @@ describe("an index build on a large table", function () {
     await Schemas.register(schemaId, COLORED);
     await UntilBuilding(schemaId);
     await Run(
-      sql`INSERT INTO ${ident(Table(schemaId))} (_id, _instance, sku) VALUES ('written-during-build', '', 'late')`,
+      sql`INSERT INTO ${ident(PhysicalTable(schemaId))} (_id, _instance, sku) VALUES ('written-during-build', '', 'late')`,
     );
     expect(await IsBuilding(schemaId), "the build outlived the write").to.equal(
       true,
@@ -153,7 +135,9 @@ describe("an index build on a large table", function () {
   });
 
   it("stops a running build when it is interrupted, leaving no index behind", async () => {
-    await Run(sql`ALTER TABLE ${ident(Table(schemaId))} DROP INDEX color`);
+    await Run(
+      sql`ALTER TABLE ${ident(PhysicalTable(schemaId))} DROP INDEX color`,
+    );
     const connection = await AcquireConnection();
     const session = SessionOf(connection);
     let isStopping = false;

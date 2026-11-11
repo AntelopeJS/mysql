@@ -2,15 +2,8 @@ import { expect } from "chai";
 import type { SchemaDefinition } from "@antelopejs/interface-database/schema";
 
 import { Logger } from "../logger";
-import {
-  AcquireConnection,
-  GetSchemaPrefix,
-  Read,
-  type Row,
-} from "../connection";
+import { Read, type Row } from "../connection";
 import { type Sql, ident, param, sql } from "../statement";
-import { TableName } from "../implementations/database/identifier";
-import { SessionOf } from "../implementations/database/locks";
 import type { KeyPart } from "../implementations/database/paths";
 import type { IndexPlan } from "../implementations/database/plan";
 import {
@@ -18,6 +11,7 @@ import {
   Schemas,
   WaitForIndexes,
 } from "../implementations/database/schema";
+import { Numbers, PhysicalTable, Run } from "./tables";
 
 interface CatalogIndex {
   readonly name: string;
@@ -56,26 +50,11 @@ const ROWS_PER_INSTANCE = 700;
 
 /** Seven hundred rows per instance, each field and `_extra` key distinct per row. */
 function Seed(table: Sql, instance: string): Sql {
-  const digits = sql`(SELECT 0 AS d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9)`;
-  return sql`INSERT INTO ${table} (_id, _instance, sku, price, title, tags, _extra) SELECT CONCAT(${param(instance)}, '-', n), ${param(instance)}, CONCAT('sku-', n), n, JSON_OBJECT('fr', CONCAT('titre ', n), 'en', CONCAT('title ', n)), JSON_ARRAY(CONCAT('tag-', n), CONCAT('tag-', n + 1)), JSON_OBJECT('color', CONCAT('color-', n), '_internal', JSON_OBJECT('data', JSON_OBJECT('owner', CONCAT('owner-', n)))) FROM (SELECT a.d + 10 * b.d + 100 * c.d AS n FROM ${digits} AS a CROSS JOIN ${digits} AS b CROSS JOIN ${digits} AS c) AS numbers WHERE n < ${param(ROWS_PER_INSTANCE)}`;
-}
-
-function Table(schemaId: string): string {
-  return TableName(GetSchemaPrefix(), schemaId, "items");
-}
-
-/** Runs a statement that answers no rows, on a pooled connection. */
-async function Run(statement: Sql): Promise<void> {
-  const connection = await AcquireConnection();
-  try {
-    await SessionOf(connection).apply(statement);
-  } finally {
-    connection.release();
-  }
+  return sql`INSERT INTO ${table} (_id, _instance, sku, price, title, tags, _extra) SELECT CONCAT(${param(instance)}, '-', n), ${param(instance)}, CONCAT('sku-', n), n, JSON_OBJECT('fr', CONCAT('titre ', n), 'en', CONCAT('title ', n)), JSON_ARRAY(CONCAT('tag-', n), CONCAT('tag-', n + 1)), JSON_OBJECT('color', CONCAT('color-', n), '_internal', JSON_OBJECT('data', JSON_OBJECT('owner', CONCAT('owner-', n)))) FROM ${Numbers(3)} AS numbers WHERE n < ${param(ROWS_PER_INSTANCE)}`;
 }
 
 async function Reset(schemaId: string): Promise<void> {
-  await Run(sql`DROP TABLE IF EXISTS ${ident(Table(schemaId))}`);
+  await Run(sql`DROP TABLE IF EXISTS ${ident(PhysicalTable(schemaId))}`);
 }
 
 async function Register(
@@ -93,7 +72,7 @@ function Text(row: Row, column: string): string {
 
 async function Catalog(schemaId: string): Promise<CatalogIndex[]> {
   const rows = await Read(
-    sql`SELECT INDEX_NAME AS name, NON_UNIQUE AS non_unique, INDEX_COMMENT AS comment, GROUP_CONCAT(COALESCE(COLUMN_NAME, EXPRESSION) ORDER BY SEQ_IN_INDEX SEPARATOR ' | ') AS parts FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${param(Table(schemaId))} AND INDEX_NAME <> 'PRIMARY' GROUP BY INDEX_NAME, NON_UNIQUE, INDEX_COMMENT ORDER BY INDEX_NAME`,
+    sql`SELECT INDEX_NAME AS name, NON_UNIQUE AS non_unique, INDEX_COMMENT AS comment, GROUP_CONCAT(COALESCE(COLUMN_NAME, EXPRESSION) ORDER BY SEQ_IN_INDEX SEPARATOR ' | ') AS parts FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${param(PhysicalTable(schemaId))} AND INDEX_NAME <> 'PRIMARY' GROUP BY INDEX_NAME, NON_UNIQUE, INDEX_COMMENT ORDER BY INDEX_NAME`,
   );
   return rows.map((row) => ({
     name: Text(row, "name"),
@@ -125,7 +104,7 @@ function KeyColumnOf(schemaId: string, name: string): Sql {
 /** The index the server would read for a hand-written `SELECT _id ... WHERE condition`. */
 async function IndexUsed(schemaId: string, condition: Sql): Promise<string> {
   const [plan] = await Read(
-    sql`EXPLAIN FORMAT=TRADITIONAL SELECT _id FROM ${ident(Table(schemaId))} WHERE ${condition}`,
+    sql`EXPLAIN FORMAT=TRADITIONAL SELECT _id FROM ${ident(PhysicalTable(schemaId))} WHERE ${condition}`,
   );
   return Text(plan, "key");
 }
@@ -153,11 +132,11 @@ describe("indexes declared on a populated table", function () {
     await Reset(schemaId);
     await Register(schemaId, BARE);
     for (const instance of INSTANCES) {
-      await Run(Seed(ident(Table(schemaId)), instance));
+      await Run(Seed(ident(PhysicalTable(schemaId)), instance));
     }
     expect(await Catalog(schemaId)).to.deep.equal([]);
     await Register(schemaId, EVERY_KIND);
-    await Run(sql`ANALYZE TABLE ${ident(Table(schemaId))}`);
+    await Run(sql`ANALYZE TABLE ${ident(PhysicalTable(schemaId))}`);
   });
 
   after(() => {
@@ -230,7 +209,7 @@ describe("indexes declared on a populated table", function () {
 
   it("holds the value its key column reads, so the index finds the row the field names", async () => {
     const rows = await Read(
-      sql`SELECT _id FROM ${ident(Table(schemaId))} FORCE INDEX (owner) WHERE ${scoped} ${KeyColumnOf(schemaId, "owner")} = 'owner-7'`,
+      sql`SELECT _id FROM ${ident(PhysicalTable(schemaId))} FORCE INDEX (owner) WHERE ${scoped} ${KeyColumnOf(schemaId, "owner")} = 'owner-7'`,
     );
     expect(rows.map((row) => Text(row, "_id"))).to.deep.equal(["beta-7"]);
   });
@@ -250,7 +229,7 @@ describe("indexes whose declaration changes", function () {
     await Register(schemaId, {
       items: { fields: FIELDS, indexes: { price: {} } },
     });
-    await Run(Seed(ident(Table(schemaId)), "alpha"));
+    await Run(Seed(ident(PhysicalTable(schemaId)), "alpha"));
     await Register(schemaId, {
       items: {
         fields: FIELDS,
@@ -269,9 +248,9 @@ describe("indexes whose declaration changes", function () {
     const schemaId = "indexes_refused";
     await Reset(schemaId);
     await Register(schemaId, BARE);
-    await Run(Seed(ident(Table(schemaId)), "alpha"));
+    await Run(Seed(ident(PhysicalTable(schemaId)), "alpha"));
     await Run(
-      sql`UPDATE ${ident(Table(schemaId))} SET price = 1 WHERE _id IN ('alpha-1', 'alpha-2')`,
+      sql`UPDATE ${ident(PhysicalTable(schemaId))} SET price = 1 WHERE _id IN ('alpha-1', 'alpha-2')`,
     );
     const warnings = await CaptureWarnings(() =>
       Register(schemaId, {

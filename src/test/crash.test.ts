@@ -16,7 +16,7 @@ import {
 } from "../implementations/database/locks";
 import { ConvergeTable } from "../implementations/database/migrate-tables";
 import { ConvergeIndexes } from "../implementations/database/migrate-indexes";
-import { Snapshot } from "./snapshot";
+import { Numbers, Snapshot } from "./tables";
 
 /** What a session that dies mid-convergence throws in place of its next statement. */
 class Crash extends Error {}
@@ -38,8 +38,7 @@ const NEVER = () => false;
 const SAFE: MigrationMode = "safe";
 const DESTRUCTIVE: MigrationMode = "destructive";
 
-/** Ten thousand rows of `n`, from 0, for seeding with one statement. */
-const NUMBERS = sql`(SELECT a.d + 10 * b.d + 100 * c.d + 1000 * e.d AS n FROM (SELECT 0 AS d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) AS a CROSS JOIN (SELECT 0 AS d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) AS b CROSS JOIN (SELECT 0 AS d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) AS c CROSS JOIN (SELECT 0 AS d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9) AS e)`;
+const NUMBERS = Numbers(4);
 
 const ITEMS: TableDefinition = {
   fields: { sku: "string", price: "number", title: "object" },
