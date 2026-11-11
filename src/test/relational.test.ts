@@ -33,6 +33,7 @@ interface Post {
   _id: string;
   titleKey: string;
   articleIds: string[];
+  take: number;
 }
 
 const schema = new Schema<{ articles: Article; posts: Post }>(SCHEMA_ID, {
@@ -46,7 +47,7 @@ const schema = new Schema<{ articles: Article; posts: Post }>(SCHEMA_ID, {
     indexes: { titleFr: { fields: ["title.fr"] } },
   },
   posts: {
-    fields: { titleKey: "string", articleIds: "string[]" },
+    fields: { titleKey: "string", articleIds: "string[]", take: "number" },
     indexes: {},
   },
 });
@@ -60,10 +61,16 @@ function Posts() {
 }
 
 const POSTS: Post[] = [
-  { _id: "p1", titleKey: "titre 5", articleIds: ["a7", "a9"] },
-  { _id: "p2", titleKey: "titre 1999", articleIds: [] },
-  { _id: "p3", titleKey: "absent", articleIds: ["missing"] },
+  { _id: "p1", titleKey: "titre 5", articleIds: ["a7", "a9"], take: 2 },
+  { _id: "p2", titleKey: "titre 1999", articleIds: [], take: 0 },
+  { _id: "p3", titleKey: "absent", articleIds: ["missing"], take: 1.9 },
 ];
+
+/** Every article's slug in the order the binary collation sorts them, which ASCII code order is. */
+const SORTED_SLUGS = Array.from(
+  { length: ARTICLES },
+  (_, n) => `slug-${n}`,
+).sort();
 
 /** A statement compiled as `RunQuery` compiles a read, against the live registry. */
 function Compiled(query: StagedObject): Sql {
@@ -203,6 +210,34 @@ async function GroupFullMode(): Promise<void> {
   }
 }
 
+async function SliceByCount(): Promise<void> {
+  const slugs = await Articles()
+    .orderBy("slug")
+    .slice(1, Posts().count())
+    .map((article) => article.key("slug"))
+    .run();
+  expect(slugs).to.deep.equal(SORTED_SLUGS.slice(1, 1 + POSTS.length));
+  const nth = await Articles().orderBy("slug").nth(Posts().count()).run();
+  expect(nth?.slug).to.equal(SORTED_SLUGS[POSTS.length]);
+}
+
+async function SliceByOuterRow(): Promise<void> {
+  const taken = await Posts()
+    .map((post) => ({
+      id: post.key("_id"),
+      slugs: Articles()
+        .orderBy("slug")
+        .slice(0, post.key("take"))
+        .map((article) => article.key("slug")),
+    }))
+    .run();
+  expect(taken).to.have.deep.members([
+    { id: "p1", slugs: SORTED_SLUGS.slice(0, 2) },
+    { id: "p2", slugs: [] },
+    { id: "p3", slugs: SORTED_SLUGS.slice(0, 1) },
+  ]);
+}
+
 describe("relational stages on a real server", function () {
   this.timeout(60_000);
 
@@ -229,5 +264,10 @@ describe("relational stages on a real server", function () {
   it(
     "groups over declared columns in SQL that ONLY_FULL_GROUP_BY accepts",
     GroupFullMode,
+  );
+  it("slices and picks by a count another query computes", SliceByCount);
+  it(
+    "slices each row's subquery by a count its own row holds",
+    SliceByOuterRow,
   );
 });

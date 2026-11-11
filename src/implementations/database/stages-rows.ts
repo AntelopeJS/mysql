@@ -2,14 +2,15 @@ import assert from "node:assert";
 import { Query } from "@antelopejs/interface-database";
 import type { QueryStage } from "@antelopejs/interface-database/common";
 
-import { sql } from "../../statement";
+import type { Dialect } from "../../dialect";
+import { type Sql, int, sql } from "../../statement";
 import type { Compiled } from "./sql";
 import { Cast, Widen } from "./coerce";
 import type { SqlType } from "./types";
 import type { DecodingContext } from "./context";
-import { DecodeFunction, RecordedLambda } from "./value";
+import { DecodeFunction, DecodeValue, RecordedLambda } from "./value";
 import type { PipelineStage, PipelineStageMap } from "./pipeline";
-import { Predicate } from "./readings";
+import { Numeric, Predicate } from "./readings";
 import { FIRST_OPERAND, RequireOperand, SECOND_OPERAND } from "./stage";
 import {
   CurrentValue,
@@ -20,6 +21,7 @@ import {
   ValueRelation,
 } from "./relation";
 import {
+  Numbered,
   Prepare,
   type RelationFlag,
   Render,
@@ -48,32 +50,102 @@ const BOUND_BLOCKERS: readonly RelationFlag[] = [
   "aggregated",
 ];
 
+/**
+ * A computed bound is numbered against rows that a dedup has not yet merged, so a pending
+ * `DISTINCT` is wrapped first as well.
+ */
+const NUMBERING_BLOCKERS: readonly RelationFlag[] = [
+  ...BOUND_BLOCKERS,
+  "distinct",
+];
+
 const DESCENDING = "desc";
 
 /**
- * Reads a caller's row bound: the count truncated toward zero and held between zero and the largest
- * count the driver binds exactly. An infinite or unreadable count bounds nothing.
- *
- * A bound computed by the statement itself would need the rows numbered by a window function, since
- * the engine takes only a constant there; that reading is not implemented yet and is refused by name.
+ * A row count as a stage reads it: one known when the statement is compiled, absent where it
+ * bounds nothing, or one the statement computes, SQL NULL where it bounds nothing.
  */
-function Bound(stage: QueryStage, index: number): number | undefined {
+type RowBound =
+  | { readonly kind: "constant"; readonly count: number | undefined }
+  | { readonly kind: "computed"; readonly count: Sql };
+
+const UNBOUNDED: RowBound = { kind: "constant", count: undefined };
+
+/**
+ * Reads a caller's row bound: the count truncated toward zero and held between zero and the largest
+ * count the driver binds exactly, by the compiler for a constant and by the statement for anything
+ * else. An infinite or unreadable count bounds nothing.
+ */
+function Bound(
+  stage: QueryStage,
+  index: number,
+  context: DecodingContext,
+): RowBound {
   const member = ClassifyMember(StageOperand(stage, index));
-  if (member.kind === "absent") {
-    throw new Error(
-      `Stage '${stage.stage}' requires an operand at position ${index}`,
-    );
+  if (member.kind === "number") {
+    const count = Number.isFinite(member.value)
+      ? Math.min(Math.max(Math.trunc(member.value), 0), Number.MAX_SAFE_INTEGER)
+      : undefined;
+    return { kind: "constant", count };
   }
-  if (member.kind !== "number") {
-    throw new Error(
-      `Stage '${stage.stage}' takes a constant number at position ${index}; a ${member.kind} bound is not implemented by @antelopejs/mysql yet`,
-    );
+  const value = RequireOperand(DecodeValue(member, context), stage, index);
+  const dialect = context.dialect;
+  const truncated = dialect.sql.scalar.truncate(Numeric(dialect, value).sql);
+  return {
+    kind: "computed",
+    count: sql`LEAST(GREATEST(${truncated}, 0), ${int(Number.MAX_SAFE_INTEGER)})`,
+  };
+}
+
+function CountOf(dialect: Dialect, bound: RowBound): Sql | undefined {
+  if (bound.kind === "computed") {
+    return bound.count;
   }
-  if (!Number.isFinite(member.value)) {
-    return undefined;
+  return bound.count === undefined
+    ? undefined
+    : dialect.sql.scalar.bind.float(bound.count);
+}
+
+/** The numbered rows after `offset` and within `count` of them; SQL NULL for either bounds nothing. */
+function RowRange(
+  dialect: Dialect,
+  rowNumber: Sql,
+  offset: RowBound,
+  count: RowBound,
+): Sql {
+  const skipped = sql`COALESCE(${CountOf(dialect, offset) ?? sql`0`}, 0)`;
+  const after = sql`${rowNumber} > ${skipped}`;
+  const taken = CountOf(dialect, count);
+  if (taken === undefined) {
+    return sql`(${after})`;
   }
-  const truncated = Math.trunc(member.value);
-  return Math.min(Math.max(truncated, 0), Number.MAX_SAFE_INTEGER);
+  return sql`(${after} AND (${taken} IS NULL OR ${rowNumber} <= ${skipped} + ${taken}))`;
+}
+
+/**
+ * Bounds the rows: a known count as a bound `LIMIT` and `OFFSET`, and a count the statement
+ * computes as a range of the rows' numbers, since the engine takes only a constant there.
+ */
+function Bounded(
+  relation: Relation,
+  offset: RowBound,
+  count: RowBound,
+  context: DecodingContext,
+): Relation {
+  if (offset.kind === "constant" && count.kind === "constant") {
+    const prepared = Prepare(relation, BOUND_BLOCKERS, context);
+    prepared.offset = offset.count;
+    prepared.limit = count.count;
+    return prepared;
+  }
+  const numbered = Numbered(
+    Prepare(relation, NUMBERING_BLOCKERS, context),
+    context,
+  );
+  numbered.relation.where.push(
+    RowRange(context.dialect, numbered.rowNumber, offset, count),
+  );
+  return numbered.relation;
 }
 
 /**
@@ -115,20 +187,20 @@ const OrderByStage: PipelineStage = (relation, stage, context) => {
 };
 
 const SliceStage: PipelineStage = (relation, stage, context) => {
-  const prepared = Prepare(relation, BOUND_BLOCKERS, context);
-  prepared.offset = Bound(stage, FIRST_OPERAND);
-  if (stage.args[SECOND_OPERAND] !== undefined) {
-    prepared.limit = Bound(stage, SECOND_OPERAND);
-  }
-  return prepared;
+  const offset = Bound(stage, FIRST_OPERAND, context);
+  const count =
+    stage.args[SECOND_OPERAND] === undefined
+      ? UNBOUNDED
+      : Bound(stage, SECOND_OPERAND, context);
+  return Bounded(relation, offset, count, context);
 };
 
 const NthStage: PipelineStage = (relation, stage, context) => {
-  const prepared = Prepare(relation, BOUND_BLOCKERS, context);
-  prepared.offset = Bound(stage, FIRST_OPERAND);
-  prepared.limit = SINGLE_ROW;
-  prepared.single = true;
-  return prepared;
+  const offset = Bound(stage, FIRST_OPERAND, context);
+  const one: RowBound = { kind: "constant", count: SINGLE_ROW };
+  const bounded = Bounded(relation, offset, one, context);
+  bounded.single = true;
+  return bounded;
 };
 
 interface UnionSide {

@@ -76,11 +76,17 @@ interface Profile {
   skills: string[];
 }
 
+/** A row whose declared field takes the name a numbered subselect would give its row numbers. */
+interface Entry {
+  _row: number;
+}
+
 interface Directory {
   people: Person;
   products: Product;
   logs: Record<string, number>;
   profiles: Profile;
+  entries: Entry;
 }
 
 /**
@@ -110,6 +116,7 @@ const DIRECTORY: SchemaDefinition = {
     fields: { name: "string", skills: "string[]" },
     indexes: { skills: { fields: ["skills"], multi: true } },
   },
+  entries: { fields: { _row: "number" }, indexes: {} },
 };
 
 const MODEL = ParseSchema(SCHEMA_ID, DIRECTORY);
@@ -185,6 +192,11 @@ export function LogsRoot() {
 /** The table declaring a field whose type is a list, with a `multi` index over it. */
 export function ProfilesRoot() {
   return Table("profiles", undefined);
+}
+
+/** The table declaring a field named `_row`. */
+export function EntriesRoot() {
+  return Table("entries", undefined);
 }
 
 /** A read compiled as `RunQuery` compiles one: root, fold, render. */
