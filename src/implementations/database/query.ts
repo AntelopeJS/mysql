@@ -9,7 +9,12 @@ import { CompileExpression } from "./expression";
 import { DecodeCell, DecodeRow, type RowValue } from "./result";
 import { ApplyStages, CHANGES_STAGE, CompileRelation } from "./pipeline";
 import { DuplicateKeyFailure, IsPrimaryKeyDuplicate } from "./duplicate-key";
-import { WaitForSchemaReady } from "./schema";
+import {
+  GetTableNames,
+  WaitForSchemaReady,
+  WaitForUniqueIndexes,
+} from "./schema";
+import { CreateInstance, DestroyInstance, ListInstances } from "./instances";
 import {
   type WriteStatement,
   type WriteTarget,
@@ -18,7 +23,7 @@ import {
 import { CompileWrite, SplitWrite, type WriteSplit } from "./writes";
 import { ATOMIC_MUTATION, ExecuteAtomicWrite } from "./writes-atomic";
 import { InTransaction } from "./transaction";
-import { ID_COLUMN } from "./utils";
+import { ID_COLUMN, OptionsOf } from "./utils";
 import { CloseOneCursor, type CursorRequest, ReadCursorRow } from "./cursors";
 import { OUTPUT_COLUMN, type Relation, RequireOrigin } from "./relation";
 import { Render } from "./render";
@@ -40,32 +45,46 @@ interface CompiledQuery {
   relation: Relation;
 }
 
+type LifecycleAnswer = string | string[] | void;
+
+type LifecycleHandler = (
+  schemaId: string,
+  stage: QueryStage,
+) => Promise<LifecycleAnswer>;
+
 const LIFECYCLE_STAGE_COUNT = 2;
 
-/** The instance lifecycle stages, which address a schema rather than a table. */
-const LIFECYCLE_STAGES: readonly string[] = [
-  "createInstance",
-  "destroyInstance",
-  "listInstances",
-];
+const MISSING_SCHEMA_ID = "Lifecycle query is missing its schema id";
 
-/**
- * Refuses a schema-rooted instance lifecycle query by name: the instance registry is created with
- * the schema's tables, which this module does not converge yet.
- */
-function Lifecycle(stages: QueryStage[]): Promise<never> | undefined {
+/** The instance lifecycle stages, which address a schema rather than a table. */
+const LIFECYCLE_HANDLERS = new Map<string, LifecycleHandler>([
+  ["createInstance", CreateInstance],
+  [
+    "destroyInstance",
+    (schemaId, stage) =>
+      DestroyInstance(schemaId, GetTableNames(schemaId), stage),
+  ],
+  ["listInstances", ListInstances],
+]);
+
+/** Dispatches a schema-rooted instance lifecycle query, after the schema's readiness gate. */
+function Lifecycle(stages: QueryStage[]): Promise<LifecycleAnswer> | undefined {
   if (
     stages.length !== LIFECYCLE_STAGE_COUNT ||
-    stages[0].stage !== SCHEMA_STAGE ||
-    !LIFECYCLE_STAGES.includes(stages[1].stage)
+    stages[0].stage !== SCHEMA_STAGE
   ) {
     return undefined;
   }
-  return Promise.reject(
-    new Error(
-      `The '${stages[1].stage}' stage is not implemented by @antelopejs/mysql yet`,
-    ),
-  );
+  const stage = stages[1];
+  const handler = LIFECYCLE_HANDLERS.get(stage.stage);
+  if (!handler) {
+    return undefined;
+  }
+  const schemaId: unknown = OptionsOf(stages[0])?.id;
+  if (!IsString(schemaId)) {
+    return Promise.reject(new Error(MISSING_SCHEMA_ID));
+  }
+  return WaitForSchemaReady(schemaId).then(() => handler(schemaId, stage));
 }
 
 /**
@@ -158,6 +177,7 @@ async function RunWrite(
   context: DecodingContext,
 ): Promise<WriteAnswer> {
   const statement = CompileWrite(target, stage, context);
+  await WaitForUniqueIndexes(target.origin.schemaId);
   try {
     return await Execute(statement, target);
   } catch (err) {
@@ -202,7 +222,9 @@ async function ReadyQuery(
   return CompileQuery(stages, context);
 }
 
-export async function RunQuery(stages: QueryStage[]): Promise<RowValue> {
+export async function RunQuery(
+  stages: QueryStage[],
+): Promise<RowValue | LifecycleAnswer> {
   const lifecycle = Lifecycle(stages);
   if (lifecycle) {
     return lifecycle;
