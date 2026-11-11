@@ -11,10 +11,10 @@ import {
 } from "./utils";
 
 /** A path below a JSON column: `["fr"]` under `title`, `["_internal", "data", "owner"]` under `_extra`. */
-export type JsonPath = readonly string[];
+type JsonPath = readonly string[];
 
 /** What a declared index field names, resolved against the table's declaration. */
-export type IndexTarget =
+type IndexTarget =
   | { readonly kind: "id" }
   | {
       readonly kind: "field";
@@ -38,7 +38,7 @@ export type IndexTarget =
  * - `double`, `bool`: the JSON number or boolean at a path.
  * - `json`: the canonical text of the JSON value at a path, or of the whole column.
  */
-export type KeyRead = "text" | "string" | "double" | "bool" | "json";
+type KeyRead = "text" | "string" | "double" | "bool" | "json";
 
 type TextRead = Extract<KeyRead, "text" | "string" | "json">;
 type ScalarRead = Exclude<KeyRead, TextRead>;
@@ -51,7 +51,7 @@ type ScalarRead = Exclude<KeyRead, TextRead>;
  * - `exact`: the whole value, at most `width` characters. A unique index needs it to decide
  *   equality; a wider write fails and is reported with the field, the width and the index.
  */
-export interface KeyFit {
+interface KeyFit {
   readonly kind: "prefix" | "exact";
   readonly width: number;
 }
@@ -66,12 +66,12 @@ interface KeyColumnBase {
   readonly definition: string;
 }
 
-export interface TextKeyColumn extends KeyColumnBase {
+interface TextKeyColumn extends KeyColumnBase {
   readonly read: TextRead;
   readonly fit: KeyFit;
 }
 
-export interface ScalarKeyColumn extends KeyColumnBase {
+interface ScalarKeyColumn extends KeyColumnBase {
   readonly read: ScalarRead;
 }
 
@@ -164,7 +164,7 @@ function MemberType(
  * PostgreSQL module reads such a name as one undeclared key instead; here `title.fr` and
  * `_internal.data.owner` are nested paths an index can serve.
  */
-export function ResolveIndexField(
+function ResolveIndexField(
   indexId: string,
   field: string,
   model: TableModel,
@@ -261,7 +261,8 @@ function TextWidth(
     (draft) => draft.kind === "key" && IsTextRead(draft.read),
   ).length;
   const remaining = session.keyBudgetBytes - INSTANCE_BYTES - fixed;
-  const width = Math.floor(remaining / BYTES_PER_CHAR / Math.max(textParts, 1));
+  const width =
+    textParts === 0 ? 0 : Math.floor(remaining / BYTES_PER_CHAR / textParts);
   if (remaining < 0 || (textParts > 0 && width < 1)) {
     throw new Error(
       `Index '${indexId}' needs ${INSTANCE_BYTES} bytes for the instance and ${fixed} for its fixed-width fields, which leaves ${remaining} of the ${session.keyBudgetBytes}-byte key for ${textParts} text field(s); drop a field from the index`,

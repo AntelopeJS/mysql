@@ -18,7 +18,7 @@ import {
 } from "./utils";
 
 /** One stored column, by the role it plays in a row. Key columns are planned apart, in {@link TablePlan.keyColumns}. */
-export type ColumnPlan =
+type ColumnPlan =
   | {
       readonly role: "id" | "instance";
       readonly name: string;
@@ -240,7 +240,7 @@ function AssertDistinct(claims: readonly (readonly [string, string])[]): void {
  * Rejects a table whose columns, or whose indexes, do not all get distinct names: a key column
  * named like a declared column, or two index ids that differ only in case or in their cut tail.
  */
-export function AssertDistinctNames(plan: TablePlan): void {
+function AssertDistinctNames(plan: TablePlan): void {
   AssertDistinct([
     ...plan.columns.map(
       (column) => [column.name, `column '${column.name}'`] as const,

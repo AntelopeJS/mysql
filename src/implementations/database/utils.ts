@@ -15,18 +15,6 @@ export const RESERVED_COLUMNS: readonly string[] = [
 ];
 
 /**
- * The reserved columns a schema definition may not name, which is not all of them.
- *
- * `_id` is absent because a schema declaring it restates the key column the adapter already
- * stores rather than asking for a column of its own; the other two are bookkeeping a caller has
- * no way to mean.
- */
-export const UNDECLARABLE_COLUMNS: readonly string[] = [
-  INSTANCE_COLUMN,
-  EXTRA_COLUMN,
-];
-
-/**
  * The longest `_id`, in characters. With {@link MAX_INSTANCE_ID_CHARS} it keeps the primary key
  * within InnoDB's 3072-byte key limit at four bytes per character: 2048 + 512 bytes.
  */
@@ -36,10 +24,10 @@ export const MAX_KEY_CHARS = 512;
 export const MAX_INSTANCE_ID_CHARS = 128;
 
 /** Instance id stored for the unnamed (default) instance. */
-export const DEFAULT_INSTANCE_ID = "";
+const DEFAULT_INSTANCE_ID = "";
 
-export const CREATE_INSTANCE = "createInstance";
-export const DESTROY_INSTANCE = "destroyInstance";
+const CREATE_INSTANCE = "createInstance";
+const DESTROY_INSTANCE = "destroyInstance";
 
 /**
  * The lifecycle stages that resolve an instance id, named once for both the
@@ -74,15 +62,13 @@ type OptionType<Name extends OptionName> = RecordedOptions extends infer Options
   : never;
 
 /** Every option a stage records, each typed as the stages that record it declare it. */
-export type StageOptions = { readonly [Name in OptionName]?: OptionType<Name> };
+type StageOptions = { readonly [Name in OptionName]?: OptionType<Name> };
 
 /**
  * The options a stage records, read whatever its name, for readers that check each option they
  * read: `OptionsOf(stage)?.id` reads what `stage.options?.id` reads.
  */
-export function OptionsOf(
-  stage: QueryStage | undefined,
-): StageOptions | undefined {
+function OptionsOf(stage: QueryStage | undefined): StageOptions | undefined {
   return stage?.options;
 }
 

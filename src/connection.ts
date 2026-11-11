@@ -50,7 +50,7 @@ const SLOW_ACQUIRE = `no MySQL connection has become available in ${SLOW_ACQUIRE
 const VERSION_QUERY = sql`SELECT VERSION() AS version`;
 
 /** A value a result column arrives as, given {@link MODULE_POOL_OPTIONS}: JSON, dates and big numbers as text. */
-export type Cell = string | number | null | Buffer;
+type Cell = string | number | null | Buffer;
 
 /** One result row, keyed by column alias. */
 export type Row = ReadonlyMap<string, Cell>;

@@ -27,7 +27,7 @@ export interface ParsedField {
   codec?: IoTsCodec;
 }
 
-export interface FieldSpec {
+interface FieldSpec {
   column: string;
   type: SqlType;
   codec?: IoTsCodec;
