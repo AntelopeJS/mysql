@@ -11,6 +11,7 @@ import {
   ColumnRowSource,
   type IndexedValue,
   JsonRowSource,
+  LoggedColumns,
   type RowSource,
 } from "./row-source";
 import { ExternalRowSource } from "./external-row-source";
@@ -207,6 +208,30 @@ function TableSource(
     origin.model,
     keys,
   );
+}
+
+/**
+ * A row-mode relation over one logged image, which `row` addresses: the side of a change event a
+ * feed's stages are folded over. It reads no key column, since an image holds none.
+ */
+export function LoggedRelation(
+  dialect: Dialect,
+  from: Sql,
+  alias: string,
+  row: Sql,
+  origin: TableOrigin,
+): Relation {
+  return NewRelation({
+    dialect,
+    from,
+    alias,
+    source: new ColumnRowSource(
+      dialect,
+      LoggedColumns(dialect, row),
+      origin.model,
+    ),
+    origin,
+  });
 }
 
 /**

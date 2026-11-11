@@ -8,6 +8,7 @@ import type {
 } from "../../dialect";
 import { IsKeyColumnSignature } from "./paths";
 import type { DeclaredColumn, IndexPlan, TablePlan } from "./plan";
+import { PlanTriggerSwap, type TriggerSwap } from "./change-log";
 
 const VENDOR = "antelopejs:";
 const DESTRUCTIVE: MigrationMode = "destructive";
@@ -23,10 +24,11 @@ interface Statement<Kind extends string> {
 }
 
 /**
- * One step of the tables phase. Every step but `backfill` is one statement the server applies
- * atomically. `backfill` moves the column's field out of `_extra` in chunks, each a statement that
- * can run again, then runs `settle`, which clears the pending comment; until then the next
- * convergence backfills again.
+ * One step of the tables phase. Every step but `backfill` and `swapTriggers` is one statement the
+ * server applies atomically. `backfill` moves the column's field out of `_extra` in chunks, each a
+ * statement that can run again, then runs `settle`, which clears the pending comment; until then
+ * the next convergence backfills again. `swapTriggers` replaces a watched table's triggers while it
+ * holds the table, each statement atomic and the whole planned again from the catalog.
  */
 export type TableStep =
   | Statement<
@@ -42,6 +44,11 @@ export type TableStep =
       readonly target: string;
       readonly column: DeclaredColumn;
       readonly settle: Sql;
+    }
+  | {
+      readonly kind: "swapTriggers";
+      readonly target: string;
+      readonly swap: TriggerSwap;
     };
 
 /** One step of the background index phase: one statement each. */
@@ -225,6 +232,18 @@ function DropUndeclared(view: TableView): TableStep | undefined {
   return { kind: "dropColumn", target: column.name, sql };
 }
 
+/**
+ * Brings a watched table's triggers in line with its columns. A trigger can only be created over
+ * columns that exist and must stop reading a column before it is dropped, so this runs once every
+ * declared column is added and retyped, and before a backfill moves values into a new column or an
+ * undeclared column is dropped.
+ */
+function SwapTriggers(view: TableView): TableStep | undefined {
+  const { dialect, plan, observed } = view;
+  const swap = PlanTriggerSwap(dialect, plan, observed.triggers, "converge");
+  return swap && { kind: "swapTriggers", target: plan.table, swap };
+}
+
 function AddKeyColumn(view: TableView): TableStep | undefined {
   const missing = view.plan.keyColumns.find(
     (key) => !ColumnNamed(view.observed, key.name),
@@ -239,12 +258,13 @@ function AddKeyColumn(view: TableView): TableStep | undefined {
 /**
  * The tables phase: one rule per kind of step, in the order steps are taken. The first rule with
  * something to do names the next step. Columns come first and key columns last, so every key
- * column reads a column of its declared type. A rule for the change-feed triggers goes last here.
+ * column reads a column of its declared type; a watched table's triggers follow its columns.
  */
 const TABLE_RULES: readonly Rule<TableView, TableStep>[] = [
   AddColumn,
   DropStaleKeys,
   RetypeColumn,
+  SwapTriggers,
   Backfill,
   DropUndeclared,
   AddKeyColumn,

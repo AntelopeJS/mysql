@@ -26,6 +26,8 @@ import { ATOMIC_MUTATION, ExecuteAtomicWrite } from "./writes-atomic";
 import { InTransaction } from "./transaction";
 import { ID_COLUMN, OptionsOf } from "./utils";
 import { CloseOneCursor, type CursorRequest, ReadCursorRow } from "./cursors";
+import { CloseOneFeed, ReadFeedEvent } from "./feeds";
+import { NudgeChanges } from "./change-loop";
 import { OUTPUT_COLUMN, type Relation, RequireOrigin } from "./relation";
 import { Render } from "./render";
 import {
@@ -207,7 +209,9 @@ async function RunWrite(
   const statement = CompileWrite(target, stage, context);
   await WaitForUniqueIndexes(target.origin.schemaId);
   try {
-    return await Execute(statement, target);
+    const answer = await Execute(statement, target);
+    NudgeChanges();
+    return answer;
   } catch (err) {
     throw err instanceof Error
       ? DuplicateKeyFailure(err, target.origin, context.dialect)
@@ -300,30 +304,33 @@ function IsFeed(stages: QueryStage[]): boolean {
   return stages.at(-1)?.stage === CHANGES_STAGE;
 }
 
-/** Refuses a change feed: an external relation's by name, since nothing is installed on it. */
-async function RefuseFeed(stages: QueryStage[]): Promise<never> {
-  if (IsExternal()) {
-    await Promise.all(CollectSchemaIds(stages).map(WaitForSchemaReady));
-    const external = BuildRoot(stages, QueryContext()).external;
-    if (external) {
-      throw ExternalFeedRefusal(external);
-    }
+/** Refuses a change feed on an external relation by name, since nothing is installed on it. */
+async function RefuseExternalFeed(stages: QueryStage[]): Promise<void> {
+  await Promise.all(CollectSchemaIds(stages).map(WaitForSchemaReady));
+  const external = BuildRoot(stages, QueryContext()).external;
+  if (external) {
+    throw ExternalFeedRefusal(external);
   }
-  throw new Error("Change feeds are not implemented by @antelopejs/mysql yet");
 }
 
-/** Answers one element of the cursor `reqId` names; a change feed is refused until feeds exist. */
+/** Answers one element of the cursor `reqId` names, or one event of the change feed it names. */
 export function ReadCursor(
   reqId: number,
   stages: QueryStage[],
 ): Promise<IteratorResult<RowValue, void>> {
   if (IsFeed(stages)) {
-    return RefuseFeed(stages);
+    return IsExternal()
+      ? RefuseExternalFeed(stages).then(() => ReadFeedEvent(reqId, stages))
+      : ReadFeedEvent(reqId, stages);
   }
   return ReadCursorRow(reqId, () => CompileCursor(stages));
 }
 
-/** Closes the cursor `reqId` names; total for an id that never opened. */
-export function CloseCursor(reqId: number): Promise<void> {
-  return CloseOneCursor(reqId);
+/**
+ * Closes the cursor or the feed `reqId` names; total for an id that never opened, so a feed's read
+ * arriving after its close answers `done`.
+ */
+export async function CloseCursor(reqId: number): Promise<void> {
+  await CloseOneFeed(reqId);
+  await CloseOneCursor(reqId);
 }

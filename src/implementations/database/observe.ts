@@ -3,9 +3,9 @@ import { GetDialect } from "../../connection";
 import type { ConvergenceSession } from "./locks";
 
 /**
- * Reads a table's columns and secondary indexes out of the catalog, or `undefined` when nothing
- * sits at its name. It reads through the session that converges the table, so it sees what that
- * session's last statement left, and a one-connection pool never waits on itself.
+ * Reads a table's columns, secondary indexes and triggers out of the catalog, or `undefined` when
+ * nothing sits at its name. It reads through the session that converges the table, so it sees what
+ * that session's last statement left, and a one-connection pool never waits on itself.
  */
 export async function Observe(
   session: ConvergenceSession,
@@ -18,5 +18,6 @@ export async function Observe(
   }
   const columns = await session.read(catalog.readColumns(table));
   const indexes = await session.read(catalog.readIndexes(table));
-  return catalog.parseTable(found, columns, indexes);
+  const triggers = await session.read(catalog.readTriggers(table));
+  return catalog.parseTable(found, columns, indexes, triggers);
 }

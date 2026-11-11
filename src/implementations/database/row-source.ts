@@ -83,6 +83,24 @@ export function AliasedColumns(alias: string): ColumnAddress {
   return (column, type) => ({ sql: QualifiedColumn(alias, column), type });
 }
 
+/**
+ * A column of a **logged** row: a physical row the change log's triggers stored as one JSON image.
+ *
+ * Each member is read back with the compiler's own reading of the JSON value the trigger wrote, so
+ * it is the type the column holds. A JSON-backed member is unboxed: the image holds it as a
+ * one-element array, which is what keeps a column holding SQL NULL apart from one holding a JSON
+ * null. A key the image lacks, which a row logged before its column was added does, is SQL NULL.
+ */
+export function LoggedColumns(dialect: Dialect, row: Sql): ColumnAddress {
+  return (column, type) => {
+    const member = dialect.sql.json.member(row, column);
+    const sql = IsJsonBacked(type)
+      ? dialect.capture.unbox(member)
+      : dialect.sql.json.as(member, type.kind);
+    return { sql, type };
+  };
+}
+
 /** The key columns of a table as one row of it addresses them. */
 export interface RowKeys {
   readonly alias: string;

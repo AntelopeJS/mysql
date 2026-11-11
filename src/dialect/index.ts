@@ -10,6 +10,11 @@ export type {
   ObservedTable,
   RowKey,
 } from "./ddl";
+export type {
+  CapturedColumn,
+  ChangeLogTables,
+  ChangeOperation,
+} from "./capture";
 
 /**
  * The one list of engines. A new engine is one entry here and one directory beside `mysql/`; no

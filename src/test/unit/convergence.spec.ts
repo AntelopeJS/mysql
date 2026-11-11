@@ -18,6 +18,7 @@ import {
   PENDING,
   type TableStep,
 } from "../../implementations/database/convergence";
+import { PlanTriggerSwap } from "../../implementations/database/change-log";
 
 const MYSQL = DIALECTS.mysql;
 const SAFE: MigrationMode = "safe";
@@ -83,6 +84,7 @@ function Created(plan: TablePlan): ObservedTable {
       comment: index.signature,
       columns: index.parts.map(PartColumn),
     })),
+    triggers: [],
   };
 }
 
@@ -133,7 +135,14 @@ function Text(step: TableStep | IndexStep | undefined): string {
   if (!step) {
     return "";
   }
-  return Bind(step.kind === "backfill" ? step.settle : step.sql).sql;
+  switch (step.kind) {
+    case "backfill":
+      return Bind(step.settle).sql;
+    case "swapTriggers":
+      return step.swap.statements.map((one) => Bind(one).sql).join("; ");
+    default:
+      return Bind(step.sql).sql;
+  }
 }
 
 const ITEMS: TableDefinition = {
@@ -315,7 +324,41 @@ describe("NextTableStep on columns nothing declares", () => {
     expect(Step(fewer, retyped, DESTRUCTIVE)?.kind).to.equal("backfill");
     expect(Step(fewer, bare, DESTRUCTIVE)?.kind).to.equal("dropColumn");
   });
+
+  it("swaps a watched table's triggers once its columns exist, before a backfill or a drop", () => {
+    const fewer = Plan({
+      fields: { name: "string", price: "number" },
+      indexes: {},
+    });
+    const watched = (observed: ObservedTable, triggers: string[]) => ({
+      ...observed,
+      triggers,
+    });
+    const old = Installed(Plan(BARE));
+    const added = Commented(Created(Plan(BARE)), "name", PENDING);
+    const missing = Without(added, "name");
+    expect(Step(fewer, watched(missing, old), DESTRUCTIVE)?.kind).to.equal(
+      "addColumn",
+    );
+    const step = Step(fewer, watched(added, old), DESTRUCTIVE);
+    expect(step?.kind).to.equal("swapTriggers");
+    expect(Text(step)).to.contain("CREATE TRIGGER");
+    const swapped = watched(added, Installed(fewer));
+    expect(Step(fewer, swapped, DESTRUCTIVE)?.kind).to.equal("backfill");
+    expect(Step(fewer, watched(added, []), DESTRUCTIVE)?.kind).to.equal(
+      "backfill",
+    );
+  });
 });
+
+/** The capture triggers a first feed installs for a plan. */
+function Installed(plan: TablePlan): string[] {
+  const swap = PlanTriggerSwap(MYSQL, plan, [], "install");
+  return (swap?.statements ?? []).flatMap(
+    (statement) =>
+      /^CREATE TRIGGER `([^`]+)`/.exec(Bind(statement).sql)?.[1] ?? [],
+  );
+}
 
 describe("NextIndexStep", () => {
   const plan = Plan(ITEMS);

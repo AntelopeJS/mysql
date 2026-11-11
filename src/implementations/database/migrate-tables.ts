@@ -8,6 +8,7 @@ import { Observe } from "./observe";
 import type { DeclaredColumn, TablePlan } from "./plan";
 import { RegistryStatements, SchemaKey } from "./registry";
 import { NextTableStep, type TableStep } from "./convergence";
+import { ApplyTriggerSwap } from "./change-log";
 import {
   type ConvergenceSession,
   FailureOf,
@@ -75,12 +76,17 @@ async function Run(
   plan: TablePlan,
   step: TableStep,
 ): Promise<void> {
-  if (step.kind !== "backfill") {
-    await session.apply(step.sql);
-    return;
+  switch (step.kind) {
+    case "backfill":
+      await Backfill(session, GetDialect().ddl, plan.table, step.column);
+      await session.apply(step.settle);
+      return;
+    case "swapTriggers":
+      await ApplyTriggerSwap(session, step.swap);
+      return;
+    default:
+      await session.apply(step.sql);
   }
-  await Backfill(session, GetDialect().ddl, plan.table, step.column);
-  await session.apply(step.settle);
 }
 
 async function Attempt(

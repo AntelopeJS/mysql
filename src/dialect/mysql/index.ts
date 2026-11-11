@@ -9,6 +9,7 @@ import { errors } from "./errors";
 import { ddl } from "./ddl";
 import { catalog } from "./catalog";
 import { external } from "./external";
+import { capture } from "./capture";
 
 /** MySQL 8.4 LTS and 9.7 LTS. */
 export const mysql: Dialect = {
@@ -19,4 +20,5 @@ export const mysql: Dialect = {
   ddl,
   catalog,
   external,
+  capture,
 };

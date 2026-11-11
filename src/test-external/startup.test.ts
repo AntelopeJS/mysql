@@ -2,8 +2,13 @@ import { expect } from "chai";
 
 import { sql } from "../statement";
 import { Read } from "../connection";
+import { IsReaperRunning } from "../implementations/database/reaper";
 
 describe("an external instance at startup", () => {
+  it("starts no reaper, since it keeps no change log on the client's database", () => {
+    expect(IsReaperRunning()).to.equal(false);
+  });
+
   it("creates no bookkeeping table in the client's database", async () => {
     const rows = await Read(
       sql`SELECT COUNT(*) AS tables FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME LIKE '\\_\\_antelope%'`,

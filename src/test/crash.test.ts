@@ -16,6 +16,11 @@ import {
 } from "../implementations/database/locks";
 import { ConvergeTable } from "../implementations/database/migrate-tables";
 import { ConvergeIndexes } from "../implementations/database/migrate-indexes";
+import { RegistryStatements } from "../implementations/database/registry";
+import {
+  ApplyTriggerSwap,
+  PlanTriggerSwap,
+} from "../implementations/database/change-log";
 import { Numbers, Snapshot } from "./tables";
 
 /** What a session that dies mid-convergence throws in place of its next statement. */
@@ -27,6 +32,8 @@ interface CrashCase {
   readonly seed?: (table: Sql) => Sql;
   readonly target: TableDefinition;
   readonly mode: MigrationMode;
+  /** Whether a feed watched the starting table, so it carries capture triggers. */
+  readonly watched?: boolean;
 }
 
 interface Budgeted {
@@ -142,6 +149,14 @@ const CASES: readonly CrashCase[] = [
     mode: SAFE,
   },
   {
+    name: "trigger swap with a backfilled column",
+    start: { fields: { a: "string" }, indexes: {} },
+    seed: SeedExtra,
+    target: { fields: { a: "string", b: "string" }, indexes: {} },
+    mode: SAFE,
+    watched: true,
+  },
+  {
     name: "key-column add",
     start: { fields: { title: "object" }, indexes: {} },
     seed: SeedTitles,
@@ -155,6 +170,18 @@ const CASES: readonly CrashCase[] = [
     mode: SAFE,
   },
 ];
+
+/** The operations the table's capture triggers log, each once however many triggers log it. */
+async function CapturedEvents(
+  table: string,
+  held: PoolConnection,
+): Promise<string[]> {
+  const { triggers } = await Snapshot(table, held);
+  const events = triggers.flatMap(([name, event]) =>
+    name.startsWith("ajs_chg_") ? [event] : [],
+  );
+  return [...new Set(events)].sort();
+}
 
 /** Whether convergence stopped because its session crashed, whatever step it reported it on. */
 function IsCrash(cause: unknown): boolean {
@@ -211,9 +238,17 @@ async function Start(
   crash: CrashCase,
 ): Promise<TablePlan> {
   const target = Plan(schemaId, crash.target);
+  for (const statement of RegistryStatements(GetDialect())) {
+    await session.apply(statement);
+  }
   await session.apply(sql`DROP TABLE IF EXISTS ${ident(target.table)}`);
   if (crash.start) {
-    await Converge(session, Plan(schemaId, crash.start), SAFE);
+    const start = Plan(schemaId, crash.start);
+    await Converge(session, start, SAFE);
+    const install = PlanTriggerSwap(GetDialect(), start, [], "install");
+    if (crash.watched && install) {
+      await ApplyTriggerSwap(session, install);
+    }
   }
   if (crash.seed) {
     await session.write(crash.seed(ident(target.table)));
@@ -260,6 +295,13 @@ describe("convergence stopped after any statement", function () {
           IsCrash,
         );
         expect(stopped, `a crash after ${budget} statements`).to.equal(true);
+        await session.apply(sql`UNLOCK TABLES`);
+        if (crash.watched) {
+          expect(
+            await CapturedEvents(plan.table, connection),
+            `every write is still logged after a crash after ${budget} statements`,
+          ).to.deep.equal(["DELETE", "INSERT", "UPDATE"]);
+        }
         await Converge(session, plan, crash.mode);
         expect(
           await Snapshot(plan.table, connection),
