@@ -35,20 +35,17 @@ import {
 import type { Dialect } from "../../dialect";
 import { IsBoolean, IsNumber, IsString } from "./guards";
 
-/**
- * The JSON null every `null` in a query decodes to, one object per dialect, so an operator that
- * needs to recognise a null literal — `eq` and `ne` — can detect it by identity.
- */
-const NULL_JSONS = new WeakMap<Dialect, Compiled>();
-
+/** The JSON null every `null` in a query decodes to: the dialect's one fragment for it. */
 export function NullJson(dialect: Dialect): Compiled {
-  const known = NULL_JSONS.get(dialect);
-  if (known) {
-    return known;
-  }
-  const created: Compiled = { sql: dialect.sql.json.null, type: OPAQUE };
-  NULL_JSONS.set(dialect, created);
-  return created;
+  return { sql: dialect.sql.json.null, type: OPAQUE };
+}
+
+/**
+ * Whether a value is a `null` the caller wrote, which `eq` and `ne` read as a test for both
+ * absences rather than as a value to compare: the fragment is the dialect's own, by identity.
+ */
+export function IsNullJson(dialect: Dialect, value: Compiled): boolean {
+  return value.sql === dialect.sql.json.null;
 }
 
 /**

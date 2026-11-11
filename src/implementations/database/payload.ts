@@ -176,7 +176,7 @@ function KeySubject(name: string): string {
  * an assignment either — a write does not move a row between instances.
  *
  * A declared field is written into its own typed column, read as that column's type. A null is SQL
- * NULL and never a stored json null, so the read, `pluck` and `hasfields` agree.
+ * NULL and never a stored JSON null, so the read, `pluck` and `hasfields` agree.
  */
 function TakeKey(walk: PayloadWalk, name: string, value: Member): void {
   if (RESERVED_COLUMNS.includes(name)) {

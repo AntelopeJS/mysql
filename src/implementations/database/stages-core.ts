@@ -5,7 +5,7 @@ import { type Sql, sql } from "../../statement";
 import type { Dialect } from "../../dialect";
 import type { Compiled } from "./sql";
 import { AsJson, Predicate } from "./readings";
-import { NullJson, ParameterKey } from "./value";
+import { IsNullJson, ParameterKey } from "./value";
 import { Compare, type Ordering } from "./json";
 import { BOOL, IsJsonBacked, IsOpaque, OPAQUE } from "./types";
 import { type CompiledPair, UnifyOperands, WithDefault } from "./coerce";
@@ -165,11 +165,10 @@ function EqualityStage(operator: EqualityOperator): StageHandler {
   return Lift((value, args, stage, context) => {
     const dialect = context.dialect;
     const other = RequireOperand(args[FIRST_OPERAND], stage, FIRST_OPERAND);
-    const nullJson = NullJson(dialect);
-    if (other === nullJson) {
+    if (IsNullJson(dialect, other)) {
       return NullTest(dialect, value, operator.negated);
     }
-    if (value === nullJson) {
+    if (IsNullJson(dialect, value)) {
       return NullTest(dialect, other, operator.negated);
     }
     return operator.compare(dialect, value, other);
