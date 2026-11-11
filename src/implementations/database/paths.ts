@@ -137,10 +137,18 @@ type Draft =
       readonly read: KeyRead;
     };
 
+function NoMembers(indexId: string, field: string, owner: string): Error {
+  return new Error(
+    `Index '${indexId}' keys on '${field}', but '${owner}' is declared as a value with no members`,
+  );
+}
+
+/** The declared type at `path` below `type`, or nothing once the declaration stops saying. */
 function MemberType(
+  indexId: string,
+  field: string,
   type: SqlType,
   path: JsonPath,
-  refuse: (owner: string) => Error,
 ): SqlType | undefined {
   let current = type;
   for (const [depth, segment] of path.entries()) {
@@ -150,7 +158,8 @@ function MemberType(
     }
     current = keys[segment];
     if (!IsJsonBacked(current) && depth < path.length - 1) {
-      throw refuse(path.slice(0, depth + 1).join(PATH_SEPARATOR));
+      const owner = field.split(PATH_SEPARATOR).slice(0, depth + 2);
+      throw NoMembers(indexId, field, owner.join(PATH_SEPARATOR));
     }
   }
   return current;
@@ -185,19 +194,15 @@ function ResolveIndexField(
   if (!Object.hasOwn(model.fields, head)) {
     return { kind: "member", column: EXTRA_COLUMN, path: [head, ...rest] };
   }
-  const refuse = (owner: string) =>
-    new Error(
-      `Index '${indexId}' keys on '${field}', but '${owner}' is declared as a value with no members`,
-    );
   const spec = model.fields[head];
   if (!IsJsonBacked(spec.type)) {
-    throw refuse(head);
+    throw NoMembers(indexId, field, head);
   }
   return {
     kind: "member",
     column: spec.column,
     path: rest,
-    type: MemberType(spec.type, rest, (owner) => refuse(`${head}.${owner}`)),
+    type: MemberType(indexId, field, spec.type, rest),
   };
 }
 

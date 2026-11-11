@@ -143,34 +143,31 @@ function PhysicalIndex(
   };
 }
 
-/** The array field a `multi` index over exactly one declared array field indexes the elements of. */
-function ElementField(
+type ElementPart = Extract<KeyPart, { kind: "elements" }>;
+
+/** The elements of the one declared array field a `multi` index keys on, as its key part. */
+function ElementPartOf(
   fields: readonly string[],
   index: IndexDefinition,
   model: TableModel,
-): string | undefined {
+): ElementPart | undefined {
   const [field] = fields;
-  if (index.multi !== true || fields.length !== 1) {
-    return undefined;
-  }
   if (
-    !Object.hasOwn(model.fields, field) ||
-    !IsArray(model.fields[field].type)
+    index.multi !== true ||
+    fields.length !== 1 ||
+    !Object.hasOwn(model.fields, field)
   ) {
     return undefined;
   }
-  return field;
+  const { column, type } = model.fields[field];
+  return IsArray(type)
+    ? { kind: "elements", field, column, elem: type.elem }
+    : undefined;
 }
 
 interface PlannedIndex {
   readonly indexes: readonly IndexPlan[];
   readonly refusal?: string;
-}
-
-function ElementParts(field: string, model: TableModel): KeyPart[] {
-  const spec = model.fields[field];
-  const elem = IsArray(spec.type) ? spec.type.elem : spec.type;
-  return [{ kind: "elements", field, column: spec.column, elem }];
 }
 
 function PlanIndex(
@@ -182,22 +179,21 @@ function PlanIndex(
 ): PlannedIndex {
   const fields = IndexFields(indexId, index);
   const unique = index.unique === true;
-  const elementField = ElementField(fields, index, model);
-  if (elementField !== undefined && unique) {
+  const elements = ElementPartOf(fields, index, model);
+  if (elements && unique) {
     throw new Error(
       `Index '${indexId}' on table '${tableId}' is unique and multi over an array field, whose elements MySQL cannot hold unique; drop one of the two flags`,
     );
   }
-  if (elementField !== undefined && !session.multiValuedIndex) {
+  if (elements && !session.multiValuedIndex) {
     return {
       indexes: [],
-      refusal: `this engine has no multi-valued index for the elements of '${elementField}'`,
+      refusal: `this engine has no multi-valued index for the elements of '${elements.field}'`,
     };
   }
-  const parts =
-    elementField === undefined
-      ? KeyParts(indexId, fields, unique, model, session)
-      : ElementParts(elementField, model);
+  const parts = elements
+    ? [elements]
+    : KeyParts(indexId, fields, unique, model, session);
   const scoped = PhysicalIndex(
     indexId,
     IndexName(indexId),

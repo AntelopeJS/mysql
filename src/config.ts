@@ -59,21 +59,24 @@ export const MODULE_POOL_OPTIONS = {
   resetOnRelease: false,
 } as const satisfies PoolOptions;
 
-/** `pool` options the module owns: the URL, and {@link MODULE_POOL_OPTIONS}. */
+/** `pool` options the module owns without listing a value: `url` supplies the URL, the rest stay the driver's. */
+const UNSET_MODULE_POOL_OPTIONS = [
+  "uri",
+  "charsetNumber",
+  "queryFormat",
+] as const;
+
+/** `pool` options the module owns, which a project's `pool` may not set. */
 type ModuleOwnedPoolOption =
   | keyof typeof MODULE_POOL_OPTIONS
-  | "uri"
-  | "charsetNumber"
-  | "queryFormat";
+  | (typeof UNSET_MODULE_POOL_OPTIONS)[number];
 
 /** `mysql2` pool options a project may set: connection limits, timeouts, TLS. */
 export type PoolSettings = Omit<PoolOptions, ModuleOwnedPoolOption>;
 
 const MODULE_OWNED_POOL_OPTIONS: readonly string[] = [
   ...Object.keys(MODULE_POOL_OPTIONS),
-  "uri",
-  "charsetNumber",
-  "queryFormat",
+  ...UNSET_MODULE_POOL_OPTIONS,
 ];
 
 /**
