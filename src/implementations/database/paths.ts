@@ -137,6 +137,11 @@ type Draft =
       readonly read: KeyRead;
     };
 
+/** Whether a column's comment is a key column's signature, which makes the column the module's own. */
+export function IsKeyColumnSignature(comment: string): boolean {
+  return comment.startsWith(`${SIGNATURE_PREFIX}:`);
+}
+
 function NoMembers(indexId: string, field: string, owner: string): Error {
   return new Error(
     `Index '${indexId}' keys on '${field}', but '${owner}' is declared as a value with no members`,

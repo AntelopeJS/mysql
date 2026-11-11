@@ -1,6 +1,13 @@
 import { mysql } from "./mysql";
 
 export type { Dialect, SessionSyntax } from "./types";
+export type {
+  DdlSyntax,
+  ObservedColumn,
+  ObservedIndex,
+  ObservedTable,
+  RowKey,
+} from "./ddl";
 
 /**
  * The one list of engines. A new engine is one entry here and one directory beside `mysql/`; no

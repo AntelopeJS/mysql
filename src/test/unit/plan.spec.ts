@@ -289,6 +289,17 @@ describe("BuildTablePlan multi and crossInstance indexes", () => {
     expect(Parts(index)).to.deep.equal(["instance:_instance", "stored:price"]);
   });
 
+  it("keys a multi index over an array of anything but strings by the whole array", () => {
+    const index = Index(
+      { fields: { scores: "number[]" }, indexes: { scores: { multi: true } } },
+      "scores",
+    );
+    expect(Parts(index)).to.deep.equal([
+      "instance:_instance",
+      "key:scores[]:json:prefix640",
+    ]);
+  });
+
   it("refuses a unique multi index over an array field", () => {
     expect(() =>
       Plan({

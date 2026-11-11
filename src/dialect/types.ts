@@ -1,5 +1,6 @@
 import type { Sql } from "../statement";
 import type { SqlType } from "../implementations/database/types";
+import type { CatalogSyntax, DdlSyntax } from "./ddl";
 
 /**
  * The only thing the compiler, the planners and the runtimes know about an engine.
@@ -14,6 +15,8 @@ export interface Dialect {
   readonly id: string;
   readonly session: SessionSyntax;
   readonly sql: SqlSyntax;
+  readonly ddl: DdlSyntax;
+  readonly catalog: CatalogSyntax;
 }
 
 /** The module options a session pin depends on. */

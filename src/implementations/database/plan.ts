@@ -32,6 +32,9 @@ type ColumnPlan =
       readonly type: SqlType;
     };
 
+/** A column that stores a declared field. */
+export type DeclaredColumn = Extract<ColumnPlan, { role: "declared" }>;
+
 /**
  * One physical index. `parts` is the key in order, `_instance` first on the index of every
  * declaration; the unprefixed twin of a `crossInstance` declaration is never unique, since rows of
@@ -145,7 +148,12 @@ function PhysicalIndex(
 
 type ElementPart = Extract<KeyPart, { kind: "elements" }>;
 
-/** The elements of the one declared array field a `multi` index keys on, as its key part. */
+/**
+ * The elements of the one declared array of strings a `multi` index keys on, as its key part.
+ *
+ * Only strings: MySQL casts multi-valued elements to `CHAR`, `DECIMAL`, dates and integers but not
+ * to `DOUBLE`, and refuses a write whose array holds an object. Any other array is keyed whole.
+ */
 function ElementPartOf(
   fields: readonly string[],
   index: IndexDefinition,
@@ -160,7 +168,7 @@ function ElementPartOf(
     return undefined;
   }
   const { column, type } = model.fields[field];
-  return IsArray(type)
+  return IsArray(type) && type.elem.kind === "text"
     ? { kind: "elements", field, column, elem: type.elem }
     : undefined;
 }
