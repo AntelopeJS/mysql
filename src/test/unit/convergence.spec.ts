@@ -134,7 +134,14 @@ function Text(step: TableStep | IndexStep | undefined): string {
   if (!step) {
     return "";
   }
-  return Bind(step.kind === "backfill" ? step.settle : step.sql).sql;
+  switch (step.kind) {
+    case "backfill":
+      return Bind(step.settle).sql;
+    case "swapTriggers":
+      return step.swap.statements.map((one) => Bind(one).sql).join("; ");
+    default:
+      return Bind(step.sql).sql;
+  }
 }
 
 const ITEMS: TableDefinition = {
