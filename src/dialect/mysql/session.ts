@@ -42,6 +42,10 @@ const LOCK_PURPOSE_MAX_CHARS =
   2 * LOCK_SEPARATOR.length -
   LOCK_DIGEST_CHARS;
 
+function Timeout(ms: number): Sql {
+  return sql`max_execution_time = ${int(ms)}`;
+}
+
 function Pin(settings: SessionSettings): Sql {
   const assignments = [
     sql`NAMES utf8mb4 COLLATE ${lit(BINARY_COLLATION)}`,
@@ -51,9 +55,7 @@ function Pin(settings: SessionSettings): Sql {
     sql`lc_messages = ${lit(MESSAGES)}`,
   ];
   if (settings.statementTimeoutMs !== undefined) {
-    assignments.push(
-      sql`max_execution_time = ${int(settings.statementTimeoutMs)}`,
-    );
+    assignments.push(Timeout(settings.statementTimeoutMs));
   }
   return sql`SET ${join(assignments, sql`, `)}`;
 }
@@ -73,6 +75,7 @@ function LockName(purpose: string, scope: string): string {
 
 export const session: SessionSyntax = {
   pin: Pin,
+  statementTimeout: (ms) => sql`SET SESSION ${Timeout(ms)}`,
   binaryCollation: BINARY_COLLATION,
   keyBudgetBytes: KEY_BUDGET_BYTES,
   multiValuedIndex: true,

@@ -67,6 +67,15 @@ describe("the MySQL session pin", () => {
     expect(PinText(1500)).to.match(/, max_execution_time = 1500$/);
   });
 
+  it("sets the session's read timeout to the value the pin would, and to 0 for none", () => {
+    expect(Bind(session.statementTimeout(1500)).sql).to.equal(
+      "SET SESSION max_execution_time = 1500",
+    );
+    expect(Bind(session.statementTimeout(0)).sql).to.equal(
+      "SET SESSION max_execution_time = 0",
+    );
+  });
+
   it("names the collation the pin uses", () => {
     expect(PinText()).to.contain(`'${session.binaryCollation}'`);
   });

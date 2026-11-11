@@ -1,7 +1,12 @@
 import type { Readable } from "node:stream";
 import { PoolConnection as CallbackPoolConnection } from "mysql2";
 
-import { AcquireConnection, ParseRow, type Row } from "../../connection";
+import {
+  AcquireUncapped,
+  ParseRow,
+  type Row,
+  ReleaseCapped,
+} from "../../connection";
 import { Bind, type Sql } from "../../statement";
 import { IsDocument } from "./guards";
 
@@ -58,10 +63,10 @@ export async function OpenRowStream(
   statement: Sql,
   batchSize: number,
 ): Promise<RowSource> {
-  const connection = await AcquireConnection();
+  const connection = await AcquireUncapped();
   const driver: unknown = connection.connection;
   if (!(driver instanceof CallbackPoolConnection)) {
-    connection.release();
+    await ReleaseCapped(connection);
     throw new Error(NOT_A_POOL_CONNECTION);
   }
   const bound = Bind(statement);
@@ -93,17 +98,17 @@ export async function OpenRowStream(
 
   return {
     next: Take,
-    close() {
-      if (!isClosed) {
-        isClosed = true;
-        if (stream.readableEnded && !failure) {
-          connection.release();
-        } else {
-          connection.destroy();
-          stream.destroy();
-        }
+    async close() {
+      if (isClosed) {
+        return;
       }
-      return Promise.resolve();
+      isClosed = true;
+      if (stream.readableEnded && !failure) {
+        await ReleaseCapped(connection);
+      } else {
+        connection.destroy();
+        stream.destroy();
+      }
     },
   };
 }

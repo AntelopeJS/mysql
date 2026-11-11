@@ -333,6 +333,46 @@ export function AcquireConnection(): Promise<PoolConnection> {
 }
 
 /**
+ * Takes a pinned connection for one statement that streams for as long as its reader takes, free
+ * of `statementTimeoutMs`: the server counts a streaming `SELECT` as executing until its last row
+ * is read, so the cap would end a cursor whose reader is merely slow. Give it back through
+ * {@link ReleaseCapped}.
+ */
+export async function AcquireUncapped(): Promise<PoolConnection> {
+  const connection = await AcquireConnection();
+  if (!GetOptions().statementTimeoutMs) {
+    return connection;
+  }
+  try {
+    await connection.query(Bind(GetDialect().session.statementTimeout(0)).sql);
+  } catch (err) {
+    connection.destroy();
+    throw err;
+  }
+  return connection;
+}
+
+/**
+ * Gives back a connection of {@link AcquireUncapped} with the cap restored, so the next statement
+ * on it is bounded as every pooled one is. A connection whose cap cannot be restored is destroyed
+ * rather than pooled unbounded.
+ */
+export async function ReleaseCapped(connection: PoolConnection): Promise<void> {
+  try {
+    const cap = GetOptions().statementTimeoutMs;
+    if (cap) {
+      await connection.query(
+        Bind(GetDialect().session.statementTimeout(cap)).sql,
+      );
+    }
+  } catch {
+    connection.destroy();
+    return;
+  }
+  connection.release();
+}
+
+/**
  * Runs a statement through the prepared-statement protocol and answers its rows.
  *
  * On `held` when given, which stays checked out; otherwise on a pooled connection taken for this
