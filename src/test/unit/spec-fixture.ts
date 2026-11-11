@@ -35,21 +35,26 @@ export function WithOptions<T>(options: Options, read: () => T): T {
   }
 }
 
-/** A value a JSON configuration can hold. */
+/** A value an untyped caller can hand over: what a JSON configuration holds, or a symbol. */
 export type ForeignValue =
   | string
   | number
   | boolean
   | null
+  | symbol
   | Record<string, never>
   | readonly string[];
 
 /**
- * Options carrying a value their type refuses, as an untyped project configuration can deliver
- * one: the property is defined at runtime, past the compiler.
+ * `base` with `key` holding a value its type refuses, as an untyped caller can deliver one: the
+ * property is defined at runtime, past the compiler.
  */
+export function WithForeign<T>(base: T, key: string, value: ForeignValue): T {
+  Object.defineProperty(base, key, { value, enumerable: true });
+  return base;
+}
+
+/** Options carrying a value their type refuses, as an untyped project configuration can deliver one. */
 export function Untyped(option: string, value: ForeignValue): Options {
-  const options: Options = {};
-  Object.defineProperty(options, option, { value, enumerable: true });
-  return options;
+  return WithForeign<Options>({}, option, value);
 }
