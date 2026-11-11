@@ -1,14 +1,10 @@
 import { expect } from "chai";
+import type { PoolConnection } from "mysql2/promise";
 import type { TableDefinition } from "@antelopejs/interface-database/schema";
 
 import type { MigrationMode } from "../config";
-import { type Sql, ident, param, sql } from "../statement";
-import {
-  AcquireConnection,
-  GetDialect,
-  GetSchemaPrefix,
-  type Row,
-} from "../connection";
+import { type Sql, ident, sql } from "../statement";
+import { AcquireConnection, GetDialect, GetSchemaPrefix } from "../connection";
 import { ParseTable } from "../implementations/database/fields";
 import {
   BuildTablePlan,
@@ -20,6 +16,7 @@ import {
 } from "../implementations/database/locks";
 import { ConvergeTable } from "../implementations/database/migrate-tables";
 import { ConvergeIndexes } from "../implementations/database/migrate-indexes";
+import { Snapshot } from "./snapshot";
 
 /** What a session that dies mid-convergence throws in place of its next statement. */
 class Crash extends Error {}
@@ -208,42 +205,6 @@ async function Converge(
   await ConvergeIndexes(session, plan, NEVER);
 }
 
-function Cells(rows: readonly Row[]): string[][] {
-  return rows.map((row) =>
-    [...row.values()].map((cell) =>
-      Buffer.isBuffer(cell) ? cell.toString("utf8") : String(cell),
-    ),
-  );
-}
-
-/** The table's catalog entry, columns, indexes and every row, in a stable order. */
-async function Snapshot(session: ConvergenceSession, table: string) {
-  const name = param(table);
-  const where = sql`TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${name}`;
-  return {
-    table: Cells(
-      await session.read(
-        sql`SELECT TABLE_COMMENT FROM information_schema.TABLES WHERE ${where}`,
-      ),
-    ),
-    columns: Cells(
-      await session.read(
-        sql`SELECT COLUMN_NAME, COLUMN_TYPE, EXTRA, COLUMN_COMMENT, GENERATION_EXPRESSION FROM information_schema.COLUMNS WHERE ${where} ORDER BY ORDINAL_POSITION`,
-      ),
-    ),
-    indexes: Cells(
-      await session.read(
-        sql`SELECT INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME, EXPRESSION, INDEX_COMMENT FROM information_schema.STATISTICS WHERE ${where} ORDER BY INDEX_NAME, SEQ_IN_INDEX`,
-      ),
-    ),
-    rows: Cells(
-      await session.read(
-        sql`SELECT * FROM ${ident(table)} ORDER BY _instance, _id`,
-      ),
-    ),
-  };
-}
-
 /** Drops the table, then builds the case's starting catalog and rows. */
 async function Start(
   session: ConvergenceSession,
@@ -264,17 +225,16 @@ async function Start(
 describe("convergence stopped after any statement", function () {
   this.timeout(120_000);
 
+  let connection: PoolConnection;
   let session: ConvergenceSession;
-  let release: () => void;
 
   before(async () => {
-    const connection = await AcquireConnection();
+    connection = await AcquireConnection();
     session = SessionOf(connection);
-    release = () => connection.release();
   });
 
   after(() => {
-    release();
+    connection.release();
   });
 
   for (const crash of CASES) {
@@ -287,7 +247,7 @@ describe("convergence stopped after any statement", function () {
       expect(statements, "statements an uninterrupted run takes").to.be.above(
         0,
       );
-      const reference = await Snapshot(session, plan.table);
+      const reference = await Snapshot(plan.table, connection);
       await Converge(counted.session, plan, crash.mode);
       expect(counted.spent(), "a converged table takes no statement").to.equal(
         statements,
@@ -303,7 +263,7 @@ describe("convergence stopped after any statement", function () {
         expect(stopped, `a crash after ${budget} statements`).to.equal(true);
         await Converge(session, plan, crash.mode);
         expect(
-          await Snapshot(session, plan.table),
+          await Snapshot(plan.table, connection),
           `converged again after a crash after ${budget} of ${statements} statements`,
         ).to.deep.equal(reference);
       }
