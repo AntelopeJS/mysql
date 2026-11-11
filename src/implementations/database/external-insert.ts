@@ -129,11 +129,10 @@ function KeyValues(
   );
 }
 
-function KeyMatch(key: ColumnDescriptor[], values: Map<string, Sql>): Sql {
+function KeyMatch(values: Map<string, Sql>): Sql {
   return join(
-    key.map(
-      (part) =>
-        sql`${WriteColumn(part.column)} = ${values.get(part.column) ?? GENERATED_KEY}`,
+    [...values].map(
+      ([column, value]) => sql`${WriteColumn(column)} = ${value}`,
     ),
     AND,
   );
@@ -200,7 +199,7 @@ function InsertRow(
 ): ExternalInsertRow {
   const external = ExternalOf(target);
   const values = KeyValues(external, key, columns);
-  const match = KeyMatch(key, values);
+  const match = KeyMatch(values);
   const from = AliasedTable(external);
   const readId = sql`SELECT ${IdOfWrittenRow(context.dialect, key)} AS ${ident(ID_COLUMN)} FROM ${from} WHERE ${match}`;
   const insert = InsertStatement(external, columns);

@@ -1,9 +1,5 @@
 import type { Dialect } from "../../dialect";
-import type {
-  CatalogColumn,
-  ColumnReading,
-  NativeFamily,
-} from "../../dialect/external";
+import type { CatalogColumn, ColumnReading } from "../../dialect/external";
 import { BOOL, FLOAT, OPAQUE, type SqlType, TEXT, TIMESTAMP } from "./types";
 
 /**
@@ -130,6 +126,3 @@ export function ReadOnlyReason(descriptor: ColumnDescriptor): string {
     descriptor.readOnly ?? `a ${descriptor.native} column no write assigns`
   );
 }
-
-/** The families whose values are text a person wrote, which a profile measures by length only. */
-export const TEXT_FAMILIES: readonly NativeFamily[] = ["text"];

@@ -23,7 +23,6 @@ import { type Source, SOURCE_ALIAS } from "./external-sample";
 import { AcceptedDeclarations } from "./external-declarations";
 import { DecodeCell } from "./result";
 import { QualifiedColumn } from "./sql";
-import { TEXT_FAMILIES } from "./external-types";
 import { TIMESTAMP, type SqlType } from "./types";
 
 /** A column with more distinct values than this has no categories. */
@@ -38,6 +37,8 @@ const TIME_AXIS_FILLED_SHARE = 0.9;
 const TIME_AXIS_MIN_MONTHS = 3;
 const MONTHS_PER_YEAR = 12;
 
+/** The families whose values are text a person wrote, which a profile measures by length only. */
+const TEXT_FAMILIES: readonly NativeFamily[] = ["text"];
 const CATEGORY_FAMILIES: readonly NativeFamily[] = [
   ...TEXT_FAMILIES,
   "enum",

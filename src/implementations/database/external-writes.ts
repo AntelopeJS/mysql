@@ -216,10 +216,10 @@ function DocumentOf(stage: QueryStage): DocumentView {
 
 function ChangeStatement(
   target: WriteTarget,
+  key: ColumnDescriptor[],
   payload: ExternalPayload,
   context: DecodingContext,
 ): ExternalWrite {
-  const key = RequireKey(target);
   const assignments = payload.assignments;
   if (assignments.length === 0) {
     return { kind: "count" };
@@ -252,7 +252,7 @@ function ChangeStatement(
 
 function ChangeWrite(mode: ExternalWriteMode): ExternalWriteCompiler {
   return (target, stage, context) => {
-    RequireKey(target);
+    const key = RequireKey(target);
     const payload = SplitExternalPayload(
       DocumentOf(stage),
       target.origin.model,
@@ -260,7 +260,7 @@ function ChangeWrite(mode: ExternalWriteMode): ExternalWriteCompiler {
       mode,
     );
     Validate(ExternalOf(target), payload, mode);
-    return ChangeStatement(target, payload, context);
+    return ChangeStatement(target, key, payload, context);
   };
 }
 
