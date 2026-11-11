@@ -9,6 +9,7 @@ import {
   type TablePlan,
 } from "../../implementations/database/plan";
 import {
+  EnsureTriggers,
   PlanTriggerSwap,
   type TriggerSwap,
 } from "../../implementations/database/change-log";
@@ -198,5 +199,42 @@ describe("planning a table's trigger swap", () => {
     const swap = PlanTriggerSwap(MYSQL, wider, [desired[0]], "install");
     expect(Created(swap)).to.deep.equal(Desired(wider));
     expect(Dropped(swap)).to.deep.equal([desired[0]]);
+  });
+});
+
+describe("installing a table's triggers for its first feed", () => {
+  /**
+   * A table no registration can create, so the install fails the same way with or without a live
+   * adapter in the process: there is no connection, or there is no such table.
+   */
+  const absent: TablePlan = {
+    ...Plan(ITEMS),
+    schemaId: "__spec_absent",
+    tableId: "__spec_absent",
+    table: "__spec_absent__items",
+  };
+
+  it("shares one install between every feed that asks for a table at once", async () => {
+    const first = EnsureTriggers(absent);
+    const second = EnsureTriggers(absent);
+    expect(second).to.equal(first);
+    await first.then(
+      () => expect.fail("this spec has no table to install onto"),
+      () => undefined,
+    );
+  });
+
+  it("does not remember an install that failed, so the next feed tries again", async () => {
+    const failed = EnsureTriggers(absent);
+    await failed.then(
+      () => expect.fail("this spec has no table to install onto"),
+      () => undefined,
+    );
+    const retried = EnsureTriggers(absent);
+    expect(retried).to.not.equal(failed);
+    await retried.then(
+      () => expect.fail("this spec has no table to install onto"),
+      () => undefined,
+    );
   });
 });
