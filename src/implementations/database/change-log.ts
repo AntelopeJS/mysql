@@ -31,12 +31,14 @@ interface Trigger {
 /**
  * A change to one table's triggers. The new triggers are created before the old ones are dropped,
  * all while `lock` holds the table, so no write runs between them and a crash part way leaves a
- * trigger twice rather than none.
+ * trigger twice rather than none. `refusal` words a statement the server refused for want of a
+ * privilege or a setting.
  */
 export interface TriggerSwap {
   readonly lock: Sql;
   readonly statements: readonly Sql[];
   readonly unlock: Sql;
+  readonly refusal: (error: Error) => string | undefined;
 }
 
 /**
@@ -129,10 +131,20 @@ export function PlanTriggerSwap(
       ...drop.map((name) => dialect.capture.dropTrigger(name)),
     ],
     unlock: dialect.capture.unlockTables,
+    refusal: (error) => dialect.capture.triggerRefusal(error),
   };
 }
 
-/** Runs a swap on `session`, giving the table back however the swap ends. */
+/** Words a refusal the server gave for want of a privilege or a setting, keeping the server's error as its cause. */
+function Explained(swap: TriggerSwap, error: Error): Error {
+  const reason = swap.refusal(error);
+  return reason === undefined ? error : new Error(reason, { cause: error });
+}
+
+/**
+ * Runs a swap on `session`, giving the table back however the swap ends. A statement the server
+ * refuses for want of a privilege or a setting fails with what the caller can do about it.
+ */
 export async function ApplyTriggerSwap(
   session: ConvergenceSession,
   swap: TriggerSwap,
@@ -140,7 +152,11 @@ export async function ApplyTriggerSwap(
   await session.apply(swap.lock);
   try {
     for (const statement of swap.statements) {
-      await session.apply(statement);
+      try {
+        await session.apply(statement);
+      } catch (error) {
+        throw error instanceof Error ? Explained(swap, error) : error;
+      }
     }
   } finally {
     await session.apply(swap.unlock);

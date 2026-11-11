@@ -9,10 +9,12 @@ import {
   type TablePlan,
 } from "../../implementations/database/plan";
 import {
+  ApplyTriggerSwap,
   EnsureTriggers,
   PlanTriggerSwap,
   type TriggerSwap,
 } from "../../implementations/database/change-log";
+import type { ConvergenceSession } from "../../implementations/database/locks";
 
 const MYSQL = DIALECTS.mysql;
 const { capture } = MYSQL;
@@ -236,5 +238,62 @@ describe("installing a table's triggers for its first feed", () => {
       () => expect.fail("this spec has no table to install onto"),
       () => undefined,
     );
+  });
+});
+
+describe("applying a table's trigger swap", () => {
+  const planned = PlanTriggerSwap(MYSQL, Plan(ITEMS), [], "install");
+  if (!planned) {
+    throw new Error("a table without triggers needs a swap");
+  }
+  const swap: TriggerSwap = planned;
+
+  function ServerRefusal(errno: number): Error {
+    return Object.assign(new Error(`server error ${errno}`), {
+      errno,
+      sqlState: "HY000",
+    });
+  }
+
+  /** A session that runs every statement except a trigger's creation, which fails with `failure`. */
+  function Refusing(failure: Error, ran: string[]): ConvergenceSession {
+    return {
+      id: 1,
+      read: () => Promise.resolve([]),
+      write: () => Promise.resolve(0),
+      apply: (statement) => {
+        const text = Bind(statement).sql;
+        ran.push(text);
+        return text.startsWith("CREATE TRIGGER")
+          ? Promise.reject(failure)
+          : Promise.resolve(0);
+      },
+    };
+  }
+
+  async function Failure(failure: Error, ran: string[]): Promise<Error> {
+    try {
+      await ApplyTriggerSwap(Refusing(failure, ran), swap);
+    } catch (err) {
+      if (err instanceof Error) {
+        return err;
+      }
+      throw err;
+    }
+    return expect.fail("the creation of a trigger was refused");
+  }
+
+  it("words the server's refusal for want of SUPER, keeps it as the cause, and gives the table back", async () => {
+    const ran: string[] = [];
+    const refusal = ServerRefusal(1419);
+    const err = await Failure(refusal, ran);
+    expect(err).to.have.property("cause", refusal);
+    expect(err).to.have.property("message").that.includes("GRANT SUPER ON *.*");
+    expect(ran.at(-1)).to.equal(Bind(swap.unlock).sql);
+  });
+
+  it("passes every other failure through as it came", async () => {
+    const denied = ServerRefusal(1142);
+    expect(await Failure(denied, [])).to.equal(denied);
   });
 });

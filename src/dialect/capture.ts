@@ -69,6 +69,11 @@ export interface CaptureSyntax {
   ): readonly TriggerBody[];
   createTrigger(name: string, table: string, trigger: TriggerBody): Sql;
   dropTrigger(name: string): Sql;
+  /**
+   * What to tell the caller when the server refused to create a trigger for want of a privilege or
+   * a server setting, naming the cause and every remedy; `undefined` for any other failure.
+   */
+  triggerRefusal(error: Error): string | undefined;
   /** Holds a table against every other session, so no write runs while its triggers change. */
   lockTable(table: string): Sql;
   readonly unlockTables: Sql;

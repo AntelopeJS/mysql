@@ -5,7 +5,7 @@ import { Schema } from "@antelopejs/interface-database/schema";
 
 import { GetOptions, type Options } from "../config";
 import { Reconnect } from "./tables";
-import { Opened, type Row } from "./watch";
+import { DeliveredRow, Opened, type Row } from "./watch";
 
 const PRIVILEGES =
   "CREATE, ALTER, INDEX, TRIGGER, LOCK TABLES, SELECT, INSERT, UPDATE, DELETE";
@@ -116,5 +116,17 @@ describe("change feeds for an application account", function () {
     expect(Missing(err)).to.deep.equal([]);
     expect(ServerError(err)).to.have.property("errno", SERVER_REFUSAL);
     expect(err.message).to.include("swapTriggers");
+  });
+
+  it("opens a feed once the account holds SUPER, which is the first remedy the refusal names", async () => {
+    await AsAdmin([`GRANT SUPER ON *.* TO '${user}'@'%'`]);
+    await Reconnect({ ...admin, url: AccountUrl() });
+    const schema = new Schema<Tables>("account-super", NARROW);
+    const items = schema.instance().table("items");
+    const feed = await Opened(items, "probe");
+    await items.insert({ _id: "after", name: "after" });
+    const change = await DeliveredRow(feed, "after");
+    await feed.return?.();
+    expect(change).to.have.nested.property("newValue.name", "after");
   });
 });

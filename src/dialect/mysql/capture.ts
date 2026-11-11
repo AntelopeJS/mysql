@@ -169,6 +169,16 @@ function Poll(tables: ChangeLogTables, request: PollRequest): Sql {
   return sql`SELECT c.epoch AS epoch, c.frontier AS frontier, c.high_water AS high_water, e.seq AS seq, e.op AS op, e.old_side AS old_side, e.new_side AS new_side FROM (${header}) AS c LEFT JOIN LATERAL (${events}) AS e ON TRUE ORDER BY e.seq`;
 }
 
+/** `You do not have the SUPER privilege and binary logging is enabled`, raised by `CREATE TRIGGER`. */
+const BINARY_LOG_REFUSAL = 1419;
+
+const TRIGGER_REFUSAL = `A change feed needs row triggers on the table, and MySQL refused to create one (errno ${BINARY_LOG_REFUSAL}): the server has binary logging on, which lets only an account with the SUPER privilege create a trigger unless log_bin_trust_function_creators is 1. Either grant the account in the configured url that privilege (GRANT SUPER ON *.* TO the account), or set the variable on the server (SET GLOBAL log_bin_trust_function_creators = 1, and in its configuration file to keep it across a restart). See https://dev.mysql.com/doc/refman/8.4/en/stored-programs-logging.html`;
+
+function TriggerRefusal(error: Error): string | undefined {
+  const refused = "errno" in error && error.errno === BINARY_LOG_REFUSAL;
+  return refused ? TRIGGER_REFUSAL : undefined;
+}
+
 /** Microseconds in a millisecond, which `INTERVAL` takes the retention in. */
 const MICROSECONDS_PER_MS = 1000;
 
@@ -178,6 +188,7 @@ export const capture: CaptureSyntax = {
   createTrigger: (name, table, trigger) =>
     sql`CREATE TRIGGER ${ident(name)} AFTER ${EVENTS[trigger.operation]} ON ${ident(table)} FOR EACH ROW ${trigger.body}`,
   dropTrigger: (name) => sql`DROP TRIGGER IF EXISTS ${ident(name)}`,
+  triggerRefusal: TriggerRefusal,
   lockTable: (table) => sql`LOCK TABLES ${ident(table)} WRITE`,
   unlockTables: sql`UNLOCK TABLES`,
   unbox: (member) =>
