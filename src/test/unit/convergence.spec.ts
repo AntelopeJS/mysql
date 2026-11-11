@@ -83,6 +83,7 @@ function Created(plan: TablePlan): ObservedTable {
       comment: index.signature,
       columns: index.parts.map(PartColumn),
     })),
+    triggers: [],
   };
 }
 

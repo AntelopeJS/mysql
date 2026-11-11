@@ -29,6 +29,8 @@ export interface ObservedTable {
   readonly comment: string;
   readonly columns: readonly ObservedColumn[];
   readonly indexes: readonly ObservedIndex[];
+  /** The names of the table's triggers, whoever made them. */
+  readonly triggers: readonly string[];
 }
 
 /** A row's primary key, in key order. */
@@ -112,10 +114,12 @@ export interface CatalogSyntax {
   readTable(table: string): Sql;
   readColumns(table: string): Sql;
   readIndexes(table: string): Sql;
+  readTriggers(table: string): Sql;
   /** `undefined` when nothing sits at the name. */
   parseTable(
     table: readonly Row[],
     columns: readonly Row[],
     indexes: readonly Row[],
+    triggers: readonly Row[],
   ): ObservedTable | undefined;
 }

@@ -56,7 +56,9 @@ export const catalog: CatalogSyntax = {
     sql`SELECT COLUMN_NAME AS name, COLUMN_TYPE AS type, EXTRA AS extra, COLUMN_COMMENT AS comment FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${param(table)} ORDER BY ORDINAL_POSITION`,
   readIndexes: (table) =>
     sql`SELECT INDEX_NAME AS name, NON_UNIQUE AS non_unique, INDEX_COMMENT AS comment, COLUMN_NAME AS column_name FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${param(table)} AND INDEX_NAME <> 'PRIMARY' ORDER BY INDEX_NAME, SEQ_IN_INDEX`,
-  parseTable: ([table], columns, indexes) => {
+  readTriggers: (table) =>
+    sql`SELECT TRIGGER_NAME AS name FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = DATABASE() AND EVENT_OBJECT_TABLE = ${param(table)} ORDER BY TRIGGER_NAME`,
+  parseTable: ([table], columns, indexes, triggers) => {
     if (!table) {
       return undefined;
     }
@@ -65,6 +67,7 @@ export const catalog: CatalogSyntax = {
       comment: Text(table, "comment"),
       columns: columns.map(ParseColumn),
       indexes: ParseIndexes(indexes),
+      triggers: triggers.map((row) => Text(row, "name")),
     };
   },
 };

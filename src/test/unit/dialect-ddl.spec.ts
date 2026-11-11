@@ -43,9 +43,10 @@ describe("the MySQL DDL failure classification", () => {
 
 describe("the MySQL catalog parser", () => {
   it("reads nothing at the name as no table, and a view as not a table", () => {
-    expect(catalog.parseTable([], [], [])).to.equal(undefined);
+    expect(catalog.parseTable([], [], [], [])).to.equal(undefined);
     const view = catalog.parseTable(
       Rows({ kind: "VIEW", comment: "" }),
+      [],
       [],
       [],
     );
@@ -75,6 +76,7 @@ describe("the MySQL catalog parser", () => {
         { name: "tags", non_unique: 1, comment: "t", column_name: "_instance" },
         { name: "tags", non_unique: 1, comment: "t", column_name: null },
       ),
+      Rows({ name: "ajs_chg_0123456789abcdef_i" }),
     );
     expect(observed).to.deep.equal({
       kind: "table",
@@ -102,6 +104,7 @@ describe("the MySQL catalog parser", () => {
           columns: ["_instance", undefined],
         },
       ],
+      triggers: ["ajs_chg_0123456789abcdef_i"],
     });
   });
 });
