@@ -103,7 +103,12 @@ async function initialize(schemaId: string, schema: SchemaDefinition) {
   );
   scanNotices.set(schemaId, SchemaScanNotices(schemaId, schema));
   await ConvergeTables(schemaId, planned.tables, GetOptions().migrations);
-  indexing.set(schemaId, BuildIndexes(schemaId, planned.tables));
+  const earlier = indexing.get(schemaId);
+  const phase = BuildIndexes(schemaId, planned.tables);
+  indexing.set(
+    schemaId,
+    earlier ? Promise.all([earlier, phase]).then(() => undefined) : phase,
+  );
   guardedWrites.delete(schemaId);
   if (
     planned.tables.some((plan) => plan.indexes.some((index) => index.unique))
@@ -236,8 +241,10 @@ export function GetCrossInstanceScanNotice(
 }
 
 /**
- * Settles once the schema is ready and its background index phase has settled, whatever the
- * phase's outcome. Nothing in the query path awaits it; it is how a caller observes the phase.
+ * Settles once the schema is ready and every index phase this process started for it has settled,
+ * whatever their outcome. A later registration's phase finds the indexes lock held by an earlier
+ * one still building and returns at once, so the earlier phase is waited for too. Nothing in the
+ * query path awaits it; it is how a caller observes the phase.
  */
 export async function WaitForIndexes(schemaId: string): Promise<void> {
   await WaitForSchemaReady(schemaId);
