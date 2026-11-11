@@ -3,7 +3,7 @@ import type { QueryStage } from "@antelopejs/interface-database/common";
 import type { TimePart } from "../../dialect/sql-types";
 import { sql } from "../../statement";
 import { BOOL } from "./types";
-import { AsFloat, Moment } from "./readings";
+import { AsFloat, MILLISECONDS_PER_SECOND, Moment } from "./readings";
 import {
   AsValue,
   BuildStages,
@@ -26,8 +26,6 @@ const DATE_PARTS = {
   date_minutes: "minute",
   date_seconds: "second",
 } as const satisfies Record<string, TimePart>;
-
-const MILLISECONDS_PER_SECOND = sql`1000`;
 
 /**
  * Reads one part of an instant, in the zone a preceding `date_with_timezone` named or in UTC. The

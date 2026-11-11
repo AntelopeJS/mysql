@@ -6,7 +6,13 @@ import { type Sql, sql } from "../../statement";
 import { Unify } from "./coerce";
 import type { Compiled } from "./sql";
 import { FLOAT, type SqlType, TEXT, TIMESTAMP } from "./types";
-import { AsFloat, Moment, Numeric, Text } from "./readings";
+import {
+  AsFloat,
+  MILLISECONDS_PER_SECOND,
+  Moment,
+  Numeric,
+  Text,
+} from "./readings";
 import { OptionsOf } from "./utils";
 import {
   FIRST_OPERAND,
@@ -38,8 +44,6 @@ interface OperandKinds {
 const PLUS = sql`+`;
 const MINUS = sql`-`;
 const TIMES = sql`*`;
-
-const MILLISECONDS_PER_SECOND = sql`1000`;
 
 /** An instant moved by a number of seconds, through epoch milliseconds, SQL NULL beyond what an instant holds. */
 function OffsetMoment(

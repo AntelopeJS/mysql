@@ -14,6 +14,9 @@ import {
   TIMESTAMP,
 } from "./types";
 
+/** The epoch milliseconds an instant reads as are a thousand to the second. */
+export const MILLISECONDS_PER_SECOND = sql`1000`;
+
 /** Reads a fragment as a double, which every numeric result owes the driver. */
 export function AsFloat(dialect: Dialect, value: Sql): Compiled {
   return { sql: dialect.sql.scalar.cast(value, "float"), type: FLOAT };
