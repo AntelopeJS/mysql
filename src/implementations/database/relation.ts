@@ -136,7 +136,10 @@ export interface IndexedMember extends IndexedValue {
  * else — a name that is not an index, or a relation that no longer knows its table — reads each
  * field by name, which is what keeps `map(…).orderBy("age")` working.
  */
-function IndexColumns(relation: Relation, name: string): IndexedMember[] {
+export function IndexColumns(
+  relation: Relation,
+  name: string,
+): IndexedMember[] {
   const origin = relation.origin;
   const planned = origin?.plan.indexes.find(
     (index) => index.id === name && index.parts[0]?.kind === "instance",

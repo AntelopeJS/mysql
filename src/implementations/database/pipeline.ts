@@ -6,6 +6,7 @@ import type { Relation } from "./relation";
 import { ROW_STAGES } from "./stages-rows";
 import type { DecodingContext } from "./context";
 import { AGGREGATE_STAGES } from "./stages-aggregate";
+import { GROUP_STAGES } from "./stages-group";
 import { SELECTION_STAGES } from "./stages-selection";
 import { PROJECTION_STAGES } from "./stages-projection";
 
@@ -31,6 +32,7 @@ const PIPELINE_STAGES = {
   ...SELECTION_STAGES,
   ...PROJECTION_STAGES,
   ...AGGREGATE_STAGES,
+  ...GROUP_STAGES,
 } satisfies PipelineStageMap;
 
 const RELATIONAL = "relational";
@@ -39,7 +41,6 @@ const RELATIONAL = "relational";
 const DEFERRED_STAGES: ReadonlyMap<string, string> = new Map([
   ["join", RELATIONAL],
   ["lookup", RELATIONAL],
-  ["group", RELATIONAL],
 ]);
 
 /** The stage that opens a change feed, which only an iterated query's last stage may be. */
