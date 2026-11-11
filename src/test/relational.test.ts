@@ -1,19 +1,14 @@
 import { expect } from "chai";
-import type { StagedObject } from "@antelopejs/interface-database/common";
 import { Schema } from "@antelopejs/interface-database/schema";
 
-import { AcquireConnection, GetDialect, Read, type Row } from "../connection";
-import { type Sql, ident, sql } from "../statement";
-import { DecodingContext } from "../implementations/database/context";
-import { CompileExpression } from "../implementations/database/expression";
-import { CompileSubquery } from "../implementations/database/subquery";
-import { CompileRelation } from "../implementations/database/pipeline";
-import { Render } from "../implementations/database/render";
+import { AcquireConnection, Read, type Row } from "../connection";
+import { ident, sql } from "../statement";
 import {
   GetTablePlan,
   WaitForIndexes,
 } from "../implementations/database/schema";
 import { SessionOf } from "../implementations/database/locks";
+import { Compiled } from "./compiled";
 import { PhysicalTable, Run } from "./tables";
 
 const SCHEMA_ID = "relational";
@@ -71,19 +66,6 @@ const SORTED_SLUGS = Array.from(
   { length: ARTICLES },
   (_, n) => `slug-${n}`,
 ).sort();
-
-/** A statement compiled as `RunQuery` compiles a read, against the live registry. */
-function Compiled(query: StagedObject): Sql {
-  const context = new DecodingContext(
-    {
-      expression: CompileExpression,
-      subquery: CompileSubquery,
-      relation: CompileRelation,
-    },
-    GetDialect(),
-  );
-  return Render(CompileRelation(query.build(), context));
-}
 
 function Text(row: Row, column: string): string {
   const cell = row.get(column);
