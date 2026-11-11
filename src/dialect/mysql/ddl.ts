@@ -31,8 +31,9 @@ import { sqlCore } from "./sql-core";
  */
 const ELEMENT_CHARS = 512;
 
+/** An ISO-8601 UTC instant as `Date.prototype.toJSON` writes one, every field in its range. */
 const ISO_INSTANT =
-  "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$";
+  "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]{1,6})?Z$";
 
 const FAILURES = new Map<number, DdlFailure>([
   [1050, "present"],
@@ -80,10 +81,19 @@ function BooleanOf(value: Sql): Sql {
   return sql`IF(${JsonTypeIn(value, sql`'BOOLEAN'`)}, ${value} = CAST('true' AS JSON), NULL)`;
 }
 
-/** The instant an ISO-8601 UTC JSON string at `value` names; NULL for anything else. */
+/**
+ * The instant an ISO-8601 UTC JSON string at `value` names; NULL for anything else. Each check is
+ * its own `IF`, which evaluates only the branch it takes: a strict-mode `UPDATE` fails outright on a
+ * date function given a day its month does not have, such as February 30.
+ */
 function InstantOf(value: Sql): Sql {
-  const text = sql`JSON_UNQUOTE(${value})`;
-  return sql`IF(${JsonTypeIn(value, sql`'STRING'`)} AND ${text} REGEXP ${lit(ISO_INSTANT)}, CAST(REPLACE(REPLACE(${text}, 'T', ' '), 'Z', '') AS DATETIME(6)), NULL)`;
+  const text = sql`(JSON_UNQUOTE(${value}) COLLATE ${lit(session.binaryCollation)})`;
+  const day = sql`CAST(SUBSTRING(${text}, 9, 2) AS UNSIGNED)`;
+  const lastDay = sql`DAYOFMONTH(LAST_DAY(CONCAT(SUBSTRING(${text}, 1, 8), '01')))`;
+  const instant = sql`CAST(REPLACE(REPLACE(${text}, 'T', ' '), 'Z', '') AS DATETIME(6))`;
+  const valid = sql`IF(${day} <= ${lastDay}, ${instant}, NULL)`;
+  const written = sql`IF(${text} REGEXP ${lit(ISO_INSTANT)}, ${valid}, NULL)`;
+  return sql`IF(${JsonTypeIn(value, sql`'STRING'`)}, ${written}, NULL)`;
 }
 
 /** Any JSON value but JSON null, which stays in `_extra` so it keeps reading as an explicit null. */
