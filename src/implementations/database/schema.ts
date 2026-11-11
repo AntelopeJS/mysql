@@ -219,6 +219,15 @@ export function WaitForSchemaReady(schemaId: string): Promise<void> {
   return ready.get(schemaId) ?? Promise.resolve();
 }
 
+/**
+ * Settles once every registration started so far has settled, whether it succeeded or failed. A
+ * connection ended while one is converging fails it for good, so whatever replaces the connection
+ * waits for this first.
+ */
+export async function SettleRegistrations(): Promise<void> {
+  await Promise.allSettled(ready.values());
+}
+
 export function GetSchema(schemaId: string): SchemaDefinition {
   const schema = definitions.get(schemaId);
   assert(schema, MissingSchema(schemaId));

@@ -4,6 +4,10 @@ import { randomBytes } from "node:crypto";
 import { Schema } from "@antelopejs/interface-database/schema";
 
 import { GetOptions, type Options } from "../config";
+import {
+  Schemas,
+  SettleRegistrations,
+} from "../implementations/database/schema";
 import { Reconnect } from "./tables";
 import { DeliveredRow, Opened, type Row } from "./watch";
 
@@ -23,6 +27,8 @@ const WIDE = {
 type Tables = { items: Row };
 
 const SERVER_REFUSAL = 1419;
+
+const SCHEMA_IDS = ["account-open", "account-swap", "account-super"];
 
 /** What a refusal says: the cause, both remedies and where MySQL documents the rule. */
 const REFUSAL_PARTS = [
@@ -79,6 +85,7 @@ describe("change feeds for an application account", function () {
   }
 
   before(async () => {
+    await SettleRegistrations();
     admin = GetOptions();
     database = decodeURIComponent(new URL(admin.url ?? "").pathname.slice(1));
     await AsAdmin([
@@ -92,12 +99,13 @@ describe("change feeds for an application account", function () {
   });
 
   after(async () => {
+    SCHEMA_IDS.forEach((schemaId) => Schemas.unregister(schemaId));
     await AsAdmin([`DROP USER IF EXISTS '${user}'@'%'`]);
   });
 
   it("opens a feed, or says that MySQL's binary logging wants SUPER or log_bin_trust_function_creators", async () => {
     await Reconnect({ ...admin, url: AccountUrl() });
-    const schema = new Schema<Tables>("account-open", NARROW);
+    const schema = new Schema<Tables>(SCHEMA_IDS[0], NARROW);
     const items = schema.instance().table("items");
     const err = await Rejection(Opened(items, "probe"));
     expect(Missing(err)).to.deep.equal([]);
@@ -105,11 +113,11 @@ describe("change feeds for an application account", function () {
   });
 
   it("converges a watched table's triggers, or says the same when the account may not swap them", async () => {
-    const before = new Schema<Tables>("account-swap", NARROW);
+    const before = new Schema<Tables>(SCHEMA_IDS[1], NARROW);
     const feed = await Opened(before.instance().table("items"), "seed");
     await feed.return?.();
     await Reconnect({ ...admin, url: AccountUrl() });
-    const after = new Schema<Tables>("account-swap", WIDE);
+    const after = new Schema<Tables>(SCHEMA_IDS[1], WIDE);
     const err = await Rejection(
       (async () => after.instance().table("items").get("absent"))(),
     );
@@ -121,7 +129,7 @@ describe("change feeds for an application account", function () {
   it("opens a feed once the account holds SUPER, which is the first remedy the refusal names", async () => {
     await AsAdmin([`GRANT SUPER ON *.* TO '${user}'@'%'`]);
     await Reconnect({ ...admin, url: AccountUrl() });
-    const schema = new Schema<Tables>("account-super", NARROW);
+    const schema = new Schema<Tables>(SCHEMA_IDS[2], NARROW);
     const items = schema.instance().table("items");
     const feed = await Opened(items, "probe");
     await items.insert({ _id: "after", name: "after" });
