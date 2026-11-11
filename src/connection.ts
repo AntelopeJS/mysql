@@ -114,9 +114,10 @@ function IsCell(value: unknown): value is Cell {
   );
 }
 
-function ParseRow(row: RowDataPacket): Row {
+/** Reads the cells of one driver row into a {@link Row}, refusing a value the module's driver options never produce. */
+export function ParseRow(cells: Iterable<readonly [string, unknown]>): Row {
   const parsed = new Map<string, Cell>();
-  for (const [column, value] of Object.entries(row)) {
+  for (const [column, value] of cells) {
     if (!IsCell(value)) {
       throw new Error(
         `Column '${column}' arrived as ${Object.prototype.toString.call(value)}, which the module's driver options never produce`,
@@ -135,7 +136,7 @@ async function ReadOn(
   const [rows] = await connection.execute<RowDataPacket[]>(bound.sql, [
     ...bound.args,
   ]);
-  return rows.map(ParseRow);
+  return rows.map((row) => ParseRow(Object.entries(row)));
 }
 
 async function DetectedDialect(
