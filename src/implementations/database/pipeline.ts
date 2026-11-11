@@ -77,6 +77,11 @@ function StageError(name: string): Error {
   return new Error(`Unsupported query stage '${name}'`);
 }
 
+/** Whether the read pipeline knows a stage by name, implemented yet or not. */
+export function IsPipelineStage(name: string): boolean {
+  return Object.hasOwn(PIPELINE_STAGES, name) || DEFERRED_STAGES.has(name);
+}
+
 function ApplyStage(
   relation: Relation,
   stage: QueryStage,

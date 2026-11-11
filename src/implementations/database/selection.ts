@@ -48,7 +48,10 @@ export interface RootSelection {
  */
 export type OriginResolver = (schemaId: string, tableId: string) => TableOrigin;
 
-function RegisteredOrigin(schemaId: string, tableId: string): TableOrigin {
+export function RegisteredOrigin(
+  schemaId: string,
+  tableId: string,
+): TableOrigin {
   return {
     schemaId,
     tableId,
