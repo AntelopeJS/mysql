@@ -55,6 +55,10 @@ function Seq(value: bigint): Sql {
   return sql`CAST(${param(value.toString())} AS UNSIGNED)`;
 }
 
+/**
+ * The clock is seeded with `INSERT IGNORE`, which only reads the row it finds: an upsert would take
+ * that row's lock shared and then exclusive, and two registrations doing so at once deadlock.
+ */
 function Bootstrap(tables: ChangeLogTables): readonly Sql[] {
   const log = [
     sql`${ID} BIGINT UNSIGNED NOT NULL AUTO_INCREMENT`,
@@ -85,7 +89,7 @@ function Bootstrap(tables: ChangeLogTables): readonly Sql[] {
     sql`CREATE TABLE IF NOT EXISTS ${ident(tables.log)} (${join(log, COMMA)}) ${TABLE_OPTIONS}`,
     sql`CREATE TABLE IF NOT EXISTS ${ident(tables.clock)} (${join(clock, COMMA)}) ${TABLE_OPTIONS}`,
     sql`CREATE TABLE IF NOT EXISTS ${ident(tables.reaped)} (${join(reaped, COMMA)}) ${TABLE_OPTIONS}`,
-    sql`INSERT INTO ${ident(tables.clock)} (${ID}, ${NEXT_SEQ}, ${EPOCH}) VALUES (${CLOCK_ROW}, 1, UUID()) ON DUPLICATE KEY UPDATE ${ID} = ${ID}`,
+    sql`INSERT IGNORE INTO ${ident(tables.clock)} (${ID}, ${NEXT_SEQ}, ${EPOCH}) VALUES (${CLOCK_ROW}, 1, UUID())`,
   ];
 }
 
