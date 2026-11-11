@@ -1,7 +1,7 @@
 import assert from "node:assert";
 
 import type { Dialect } from "../../dialect";
-import { type Sql, ident, sql } from "../../statement";
+import { type Sql, sql } from "../../statement";
 import type { KeyColumn } from "./paths";
 import type { SqlType } from "./types";
 import {
@@ -156,39 +156,6 @@ export function EqualityKey(
   const bound =
     fit?.kind === "prefix" ? dialect.sql.scalar.left(other, fit.width) : other;
   return { column: key.column, bound };
-}
-
-/** The value a key column reads, before it is fitted: one definition for the column and the reads. */
-function KeyValue(dialect: Dialect, key: KeyColumn, row: Sql): Sql {
-  const json = dialect.sql.json;
-  const value = key.path.reduce(
-    (document, segment) => json.member(document, segment),
-    row,
-  );
-  switch (key.read) {
-    case "text":
-      return value;
-    case "string":
-      return json.as(value, "text");
-    case "double":
-      return json.as(value, "float");
-    case "bool":
-      return json.as(value, "bool");
-    case "json":
-      return json.text(value);
-  }
-}
-
-/**
- * The expression a key column is generated from, over its source column by name: the read of the
- * value at its path, cut to its width where it is a prefix.
- */
-export function KeyExpression(dialect: Dialect, key: KeyColumn): Sql {
-  const value = KeyValue(dialect, key, ident(key.source));
-  if (!("fit" in key) || key.fit.kind === "exact") {
-    return value;
-  }
-  return dialect.sql.scalar.left(value, key.fit.width);
 }
 
 /**
