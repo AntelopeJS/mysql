@@ -14,7 +14,6 @@ export type {
   CapturedColumn,
   ChangeLogTables,
   ChangeOperation,
-  TriggerBody,
 } from "./capture";
 
 /**
