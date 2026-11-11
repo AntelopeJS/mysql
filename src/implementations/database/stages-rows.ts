@@ -97,29 +97,26 @@ function Bound(
   };
 }
 
-function CountOf(dialect: Dialect, bound: RowBound): Sql | undefined {
+/** A bound as the statement reads it, SQL NULL where it bounds nothing. */
+function CountOf(dialect: Dialect, bound: RowBound): Sql {
   if (bound.kind === "computed") {
     return bound.count;
   }
   return bound.count === undefined
-    ? undefined
+    ? sql`NULL`
     : dialect.sql.scalar.bind.float(bound.count);
 }
 
-/** The numbered rows after `offset` and within `count` of them; SQL NULL for either bounds nothing. */
+/** The numbered rows after `offset` and within `count` of them. */
 function RowRange(
   dialect: Dialect,
   rowNumber: Sql,
   offset: RowBound,
   count: RowBound,
 ): Sql {
-  const skipped = sql`COALESCE(${CountOf(dialect, offset) ?? sql`0`}, 0)`;
-  const after = sql`${rowNumber} > ${skipped}`;
+  const skipped = sql`COALESCE(${CountOf(dialect, offset)}, 0)`;
   const taken = CountOf(dialect, count);
-  if (taken === undefined) {
-    return sql`(${after})`;
-  }
-  return sql`(${after} AND (${taken} IS NULL OR ${rowNumber} <= ${skipped} + ${taken}))`;
+  return sql`(${rowNumber} > ${skipped} AND (${taken} IS NULL OR ${rowNumber} <= ${skipped} + ${taken}))`;
 }
 
 /**

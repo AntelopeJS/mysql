@@ -69,34 +69,26 @@ function Operand(relation: Relation, stage: QueryStage): Compiled {
     : relation.source.field(field);
 }
 
-type AggregateFunction = "SUM" | "AVG" | "MIN" | "MAX";
-
-const FUNCTIONS: Record<AggregateFunction, Sql> = {
-  SUM: sql`SUM`,
-  AVG: sql`AVG`,
-  MIN: sql`MIN`,
-  MAX: sql`MAX`,
-};
+const SUM = sql`SUM`;
+const AVG = sql`AVG`;
+const MIN = sql`MIN`;
+const MAX = sql`MAX`;
 
 /** The one spelling of an aggregate call, and the one owner of its `DISTINCT` prefix. */
-function Applied(
-  func: AggregateFunction,
-  argument: Sql,
-  distinct = false,
-): Sql {
+function Applied(func: Sql, argument: Sql, distinct = false): Sql {
   const deduped = distinct ? sql`DISTINCT ${argument}` : argument;
-  return sql`${FUNCTIONS[func]}(${deduped})`;
+  return sql`${func}(${deduped})`;
 }
 
 /** ReQL's sum of an empty stream is 0, where `SUM` over no row is NULL. */
 export const Total: Aggregation = (dialect, operand, distinct) =>
   AsFloat(
     dialect,
-    sql`COALESCE(${Applied("SUM", Numeric(dialect, operand).sql, distinct)}, 0)`,
+    sql`COALESCE(${Applied(SUM, Numeric(dialect, operand).sql, distinct)}, 0)`,
   );
 
 export const Mean: Aggregation = (dialect, operand, distinct) =>
-  AsFloat(dialect, Applied("AVG", Numeric(dialect, operand).sql, distinct));
+  AsFloat(dialect, Applied(AVG, Numeric(dialect, operand).sql, distinct));
 
 /** The kinds an extremum compares as themselves; any other operand is compared as a number. */
 const ORDERED_KINDS: ReadonlySet<SqlType["kind"]> = new Set([
@@ -110,7 +102,7 @@ const ORDERED_KINDS: ReadonlySet<SqlType["kind"]> = new Set([
  * which is the answer `arr_min`/`arr_max` give. The result keeps the operand's type, and only a
  * number is read as a double, once, after every row has been reduced to it.
  */
-function Extremum(func: "MIN" | "MAX"): Aggregation {
+function Extremum(func: Sql): Aggregation {
   return (dialect, operand, distinct) => {
     const ordered = ORDERED_KINDS.has(operand.type.kind)
       ? operand
@@ -122,9 +114,9 @@ function Extremum(func: "MIN" | "MAX"): Aggregation {
   };
 }
 
-export const Minimum: Aggregation = Extremum("MIN");
+export const Minimum: Aggregation = Extremum(MIN);
 
-export const Maximum: Aggregation = Extremum("MAX");
+export const Maximum: Aggregation = Extremum(MAX);
 
 /**
  * Counts rows, or the *distinct* values of an operand, as the contract asserts `count("car")`
