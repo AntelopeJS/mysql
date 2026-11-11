@@ -91,6 +91,11 @@ describe("A read", () => {
     expect(bound.sql).to.include("(`t1`.`name` = ?)");
   });
 
+  it("reads a key the statement computes through a path in the session collation, which 9.7 refuses to mix", () => {
+    const bound = Compile(Root().key(ValueProxy.constant<"name">("name")));
+    expect(bound.sql).to.include("CONCAT('$.', CAST(JSON_QUOTE(?) AS CHAR))");
+  });
+
   it("tests a null against both SQL NULL and a JSON null where the operand is JSON", () => {
     const bound = Compile(Root().filter((doc) => doc.key("nickname").eq(null)));
     expect(bound.sql).to.include(

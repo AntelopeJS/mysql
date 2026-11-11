@@ -143,7 +143,7 @@ function Collect(element: Sql, order: Sql | undefined, distinct: boolean): Sql {
 export const json: JsonSyntax = {
   member: (document, key) => sql`JSON_EXTRACT(${document}, ${KeyPath(key)})`,
   dynamicMember: (document, key) =>
-    sql`JSON_EXTRACT(${document}, CONCAT('$.', JSON_QUOTE(${key})))`,
+    sql`JSON_EXTRACT(${document}, CONCAT('$.', CAST(JSON_QUOTE(${key}) AS CHAR)))`,
   is: Is,
   as: (value, kind) => READS[kind](value),
   of: (value, kind) => WRITINGS[kind](value),
