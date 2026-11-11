@@ -37,12 +37,13 @@ describe("a pooled connection", () => {
     expect(await Value(sql`SELECT COLLATION(${param("a")}) AS value`)).to.equal(
       "utf8mb4_0900_bin",
     );
-    expect(
-      await Value(sql`SELECT ${param("a")} = ${param("a ")} AS value`),
-    ).to.equal(0);
-    expect(
-      await Value(sql`SELECT ${param("a")} = ${param("A")} AS value`),
-    ).to.equal(0);
+    const equal = async (left: string, right: string) =>
+      Number(
+        await Value(sql`SELECT ${param(left)} = ${param(right)} AS value`),
+      );
+    expect(await equal("a", "a")).to.equal(1);
+    expect(await equal("a", "a ")).to.equal(0);
+    expect(await equal("a", "A")).to.equal(0);
   });
 
   it("binds a value once per occurrence through the prepared protocol", async () => {
