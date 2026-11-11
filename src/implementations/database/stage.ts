@@ -35,12 +35,6 @@ export type ValueStage = (
   context: DecodingContext,
 ) => Compiled;
 
-export type RawValueStage = (
-  value: Compiled,
-  stage: QueryStage,
-  context: DecodingContext,
-) => Compiled;
-
 export const FIRST_OPERAND = 0;
 export const SECOND_OPERAND = 1;
 
@@ -108,7 +102,6 @@ export function FieldNames(
 /**
  * Adapts a value-level handler into a {@link StageHandler} for a stage whose arguments are all
  * *values*: materializes the accumulator, decodes every argument and drops any pending timezone.
- * A stage whose arguments are not values uses {@link LiftRaw} instead.
  */
 export function Lift(handler: ValueStage): StageHandler {
   return (state, stage, context) => {
@@ -118,13 +111,6 @@ export function Lift(handler: ValueStage): StageHandler {
     );
     return { current: handler(value, args, stage, context) };
   };
-}
-
-/** {@link Lift} for a stage that reads its arguments raw: same materialization, no decoding. */
-export function LiftRaw(handler: RawValueStage): StageHandler {
-  return (state, stage, context) => ({
-    current: handler(AsValue(state), stage, context),
-  });
 }
 
 /** Builds one handler per entry of an operator table, so a family declares only its table. */

@@ -148,7 +148,7 @@ export function Render(relation: Relation): Sql {
  * rendered select list keeps the physical column names, but the key columns do not: the select
  * list holds the stored columns only. `single` and `absent` carry through; `aggregated` does not.
  */
-export function Nested(relation: Relation, context: DecodingContext): Relation {
+function Nested(relation: Relation, context: DecodingContext): Relation {
   const from = sql`(${Render(relation)})`;
   const alias = context.nextAlias();
   const projection = relation.projection;

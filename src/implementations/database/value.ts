@@ -147,7 +147,7 @@ function DecodeArray(list: ListMember, context: DecodingContext): Compiled {
 }
 
 /** A document built from named members, each read as JSON; an absent member is left out. */
-export function DecodeEntries(
+function DecodeEntries(
   entries: [string, Member][],
   context: DecodingContext,
 ): Compiled {

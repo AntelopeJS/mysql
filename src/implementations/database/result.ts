@@ -74,7 +74,7 @@ function ReviveTimestamp(value: RowValue): RowValue {
 }
 
 /** Revives the instants a type declares inside a value already decoded. */
-export function ReviveValue(value: RowValue, type: SqlType): RowValue {
+function ReviveValue(value: RowValue, type: SqlType): RowValue {
   if (value === null || value === undefined) {
     return value;
   }

@@ -7,7 +7,7 @@ import {
   StagedObject,
 } from "@antelopejs/interface-database/common";
 
-import { IsBoolean, IsNumber, IsObject, IsString } from "./guards";
+import { IsBoolean, IsNumber, IsString } from "./guards";
 import type { ConstantJson } from "./sql";
 
 /**
@@ -87,17 +87,6 @@ export type Member =
   | ListMember
   | RecordMember
   | OpaqueMember;
-
-/**
- * Whether a value is an object literal rather than an instance of something.
- *
- * The distinction is what tells a document apart from a `ValueProxy`, which is an object too.
- */
-export function IsPlainObject(
-  value: unknown,
-): value is Record<string, unknown> {
-  return IsObject(value) && Object.getPrototypeOf(value) === Object.prototype;
-}
 
 /** Whether a document is an object literal rather than an instance of something. */
 function IsRecordLiteral(value: QueryRecord): boolean {

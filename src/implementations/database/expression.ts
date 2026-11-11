@@ -22,7 +22,7 @@ const ARRAY = "array";
 const OBJECT = "object";
 
 /** The expression stages whose family is not implemented yet, by the family that will own them. */
-export const DEFERRED_EXPRESSION_STAGES: ReadonlyMap<string, string> = new Map([
+const DEFERRED_EXPRESSION_STAGES: ReadonlyMap<string, string> = new Map([
   ["add", NUMERIC],
   ["sub", NUMERIC],
   ["mul", NUMERIC],

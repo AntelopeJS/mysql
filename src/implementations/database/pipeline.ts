@@ -37,7 +37,7 @@ const RELATIONAL = "relational";
 const AGGREGATE = "aggregate";
 
 /** The pipeline stages whose family is not implemented yet, by the family that will own them. */
-export const DEFERRED_STAGES: ReadonlyMap<string, string> = new Map([
+const DEFERRED_STAGES: ReadonlyMap<string, string> = new Map([
   ["join", RELATIONAL],
   ["lookup", RELATIONAL],
   ["group", RELATIONAL],

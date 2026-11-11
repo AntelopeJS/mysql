@@ -1,5 +1,5 @@
 import type { Dialect } from "../../dialect";
-import { type Sql, int, sql } from "../../statement";
+import { type Sql, sql } from "../../statement";
 import type { Compiled } from "./sql";
 import { Cast, WithDefault } from "./coerce";
 import {
@@ -13,20 +13,6 @@ import {
   TEXT,
   TIMESTAMP,
 } from "./types";
-
-/**
- * Clamps a number into a range, truncating rather than rounding. `LEAST` and `GREATEST` answer NULL
- * for a NULL operand, so an unreadable operand stays NULL.
- */
-export function ClampToRange(
-  dialect: Dialect,
-  value: Sql,
-  lowest: number,
-  highest: number,
-): Sql {
-  const truncated = dialect.sql.scalar.truncate(value);
-  return sql`LEAST(GREATEST(${truncated}, ${int(lowest)}), ${int(highest)})`;
-}
 
 /** Reads a fragment as a double, which every numeric result owes the driver. */
 export function AsFloat(dialect: Dialect, value: Sql): Compiled {
@@ -47,24 +33,13 @@ const RENDERING: Partial<Record<SqlType["kind"], Rendering>> = {
  * magnitudes a caller renders in practice; the engine reaches for exponent notation at different
  * magnitudes than `Number.prototype.toString` does.
  */
-export function Text(dialect: Dialect, value: Compiled): Compiled {
+function Text(dialect: Dialect, value: Compiled): Compiled {
   const rendering = RENDERING[value.type.kind];
   if (!rendering) {
     return Cast(dialect, value, TEXT);
   }
   return { sql: rendering(dialect, value.sql), type: TEXT };
 }
-
-/**
- * The kinds the engine orders consistently, each mapped to the type an ordering of it answers with.
- * The stream aggregates and the array reducers share the table, so `min("x")` and
- * `key("x").arr_min()` answer the same data the same way.
- */
-export const ORDERED_KINDS: Partial<Record<SqlType["kind"], SqlType>> = {
-  text: TEXT,
-  float: FLOAT,
-  timestamp: TIMESTAMP,
-};
 
 const NUMERATION: Partial<Record<SqlType["kind"], Rendering>> = {
   bool: (dialect, value) => dialect.sql.scalar.cast(value, "float"),
@@ -79,7 +54,7 @@ const NUMERATION: Partial<Record<SqlType["kind"], Rendering>> = {
  * decimal literal, so `""` is NULL where `Number("")` is `0` and `"0x10"` is NULL where JavaScript
  * reads 16. A JSON operand keeps the guarded projection, NULL for anything but a JSON number.
  */
-export function Numeric(dialect: Dialect, value: Compiled): Compiled {
+function Numeric(dialect: Dialect, value: Compiled): Compiled {
   const numeration = NUMERATION[value.type.kind];
   if (!numeration) {
     return Cast(dialect, value, FLOAT);
@@ -103,7 +78,7 @@ const INSTANT: Partial<Record<SqlType["kind"], Instant>> = {
  * epoch milliseconds, a boolean through its numeric reading, and text where it spells an ISO 8601
  * date or date-time. Anything outside the range an instant column holds is NULL.
  */
-export function Moment(dialect: Dialect, value: Compiled): Compiled {
+function Moment(dialect: Dialect, value: Compiled): Compiled {
   const instant = INSTANT[value.type.kind];
   if (!instant) {
     return Cast(dialect, value, TIMESTAMP);

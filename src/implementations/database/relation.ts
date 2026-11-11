@@ -49,7 +49,7 @@ export interface OrderTerm {
 type AbsentValue = null | undefined;
 
 /** The join keywords a joined relation can spell; a stage that needs a lateral reaches it through the dialect. */
-export type JoinKind = "JOIN" | "LEFT JOIN";
+type JoinKind = "JOIN" | "LEFT JOIN";
 
 /** One `JOIN` the relation carries, rendered between its `FROM` and its `WHERE`. */
 export interface JoinClause {
@@ -136,10 +136,7 @@ export interface IndexedMember extends IndexedValue {
  * else — a name that is not an index, or a relation that no longer knows its table — reads each
  * field by name, which is what keeps `map(…).orderBy("age")` working.
  */
-export function IndexColumns(
-  relation: Relation,
-  name: string,
-): IndexedMember[] {
+function IndexColumns(relation: Relation, name: string): IndexedMember[] {
   const origin = relation.origin;
   const planned = origin?.plan.indexes.find(
     (index) => index.id === name && index.parts[0]?.kind === "instance",
