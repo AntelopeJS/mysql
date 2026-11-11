@@ -101,14 +101,18 @@ function SortName(stage: QueryStage): string {
 
 /**
  * Prepends the sort terms, so a later `orderBy` dominates an earlier one, as stable sorts compose.
- * A declared index sorts by its key parts, key columns included, so its index serves the order.
+ * A declared index sorts by its key parts, key columns included, so its index serves the order;
+ * an external relation's column sorts by its native column or columns, in the column's own order.
  * No null ordering is spelled: naming one turns an index scan into a sort.
  */
 const OrderByStage: PipelineStage = (relation, stage, context) => {
   const prepared = Prepare(relation, ORDER_BLOCKERS, context);
   const descending = OptionsOf(stage)?.direction === DESCENDING;
-  const terms = ScanColumns(prepared, SortName(stage)).map(
-    (column): OrderTerm => ({ sql: column.order, descending }),
+  const terms = ScanColumns(prepared, SortName(stage)).flatMap((column) =>
+    (column.value.native?.order ?? [column.order]).map((sql): OrderTerm => ({
+      sql,
+      descending,
+    })),
   );
   prepared.orderBy.unshift(...terms);
   return prepared;

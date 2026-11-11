@@ -13,6 +13,7 @@ import {
   JsonRowSource,
   type RowSource,
 } from "./row-source";
+import { ExternalRowSource } from "./external-row-source";
 
 /** The single column a value-mode relation projects, and the key its rows are decoded from. */
 export const OUTPUT_COLUMN = "value";
@@ -181,20 +182,38 @@ export function TableRelation(
   origin: TableOrigin,
   reads: TableReads = "table",
 ): Relation {
-  const keys =
-    reads === "table" ? { alias, columns: origin.plan.keyColumns } : undefined;
   return NewRelation({
     dialect,
     from,
     alias,
-    source: new ColumnRowSource(
-      dialect,
-      AliasedColumns(alias),
-      origin.model,
-      keys,
-    ),
+    source: TableSource(dialect, alias, origin, reads),
     origin,
   });
+}
+
+/**
+ * The row source of a table relation. An external relation's subselect holds every value under
+ * its field name rather than the native column a table read converts, so `reads` tells the two
+ * apart; a table the adapter owns keeps its physical names through a subselect but not its key
+ * columns.
+ */
+function TableSource(
+  dialect: Dialect,
+  alias: string,
+  origin: TableOrigin,
+  reads: TableReads,
+): RowSource {
+  if (origin.model.external) {
+    return new ExternalRowSource(dialect, alias, origin.model, reads);
+  }
+  const keys =
+    reads === "table" ? { alias, columns: origin.plan.keyColumns } : undefined;
+  return new ColumnRowSource(
+    dialect,
+    AliasedColumns(alias),
+    origin.model,
+    keys,
+  );
 }
 
 /**

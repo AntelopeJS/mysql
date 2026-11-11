@@ -4,7 +4,8 @@ import { Bind, type Sql, ident, join, sql } from "../../statement";
 import type { DecodingContext } from "./context";
 import { EXTRA_COLUMN, ID_COLUMN, INSTANCE_COLUMN } from "./utils";
 import { QualifiedColumn } from "./sql";
-import { DeclaredColumns, PhysicalOrder } from "./fields";
+import { DeclaredColumns, PhysicalOrder, type TableModel } from "./fields";
+import { ExternalNames } from "./external-row-source";
 import {
   type JoinClause,
   OUTPUT_COLUMN,
@@ -17,8 +18,18 @@ import {
 const COMMA = sql`, `;
 const AND = sql` AND `;
 
+/** An external relation's select list: each member read as its value, under its own name. */
+function ExternalColumns(relation: Relation, model: TableModel): Sql[] {
+  return ExternalNames(model).map(
+    (name) => sql`${relation.source.field(name).sql} AS ${ident(name)}`,
+  );
+}
+
 function RowColumns(relation: Relation): Sql[] {
   const origin = RequireOrigin(relation);
+  if (origin.model.external) {
+    return ExternalColumns(relation, origin.model);
+  }
   const columns = PhysicalOrder(
     ID_COLUMN,
     INSTANCE_COLUMN,

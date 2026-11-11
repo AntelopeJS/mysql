@@ -104,7 +104,7 @@ function Comparison(
   other: Compiled,
   operator: Ordering,
 ): Compiled {
-  const pair = UnifyOperands(dialect, value, other);
+  const pair = UnifyOperands(dialect, value, other, operator);
   return { sql: Compare(dialect, pair.left, pair.right, operator), type: BOOL };
 }
 

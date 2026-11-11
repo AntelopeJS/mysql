@@ -16,6 +16,8 @@ import {
 } from "./schema";
 import { DEFAULT_INSTANCE_ID, INSTANCE_COLUMN, OptionsOf } from "./utils";
 import { IsString } from "./guards";
+import type { ExternalRelation } from "./fields";
+import { RelationName } from "./external-refusals";
 
 export const SCHEMA_STAGE = "schema";
 const INSTANCE_STAGE = "instance";
@@ -40,6 +42,8 @@ export interface RootSelection {
   relation: Relation;
   rest: QueryStage[];
   instance: InstanceScope;
+  /** The relation a query reads when the adapter did not create it. */
+  external?: ExternalRelation;
 }
 
 /**
@@ -112,6 +116,41 @@ function InstancePredicate(alias: string, value: Compiled): Sql {
 }
 
 /**
+ * The scope of a read over a relation the adapter did not create, which has no instances: the
+ * default instance and `CROSS_INSTANCE` both read every row, and a named instance is refused rather
+ * than answered with rows nobody scoped to it.
+ */
+function RefuseNamedInstance(
+  external: ExternalRelation,
+  instance: QueryStage,
+): void {
+  const id: unknown = OptionsOf(instance)?.id;
+  const unscoped: readonly unknown[] = [
+    undefined,
+    null,
+    CROSS_INSTANCE,
+    DEFAULT_INSTANCE_ID,
+  ];
+  if (!unscoped.includes(id)) {
+    throw new Error(
+      `${RelationName(external)} is an external relation and has no instances, so instance '${String(id)}' names nothing: read it through the default instance`,
+    );
+  }
+}
+
+/** An external relation's root: its own names, verbatim, and no instance to filter on. */
+function ExternalRoot(
+  origin: TableOrigin,
+  external: ExternalRelation,
+  instance: QueryStage,
+  context: DecodingContext,
+): Relation {
+  RefuseNamedInstance(external, instance);
+  const from = sql`${ident(external.schema)}.${ident(external.table)}`;
+  return TableRelation(context.dialect, from, context.nextAlias(), origin);
+}
+
+/**
  * Consumes the `schema` / `instance` / `table` prefix every table query opens with, and returns
  * the base relation alongside the pipeline stages that follow it.
  */
@@ -125,6 +164,11 @@ export function BuildRoot(
   const resolve = context.resolveOrigin ?? RegisteredOrigin;
   const origin = resolve(RootId(schema), RootId(table));
   const rest = stages.slice(ROOT_STAGES.length);
+  const external = origin.model.external;
+  if (external) {
+    const relation = ExternalRoot(origin, external, instance, context);
+    return { relation, rest, instance: CROSS_INSTANCE, external };
+  }
   const alias = context.nextAlias();
   const relation = TableRelation(
     context.dialect,

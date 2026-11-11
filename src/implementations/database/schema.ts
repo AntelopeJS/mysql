@@ -11,6 +11,7 @@ import { GetDialect, GetSchemaPrefix } from "../../connection";
 import { BuildIndexes } from "./migrate-indexes";
 import { ConvergeTables } from "./migrate-tables";
 import { ParseSchema, type SchemaModel, type TableModel } from "./fields";
+import { DescribeExternalSchema } from "./external-schema";
 import {
   BuildSchemaPlan,
   type IndexRefusal,
@@ -30,9 +31,6 @@ const scanNotices = new Map<string, TableScanNotices>();
 const ready = new Map<string, Promise<void>>();
 const indexing = new Map<string, Promise<void>>();
 const guardedWrites = new Set<string>();
-
-const EXTERNAL_NOT_READY =
-  'mode "external" cannot register schemas yet: reading the client\'s catalog is not implemented';
 
 function UnservedScanWarning(
   schemaId: string,
@@ -78,6 +76,50 @@ function SchemaScanNotices(schemaId: string, schema: SchemaDefinition) {
   return notices;
 }
 
+/** An external table has no instances to scan across, so nothing ever warns about one. */
+const NO_SCAN_NOTICE: CrossInstanceScanNotice = () => undefined;
+
+/**
+ * An external relation's plan: its name as the declaration spells it, and no column, key column or
+ * index the adapter would create, since it creates none.
+ */
+function ExternalPlan(schemaId: string, tableId: string): TablePlan {
+  return {
+    schemaId,
+    tableId,
+    table: tableId,
+    columns: [],
+    keyColumns: [],
+    indexes: [],
+  };
+}
+
+/** Reads each declared relation from the client's catalog once, and records what it read. */
+async function InitializeExternal(
+  schemaId: string,
+  schema: SchemaDefinition,
+  model: SchemaModel,
+) {
+  const described = await DescribeExternalSchema(
+    GetDialect(),
+    schemaId,
+    schema,
+    model,
+  );
+  const tableIds = Object.keys(described);
+  schemaModels.set(schemaId, described);
+  schemaPlans.set(
+    schemaId,
+    new Map(
+      tableIds.map((tableId) => [tableId, ExternalPlan(schemaId, tableId)]),
+    ),
+  );
+  scanNotices.set(
+    schemaId,
+    Object.fromEntries(tableIds.map((tableId) => [tableId, NO_SCAN_NOTICE])),
+  );
+}
+
 /**
  * Parses the schema, plans its tables and converges them; the secondary indexes then converge in
  * the background, tracked in `indexing`, so the readiness gate never waits on an index build. An
@@ -87,7 +129,8 @@ function SchemaScanNotices(schemaId: string, schema: SchemaDefinition) {
 async function initialize(schemaId: string, schema: SchemaDefinition) {
   const model = ParseSchema(schemaId, schema);
   if (IsExternal()) {
-    throw new Error(EXTERNAL_NOT_READY);
+    await InitializeExternal(schemaId, schema, model);
+    return;
   }
   const planned = BuildSchemaPlan(schemaId, schema, model, {
     prefix: GetSchemaPrefix(),

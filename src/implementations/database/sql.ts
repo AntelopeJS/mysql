@@ -1,4 +1,5 @@
 import type { Dialect } from "../../dialect";
+import type { Conversion } from "../../dialect/external";
 import type { ConstantJson } from "../../dialect/sql-types";
 import type { KeyColumn } from "./paths";
 import { BOOL, FLOAT, type SqlType, TEXT, TIMESTAMP } from "./types";
@@ -36,6 +37,27 @@ export interface Compiled {
   key?: KeyReference;
   /** The row column and JSON path this value reads, while it is still exactly that read. */
   path?: ValuePath;
+  /** The column underneath, in its own type, where `sql` reads it converted (external relations only). */
+  native?: NativeOperand;
+}
+
+/**
+ * A column of a relation the adapter did not create, as a comparison can use it without converting
+ * it, which is what keeps the database's own indexes serving the comparison.
+ *
+ * `sql` is the bare column, or a row of them for a composite key, and `order` the columns a sort
+ * names one by one. `bind` converts the other operand, already read as the column's declared kind,
+ * into the column's own type for `operator`, so that a value the type cannot hold matches nothing
+ * rather than failing the statement. `numeric` says an aggregate may read the column directly,
+ * which an exact type such as `DECIMAL` or `BIGINT` needs to sum without drifting. `type` is the
+ * column's native type: two operands of one type compare bare.
+ */
+export interface NativeOperand {
+  readonly sql: Sql;
+  readonly order: readonly Sql[];
+  readonly bind: Conversion;
+  readonly numeric: boolean;
+  readonly type: string;
 }
 
 /** References a column of an aliased relation; the single spelling every compiled fragment uses. */
