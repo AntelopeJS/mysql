@@ -56,30 +56,39 @@ function Extract(source: Sql, path: readonly string[]): Sql {
     : sql`JSON_EXTRACT(${source}, ${JsonPath(path)})`;
 }
 
+/**
+ * Whether the JSON value is of one of `types`. The type name is compared as bytes: `JSON_TYPE`
+ * answers in `utf8mb4_bin`, which a literal in the session's collation cannot be compared with.
+ */
+function JsonTypeIn(value: Sql, types: Sql): Sql {
+  return sql`CAST(JSON_TYPE(${value}) AS BINARY) IN (${types})`;
+}
+
 /** The JSON string at `value` as text; NULL for any other JSON type. */
 function StringOf(value: Sql): Sql {
-  return sql`IF(JSON_TYPE(${value}) = 'STRING', JSON_UNQUOTE(${value}), NULL)`;
+  return sql`IF(${JsonTypeIn(value, sql`'STRING'`)}, JSON_UNQUOTE(${value}), NULL)`;
 }
 
 /** The JSON number at `value`; NULL for any other JSON type. */
 function NumberOf(value: Sql): Sql {
-  return sql`IF(JSON_TYPE(${value}) IN ('INTEGER', 'UNSIGNED INTEGER', 'DOUBLE', 'DECIMAL'), CAST(${value} AS DOUBLE), NULL)`;
+  const numbers = sql`'INTEGER', 'UNSIGNED INTEGER', 'DOUBLE', 'DECIMAL'`;
+  return sql`IF(${JsonTypeIn(value, numbers)}, CAST(${value} AS DOUBLE), NULL)`;
 }
 
 /** The JSON boolean at `value` as 1 or 0; NULL for any other JSON type. */
 function BooleanOf(value: Sql): Sql {
-  return sql`IF(JSON_TYPE(${value}) = 'BOOLEAN', ${value} = CAST('true' AS JSON), NULL)`;
+  return sql`IF(${JsonTypeIn(value, sql`'BOOLEAN'`)}, ${value} = CAST('true' AS JSON), NULL)`;
 }
 
 /** The instant an ISO-8601 UTC JSON string at `value` names; NULL for anything else. */
 function InstantOf(value: Sql): Sql {
   const text = sql`JSON_UNQUOTE(${value})`;
-  return sql`IF(JSON_TYPE(${value}) = 'STRING' AND ${text} REGEXP ${lit(ISO_INSTANT)}, CAST(REPLACE(REPLACE(${text}, 'T', ' '), 'Z', '') AS DATETIME(6)), NULL)`;
+  return sql`IF(${JsonTypeIn(value, sql`'STRING'`)} AND ${text} REGEXP ${lit(ISO_INSTANT)}, CAST(REPLACE(REPLACE(${text}, 'T', ' '), 'Z', '') AS DATETIME(6)), NULL)`;
 }
 
 /** Any JSON value but JSON null, which stays in `_extra` so it keeps reading as an explicit null. */
 function DocumentOf(value: Sql): Sql {
-  return sql`IF(JSON_TYPE(${value}) = 'NULL', NULL, ${value})`;
+  return sql`IF(${JsonTypeIn(value, sql`'NULL'`)}, NULL, ${value})`;
 }
 
 /** How a JSON value becomes a value of each declared type, NULL where it cannot. */

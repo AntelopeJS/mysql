@@ -6,8 +6,10 @@ import type {
 } from "@antelopejs/interface-database/schema";
 
 import { Logger } from "../../logger";
-import { IsExternal } from "../../config";
+import { GetOptions, IsExternal } from "../../config";
 import { GetDialect, GetSchemaPrefix } from "../../connection";
+import { BuildIndexes } from "./migrate-indexes";
+import { ConvergeTables } from "./migrate-tables";
 import { ParseSchema, type SchemaModel, type TableModel } from "./fields";
 import {
   BuildSchemaPlan,
@@ -26,6 +28,8 @@ const schemaModels = new Map<string, SchemaModel>();
 const schemaPlans = new Map<string, ReadonlyMap<string, TablePlan>>();
 const scanNotices = new Map<string, TableScanNotices>();
 const ready = new Map<string, Promise<void>>();
+const indexing = new Map<string, Promise<void>>();
+const guardedWrites = new Set<string>();
 
 const EXTERNAL_NOT_READY =
   'mode "external" cannot register schemas yet: reading the client\'s catalog is not implemented';
@@ -75,8 +79,10 @@ function SchemaScanNotices(schemaId: string, schema: SchemaDefinition) {
 }
 
 /**
- * Parses the schema and plans its tables. An index the engine cannot build is reported once and
- * left out; every other refusal fails the registration with its reason.
+ * Parses the schema, plans its tables and converges them; the secondary indexes then converge in
+ * the background, tracked in `indexing`, so the readiness gate never waits on an index build. An
+ * index the engine cannot build is reported once and left out; every other refusal fails the
+ * registration with its reason.
  */
 async function initialize(schemaId: string, schema: SchemaDefinition) {
   const model = ParseSchema(schemaId, schema);
@@ -96,6 +102,14 @@ async function initialize(schemaId: string, schema: SchemaDefinition) {
     new Map(planned.tables.map((plan) => [plan.tableId, plan])),
   );
   scanNotices.set(schemaId, SchemaScanNotices(schemaId, schema));
+  await ConvergeTables(schemaId, planned.tables, GetOptions().migrations);
+  indexing.set(schemaId, BuildIndexes(schemaId, planned.tables));
+  guardedWrites.delete(schemaId);
+  if (
+    planned.tables.some((plan) => plan.indexes.some((index) => index.unique))
+  ) {
+    guardedWrites.add(schemaId);
+  }
 }
 
 /**
@@ -125,6 +139,7 @@ export const Schemas = {
           schemaModels.delete(schemaId);
           schemaPlans.delete(schemaId);
           scanNotices.delete(schemaId);
+          guardedWrites.delete(schemaId);
         }
         throw err;
       },
@@ -139,6 +154,8 @@ export const Schemas = {
     schemaPlans.delete(schemaId);
     scanNotices.delete(schemaId);
     ready.delete(schemaId);
+    indexing.delete(schemaId);
+    guardedWrites.delete(schemaId);
   },
 };
 
@@ -216,4 +233,28 @@ export function GetCrossInstanceScanNotice(
   assert(notices, MissingSchema(schemaId));
   assert(Object.hasOwn(notices, tableId), MissingTable(schemaId, tableId));
   return notices[tableId];
+}
+
+/**
+ * Settles once the schema is ready and its background index phase has settled, whatever the
+ * phase's outcome. Nothing in the query path awaits it; it is how a caller observes the phase.
+ */
+export async function WaitForIndexes(schemaId: string): Promise<void> {
+  await WaitForSchemaReady(schemaId);
+  await indexing.get(schemaId);
+}
+
+/**
+ * Settles once a write to the schema can rely on its unique indexes, which is when its background
+ * index phase has settled; at once for a schema that declares none.
+ *
+ * Reads never wait for the index phase, since an index only changes how fast they run. A unique
+ * index changes what a write may store, so a write that ran before it is built could store the
+ * duplicate it exists to refuse; writes to such a schema wait instead, and only for the one phase
+ * each registration starts.
+ */
+export async function WaitForUniqueIndexes(schemaId: string): Promise<void> {
+  if (guardedWrites.has(schemaId)) {
+    await WaitForIndexes(schemaId);
+  }
 }

@@ -107,6 +107,8 @@ export interface DdlSyntax {
 
 /** The queries that observe one owned table, and the parser that reads their rows back. */
 export interface CatalogSyntax {
+  /** The connected database's name, as one row with a `name` column. */
+  readDatabase(): Sql;
   readTable(table: string): Sql;
   readColumns(table: string): Sql;
   readIndexes(table: string): Sql;

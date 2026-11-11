@@ -49,6 +49,7 @@ function ParseIndexes(rows: readonly Row[]): ObservedIndex[] {
 }
 
 export const catalog: CatalogSyntax = {
+  readDatabase: () => sql`SELECT DATABASE() AS name`,
   readTable: (table) =>
     sql`SELECT TABLE_TYPE AS kind, TABLE_COMMENT AS comment FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${param(table)}`,
   readColumns: (table) =>

@@ -2,7 +2,9 @@ import { mysql } from "./mysql";
 
 export type { Dialect, SessionSyntax } from "./types";
 export type {
+  DdlFailure,
   DdlSyntax,
+  InstancesTable,
   ObservedColumn,
   ObservedIndex,
   ObservedTable,
