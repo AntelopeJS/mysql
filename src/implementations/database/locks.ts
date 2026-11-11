@@ -71,7 +71,7 @@ export function SessionOf(connection: PoolConnection): ConvergenceSession {
  * Runs `work` on a connection of its own. A failure destroys the connection rather than returning it
  * to the pool, which ends its session and with it every named lock and setting the work left on it.
  */
-async function OnDedicatedSession<T>(
+export async function OnDedicatedSession<T>(
   work: (session: ConvergenceSession) => Promise<T>,
 ): Promise<T> {
   const connection = await AcquireConnection();
