@@ -1,13 +1,27 @@
 import { expect } from "chai";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { Logger } from "../logger";
 import { GetOptions } from "../config";
-import { AcquireConnection, GetSchemaPrefix } from "../connection";
-import { type Sql, ident, sql } from "../statement";
+import {
+  AcquireConnection,
+  GetDialect,
+  GetSchemaPrefix,
+  Read,
+} from "../connection";
+import { type Sql, ident, lit, sql } from "../statement";
+import { ParseTable } from "../implementations/database/fields";
+import { BuildTablePlan } from "../implementations/database/plan";
+import { PENDING } from "../implementations/database/convergence";
 import { TableName } from "../implementations/database/identifier";
-import { SessionOf } from "../implementations/database/locks";
+import { ConvergeTable } from "../implementations/database/migrate-tables";
+import { ConvergeIndexes } from "../implementations/database/migrate-indexes";
+import {
+  type ConvergenceSession,
+  SessionOf,
+} from "../implementations/database/locks";
 import { Schemas, WaitForIndexes } from "../implementations/database/schema";
 import {
   BEFORE,
@@ -24,6 +38,8 @@ interface Exit {
 }
 
 const OTHER_PROCESSES = 2;
+/** Longer than the five seconds a DDL statement waits for a metadata lock. */
+const HELD_MS = 6000;
 const IN_THIS_PROCESS = 2;
 const REGISTERING_PROCESS = path.join(__dirname, "register-process.js");
 const DIGITS = sql`(SELECT 0 AS d UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9)`;
@@ -137,5 +153,78 @@ describe("one schema registered by several module instances at once", function (
       converged,
       "one contender converged; the others found nothing to do",
     ).to.have.length(1);
+  });
+});
+
+describe("a convergence step that meets another session", function () {
+  this.timeout(60_000);
+
+  after(() => {
+    Schemas.unregister("contention_reference");
+    Schemas.unregister("contention_waited");
+  });
+
+  it("is tried again once a transaction holding its table ends", async () => {
+    const schemaId = "contention_waited";
+    await Prepare(schemaId);
+    const holder = await AcquireConnection();
+    await SessionOf(holder).apply(sql`START TRANSACTION`);
+    await Read(sql`SELECT _id FROM ${ident(Table(schemaId))} LIMIT 1`, holder);
+    const started = Date.now();
+    const released = delay(HELD_MS).then(async () => {
+      await SessionOf(holder).apply(sql`COMMIT`);
+      holder.release();
+    });
+    await RegisterHere(schemaId);
+    await released;
+    expect(Date.now() - started, "it outwaited one lock timeout").to.be.above(
+      HELD_MS,
+    );
+    await Prepare("contention_reference");
+    await RegisterHere("contention_reference");
+    expect(await Snapshot(Table(schemaId))).to.deep.equal(
+      await Snapshot(Table("contention_reference")),
+    );
+  });
+
+  it("counts a step another session applied first as done, and goes on from there", async () => {
+    const schemaId = "contention_raced";
+    await Prepare(schemaId);
+    Schemas.unregister(schemaId);
+    const table = ident(Table(schemaId));
+    const plan = BuildTablePlan(
+      schemaId,
+      "items",
+      CONTENDED.items,
+      ParseTable(CONTENDED.items, `${schemaId}.items`),
+      { prefix: GetSchemaPrefix(), session: GetDialect().session },
+    ).plan;
+    const connection = await AcquireConnection();
+    const session = SessionOf(connection);
+    let isRaced = false;
+    const raced: ConvergenceSession = {
+      ...session,
+      apply: async (statement) => {
+        if (!isRaced) {
+          isRaced = true;
+          await Run(
+            sql`ALTER TABLE ${table} ADD COLUMN b LONGTEXT NULL COMMENT ${lit(PENDING)}`,
+          );
+        }
+        return session.apply(statement);
+      },
+    };
+    try {
+      await ConvergeTable(raced, plan, "safe");
+      await ConvergeIndexes(raced, plan, () => false);
+    } finally {
+      connection.release();
+    }
+    expect(isRaced).to.equal(true);
+    await Prepare("contention_reference");
+    await RegisterHere("contention_reference");
+    expect(await Snapshot(Table(schemaId))).to.deep.equal(
+      await Snapshot(Table("contention_reference")),
+    );
   });
 });
