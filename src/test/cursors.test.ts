@@ -6,12 +6,12 @@ import { Schema } from "@antelopejs/interface-database/schema";
 import type { SchemaDefinition } from "@antelopejs/interface-database/schema";
 
 import { ident, param, sql } from "../statement";
-import { AcquireConnection, Connect, Read } from "../connection";
+import { AcquireConnection, Read } from "../connection";
 import { GetOptions, type Options } from "../config";
 import { SessionOf } from "../implementations/database/locks";
 import { CountOpenCursors } from "../implementations/database/cursors";
 import { Schemas } from "../implementations/database/schema";
-import { Numbers, PhysicalTable, Run } from "./tables";
+import { Numbers, PhysicalTable, Reconnect, Run } from "./tables";
 
 interface Item {
   _id: string;
@@ -65,7 +65,7 @@ async function Seeded(
 /** The options the live adapter runs with now, with `overrides` on top, connected again. */
 async function Reconnected(overrides: Options): Promise<Options> {
   const saved = GetOptions();
-  await Connect({ ...saved, ...overrides });
+  await Reconnect({ ...saved, ...overrides });
   return saved;
 }
 
@@ -129,7 +129,7 @@ describe("a cursor over a large result", function () {
 
   after(async () => {
     Schemas.unregister(schemaId);
-    await Connect(restore);
+    await Reconnect(restore);
   });
 
   /**
@@ -186,7 +186,7 @@ describe("a DDL statement on a table with an open cursor", function () {
   });
 
   after(async () => {
-    await Connect(restore);
+    await Reconnect(restore);
   });
 
   it("waits while the cursor is open, and completes once the cursor is closed", async () => {
@@ -258,7 +258,7 @@ describe("the cap on open cursors", function () {
 
   after(async () => {
     Schemas.unregister(schemaId);
-    await Connect(restore);
+    await Reconnect(restore);
   });
 
   /**
@@ -321,7 +321,7 @@ describe("leaving a for-await early", function () {
 
   after(async () => {
     Schemas.unregister(schemaId);
-    await Connect(restore);
+    await Reconnect(restore);
   });
 
   /**

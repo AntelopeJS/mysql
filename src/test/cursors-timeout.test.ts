@@ -5,10 +5,10 @@ import { Schema } from "@antelopejs/interface-database/schema";
 import type { SchemaDefinition } from "@antelopejs/interface-database/schema";
 
 import { ident, param, sql } from "../statement";
-import { AcquireConnection, Connect, Read } from "../connection";
+import { AcquireConnection, Read } from "../connection";
 import { GetOptions, type Options } from "../config";
 import { Schemas } from "../implementations/database/schema";
-import { Numbers, PhysicalTable, Run } from "./tables";
+import { Numbers, PhysicalTable, Reconnect, Run } from "./tables";
 
 interface Item {
   _id: string;
@@ -55,7 +55,7 @@ describe("a cursor under statementTimeoutMs", function () {
 
   before(async () => {
     restore = GetOptions();
-    await Connect({
+    await Reconnect({
       ...restore,
       statementTimeoutMs: CAP_MS,
       cursorBatchSize: BATCH,
@@ -67,7 +67,7 @@ describe("a cursor under statementTimeoutMs", function () {
 
   after(async () => {
     Schemas.unregister(SCHEMA_ID);
-    await Connect(restore);
+    await Reconnect(restore);
   });
 
   it("reads every row though its reader takes longer than the cap between batches", async () => {

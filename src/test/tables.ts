@@ -3,8 +3,11 @@ import type { PoolConnection } from "mysql2/promise";
 import { type Sql, ident, int, join, param, sql } from "../statement";
 import { TableName } from "../implementations/database/identifier";
 import { SessionOf } from "../implementations/database/locks";
+import { StartReaper } from "../implementations/database/reaper";
+import { IsExternal, type Options } from "../config";
 import {
   AcquireConnection,
+  Connect,
   GetSchemaPrefix,
   Read,
   type Row,
@@ -92,4 +95,15 @@ export async function Snapshot(
     triggers: Cells(triggers),
     rows: Cells(rows),
   };
+}
+
+/**
+ * Connects the live adapter again with `options`, as `construct` does: an owned instance gets its
+ * reaper back, since `Disconnect` stops it.
+ */
+export async function Reconnect(options: Options): Promise<void> {
+  await Connect(options);
+  if (!IsExternal()) {
+    StartReaper();
+  }
 }
