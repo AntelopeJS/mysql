@@ -27,6 +27,20 @@ const REPOSITORY = path.resolve(__dirname, "..", "..");
  * module context and reach this repository as a second module, as a consumer's calls do.
  */
 const MODE = process.env.MYSQL_TEST_MODE;
+
+/**
+ * The port the decorators' `model` tests fetch their routes from, which they spell out themselves,
+ * so only one decorators suite can run on a machine at a time (`scripts/decorators.sh` takes a lock).
+ */
+const API_PORT = 5010;
+
+/** The `@antelopejs/api` module the decorators' routes are served by, installed as a dev dependency. */
+function ApiModule(): string {
+  return path.dirname(
+    require.resolve("@antelopejs/api/package.json", { paths: [REPOSITORY] }),
+  );
+}
+
 const SUITE_DATABASE_PREFIX = "ajs_";
 const SUITE_DATABASE_ENTROPY_BYTES = 6;
 
@@ -112,6 +126,15 @@ export default defineConfig({
       ? {
           local: { source: { type: "local", path: "." } },
           mysql: { source: { type: "local", path: REPOSITORY } },
+          api: {
+            source: { type: "local", path: ApiModule() },
+            config: {
+              servers: [
+                { protocol: "http", host: "127.0.0.1", port: API_PORT },
+              ],
+              publicBaseUrl: `http://127.0.0.1:${API_PORT}`,
+            },
+          },
         }
       : { local: { source: { type: "local", path: "." } } },
   test: {

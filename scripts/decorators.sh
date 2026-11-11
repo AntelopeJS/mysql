@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
+port=5010
+exec 9>"${XDG_RUNTIME_DIR:-/tmp}/ajs-mysql-decorators-$port.lock"
+flock 9
 source=$(cd "$root" && node -p 'path.dirname(require.resolve("@antelopejs/interface-database-decorators/package.json"))')
 dependencies=$(dirname "$(dirname "$source")")
 wrapper=$(mktemp -d "${TMPDIR:-/tmp}/ajs-mysql-decorators.XXXXXX")
