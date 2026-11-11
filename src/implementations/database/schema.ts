@@ -257,8 +257,8 @@ export async function WaitForIndexes(schemaId: string): Promise<void> {
  *
  * Reads never wait for the index phase, since an index only changes how fast they run. A unique
  * index changes what a write may store, so a write that ran before it is built could store the
- * duplicate it exists to refuse; writes to such a schema wait instead, and only for the one phase
- * each registration starts.
+ * duplicate it exists to refuse; writes to such a schema wait instead, for the index phases this
+ * process started.
  */
 export async function WaitForUniqueIndexes(schemaId: string): Promise<void> {
   if (guardedWrites.has(schemaId)) {

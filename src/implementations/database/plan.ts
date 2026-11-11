@@ -151,8 +151,10 @@ type ElementPart = Extract<KeyPart, { kind: "elements" }>;
 /**
  * The elements of the one declared array of strings a `multi` index keys on, as its key part.
  *
- * Only strings: MySQL casts multi-valued elements to `CHAR`, `DECIMAL`, dates and integers but not
- * to `DOUBLE`, and refuses a write whose array holds an object. Any other array is keyed whole.
+ * Only strings: MySQL has no `DOUBLE` cast for multi-valued elements and refuses a write whose
+ * array holds an object, so the elements are indexed as `CHAR(512) ARRAY`, which also refuses a
+ * write with a longer element.
+ * Any other array is keyed whole.
  */
 function ElementPartOf(
   fields: readonly string[],
