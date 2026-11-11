@@ -48,17 +48,6 @@ export interface OrderTerm {
  */
 type AbsentValue = null | undefined;
 
-/** The join keywords a joined relation can spell; a stage that needs a lateral reaches it through the dialect. */
-type JoinKind = "JOIN" | "LEFT JOIN";
-
-/** One `JOIN` the relation carries, rendered between its `FROM` and its `WHERE`. */
-export interface JoinClause {
-  kind: JoinKind;
-  from: Sql;
-  alias: string;
-  on: Sql;
-}
-
 /**
  * An unrendered `SELECT`, and the accumulator the pipeline folds over.
  *
@@ -77,7 +66,8 @@ export interface Relation {
   dialect: Dialect;
   from: Sql;
   alias: string;
-  joins: JoinClause[];
+  /** The join clauses, already rendered, in the order they follow the `FROM`. */
+  joins: Sql[];
   /** The conjuncts of the `WHERE`, each already parenthesised by whoever pushed it. */
   where: Sql[];
   groupBy: Compiled[];

@@ -117,6 +117,15 @@ export interface TimeSyntax {
   parseText(text: Sql): Sql;
 }
 
+/**
+ * A correlated subselect brought into the statement that reads it: the join clause that brings it
+ * in, absent where the engine reads it inline instead, and how the row reads its one column.
+ */
+export interface CorrelatedRead {
+  readonly join?: Sql;
+  readonly value: Sql;
+}
+
 /** Row-level constructs that differ between engines in algorithm, not only in spelling. */
 export interface RowSyntax {
   /** Equality that holds between two SQL NULLs. */
@@ -131,6 +140,11 @@ export interface RowSyntax {
    * the derived table reads. It goes right after the statement's verb.
    */
   materialize(alias: string): Sql;
+  /**
+   * Brings in a subselect that answers at most one row, correlated to the row it is read for, at
+   * `alias`; `column` is the one column it selects. A row it answers nothing for reads SQL NULL.
+   */
+  lookup(subselect: Sql, alias: string, column: string): CorrelatedRead;
 }
 
 /** The expression members the compiler and the writes reach. */

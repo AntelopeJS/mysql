@@ -6,7 +6,6 @@ import { EXTRA_COLUMN, ID_COLUMN, INSTANCE_COLUMN } from "./utils";
 import { QualifiedColumn } from "./sql";
 import { DeclaredColumns, PhysicalOrder } from "./fields";
 import {
-  type JoinClause,
   OUTPUT_COLUMN,
   type Relation,
   RequireOrigin,
@@ -53,15 +52,19 @@ function FromClause(relation: Relation): Sql {
 
 const JOIN_KEYWORDS = { JOIN: sql`JOIN`, "LEFT JOIN": sql`LEFT JOIN` };
 
-function RenderJoin(clause: JoinClause): Sql {
-  return sql`${JOIN_KEYWORDS[clause.kind]} ${FromItem(clause.from, clause.alias)} ON ${clause.on}`;
+/** The joins every engine spells alike; a lookup's lateral is the dialect's to spell. */
+export type JoinKind = keyof typeof JOIN_KEYWORDS;
+
+/** A join of already-rendered FROM text at an alias, on a condition. */
+export function JoinOn(kind: JoinKind, from: Sql, alias: string, on: Sql): Sql {
+  return sql`${JOIN_KEYWORDS[kind]} ${FromItem(from, alias)} ON ${on}`;
 }
 
 function JoinClauses(relation: Relation): Sql | undefined {
   if (relation.joins.length === 0) {
     return undefined;
   }
-  return join(relation.joins.map(RenderJoin), sql` `);
+  return join(relation.joins, sql` `);
 }
 
 function WhereClause(relation: Relation): Sql | undefined {
@@ -148,7 +151,7 @@ export function Render(relation: Relation): Sql {
  * rendered select list keeps the physical column names, but the key columns do not: the select
  * list holds the stored columns only. `single` and `absent` carry through; `aggregated` does not.
  */
-function Nested(relation: Relation, context: DecodingContext): Relation {
+export function Nested(relation: Relation, context: DecodingContext): Relation {
   const from = sql`(${Render(relation)})`;
   const alias = context.nextAlias();
   const projection = relation.projection;
@@ -198,6 +201,14 @@ const FLAG_PREDICATES: Record<RelationFlag, RelationPredicate> = {
   aggregated: (relation) => relation.aggregated,
 };
 
+/** Whether any of the flags is set on the relation. */
+export function HasFlag(
+  relation: Relation,
+  flags: readonly RelationFlag[],
+): boolean {
+  return flags.some((flag) => FLAG_PREDICATES[flag](relation));
+}
+
 /**
  * The one place a *conditional* wrap is decided: every stage continuing its own relation opens by
  * naming the flags that block it, and reaches {@link Nested} through nothing else.
@@ -207,6 +218,5 @@ export function Prepare(
   blockedBy: readonly RelationFlag[],
   context: DecodingContext,
 ): Relation {
-  const blocked = blockedBy.some((flag) => FLAG_PREDICATES[flag](relation));
-  return blocked ? Nested(relation, context) : relation;
+  return HasFlag(relation, blockedBy) ? Nested(relation, context) : relation;
 }

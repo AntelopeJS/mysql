@@ -50,7 +50,7 @@ interface Meta {
 
 /**
  * A person as a caller declares one: its own row type, which spells keys the schema leaves to the
- * overflow column, and the index names a selection reads by.
+ * overflow column, the index names a selection reads by, and a dotted path a lookup reads by.
  */
 export interface Person {
   _id: string;
@@ -63,6 +63,7 @@ export interface Person {
   rev: string;
   byName: string;
   _internal: { owner: string };
+  "meta.title": string;
 }
 
 interface Product {

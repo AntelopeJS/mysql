@@ -16,4 +16,8 @@ export const rows: RowSyntax = {
       : sql`LIMIT ${limit} OFFSET ${param(offset)}`;
   },
   materialize: (alias) => sql`/*+ NO_MERGE(${ident(alias)}) */`,
+  lookup: (subselect, alias, column) => ({
+    join: sql`LEFT JOIN LATERAL (${subselect}) AS ${ident(alias)} ON TRUE`,
+    value: sql`${ident(alias)}.${ident(column)}`,
+  }),
 };

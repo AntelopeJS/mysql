@@ -83,6 +83,7 @@ const MASKED_ROWS: RowSyntax = {
   nullSafeEqual: (left, right) => Marked(left, right),
   limit: () => Marked(),
   materialize: () => Marked(),
+  lookup: (subselect) => ({ join: Marked(subselect), value: Marked() }),
 };
 
 const MASKED_SYNTAX: CompilerSyntax = {
