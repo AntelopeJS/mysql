@@ -4,7 +4,9 @@ import type { StagedObject } from "@antelopejs/interface-database/common";
 import { DIALECTS, type Dialect } from "../../dialect";
 import type {
   CompilerSyntax,
+  Int32Syntax,
   JsonSyntax,
+  RegexSyntax,
   RowSyntax,
   ScalarSyntax,
   TimeSyntax,
@@ -55,6 +57,32 @@ const MASKED_JSON: JsonSyntax = {
   includes: (array, element) => Marked(array, element),
   truthy: (value) => Marked(value),
   collect: (element, order) => Marked(element, ...Present(order)),
+  length: (container) => Marked(container),
+  at: (array, position) => Marked(array, position),
+  concatArrays: (left, right) => Marked(left, right),
+  shallowMerge: (left, right) => Marked(left, right),
+  split: (text) => Marked(text),
+  walk: (_kind, source) => ({
+    ordinal: Marked(),
+    value: Marked(),
+    aggregate: (select, where) => Marked(source, select, ...Present(where)),
+  }),
+};
+
+const MASKED_INT32: Int32Syntax = {
+  read: (value) => Marked(value),
+  and: (left, right) => Marked(left, right),
+  or: (left, right) => Marked(left, right),
+  xor: (left, right) => Marked(left, right),
+  not: (value) => Marked(value),
+  shiftLeft: (value, count) => Marked(value, count),
+  shiftRight: (value, count) => Marked(value, count),
+  shiftRightUnsigned: (value, count) => Marked(value, count),
+};
+
+const MASKED_REGEX: RegexSyntax = {
+  translate: (pattern) => pattern,
+  matches: (text, pattern) => Marked(text, pattern),
 };
 
 const MASKED_SCALAR: ScalarSyntax = {
@@ -70,9 +98,13 @@ const MASKED_SCALAR: ScalarSyntax = {
   truncate: (value) => Marked(value),
   concat: (parts) => Marked(...parts),
   left: (text) => Marked(text),
+  int32: MASKED_INT32,
+  regex: MASKED_REGEX,
 };
 
 const MASKED_TIME: TimeSyntax = {
+  part: (moment) => Marked(moment),
+  inZone: (moment, zone) => Marked(moment, zone),
   isoText: (value) => Marked(value),
   toEpochMs: (value) => Marked(value),
   fromEpochMs: (value) => Marked(value),

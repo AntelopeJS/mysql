@@ -1,4 +1,4 @@
-import type { TimeSyntax } from "../sql-types";
+import type { TimePart, TimeSyntax } from "../sql-types";
 import { type Sql, sql } from "../../statement";
 
 /** `DATETIME`'s range in epoch milliseconds: 1000-01-01 to the last millisecond of 9999. */
@@ -36,7 +36,29 @@ function FromEpochMs(value: Sql): Sql {
   return sql`(CASE WHEN ${value} BETWEEN ${EARLIEST_EPOCH_MS} AND ${LATEST_EPOCH_MS} THEN TIMESTAMPADD(MICROSECOND, ${value} * 1000, ${EPOCH}) END)`;
 }
 
+const MICROSECONDS_PER_SECOND = sql`1000000`;
+
+/**
+ * Every reading is of the instant as the session holds it, which is UTC. `second` is the seconds
+ * and microseconds the server reads together, so the operand is spelled once.
+ */
+const PARTS: Record<TimePart, (moment: Sql) => Sql> = {
+  year: (moment) => sql`YEAR(${moment})`,
+  month: (moment) => sql`MONTH(${moment})`,
+  day: (moment) => sql`DAYOFMONTH(${moment})`,
+  weekday: (moment) => sql`(WEEKDAY(${moment}) + 1)`,
+  dayOfYear: (moment) => sql`DAYOFYEAR(${moment})`,
+  hour: (moment) => sql`HOUR(${moment})`,
+  minute: (moment) => sql`MINUTE(${moment})`,
+  second: (moment) =>
+    sql`(EXTRACT(SECOND_MICROSECOND FROM ${moment}) / ${MICROSECONDS_PER_SECOND})`,
+  timeOfDay: (moment) =>
+    sql`(TIME_TO_SEC(${moment}) + MICROSECOND(${moment}) / ${MICROSECONDS_PER_SECOND})`,
+};
+
 export const time: TimeSyntax = {
+  part: (moment, part) => PARTS[part](moment),
+  inZone: (moment, zone) => sql`CONVERT_TZ(${moment}, '+00:00', ${zone})`,
   isoText: IsoText,
   toEpochMs: ToEpochMs,
   fromEpochMs: FromEpochMs,

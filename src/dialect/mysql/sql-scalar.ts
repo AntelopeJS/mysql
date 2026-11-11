@@ -1,4 +1,10 @@
-import type { BindSyntax, ScalarKind, ScalarSyntax } from "../sql-types";
+import type {
+  BindSyntax,
+  Int32Syntax,
+  RegexSyntax,
+  ScalarKind,
+  ScalarSyntax,
+} from "../sql-types";
 import { type Sql, int, join, lit, param, sql } from "../../statement";
 
 /** A decimal literal with an optional sign, exponent and surrounding space, and nothing else. */
@@ -33,6 +39,96 @@ const bind: BindSyntax = {
   json: (value) => sql`CAST(${param(JSON.stringify(value))} AS JSON)`,
 };
 
+const TWO_POW_32 = sql`4294967296`;
+const TWO_POW_31 = sql`2147483648`;
+const LOW_32_BITS = sql`4294967295`;
+const SHIFT_MASK = sql`31`;
+
+/**
+ * `ToInt32` over doubles, which hold every integer the arithmetic touches exactly: `MOD` keeps the
+ * dividend's sign, so the remainder is lifted by three halves of 2^32 before the second `MOD` and
+ * the half is taken off again. The operand is spelled once, however long it is.
+ */
+function ReadInt32(value: Sql): Sql {
+  return sql`CAST(MOD(MOD(TRUNCATE(${value}, 0), ${TWO_POW_32}) + 6442450944, ${TWO_POW_32}) - ${TWO_POW_31} AS SIGNED)`;
+}
+
+/**
+ * The low 32 bits of a bitwise result as a signed integer. The operators work on 64 unsigned bits,
+ * so a negative operand arrives sign-extended and its high bits are masked off before the sign is
+ * restored.
+ */
+function Wrapped(value: Sql): Sql {
+  return sql`(CAST((((${value}) & ${LOW_32_BITS}) + ${TWO_POW_31}) MOD ${TWO_POW_32} AS SIGNED) - ${TWO_POW_31})`;
+}
+
+function ShiftCount(count: Sql): Sql {
+  return sql`(${count} & ${SHIFT_MASK})`;
+}
+
+const int32: Int32Syntax = {
+  read: ReadInt32,
+  and: (left, right) => Wrapped(sql`${left} & ${right}`),
+  or: (left, right) => Wrapped(sql`${left} | ${right}`),
+  xor: (left, right) => Wrapped(sql`${left} ^ ${right}`),
+  not: (value) => Wrapped(sql`~(${value})`),
+  shiftLeft: (value, count) => Wrapped(sql`${value} << ${ShiftCount(count)}`),
+  shiftRight: (value, count) => Wrapped(sql`${value} >> ${ShiftCount(count)}`),
+  shiftRightUnsigned: (value, count) =>
+    sql`((${value} & ${LOW_32_BITS}) >> ${ShiftCount(count)})`,
+};
+
+const ESCAPE = "\\";
+const CLASS_OPEN = "[";
+const CLASS_CLOSE = "]";
+
+/**
+ * What JavaScript's `.` matches, which is everything but its four line terminators. ICU's own `.`
+ * also stops at a vertical tab and at U+0085, where JavaScript's does not.
+ */
+const JS_DOT = "[^\\n\\r\\u2028\\u2029]";
+
+/** JavaScript's `$` is the end of the input alone; ICU's also matches before a final line terminator. */
+const END_OF_INPUT = "\\z";
+
+/** ICU reads these inside a class as a nested set and as an intersection, which JavaScript does not. */
+const CLASS_METACHARACTERS = new Set([CLASS_OPEN, "&"]);
+
+const OUTSIDE_CLASS = new Map([
+  [".", JS_DOT],
+  ["$", END_OF_INPUT],
+]);
+
+/**
+ * Rewrites a JavaScript pattern into ICU's flavour, following escapes and classes. Only a literal
+ * pattern reaches it: a pattern the statement computes is bound as it is.
+ */
+function TranslatePattern(pattern: string): string {
+  let out = "";
+  let inClass = false;
+  for (let at = 0; at < pattern.length; at++) {
+    const char = pattern[at];
+    if (char === ESCAPE && at + 1 < pattern.length) {
+      out += char + pattern[at + 1];
+      at++;
+      continue;
+    }
+    if (inClass) {
+      out += CLASS_METACHARACTERS.has(char) ? ESCAPE + char : char;
+      inClass = char !== CLASS_CLOSE;
+      continue;
+    }
+    out += OUTSIDE_CLASS.get(char) ?? char;
+    inClass = char === CLASS_OPEN;
+  }
+  return out;
+}
+
+const regex: RegexSyntax = {
+  translate: TranslatePattern,
+  matches: (text, pattern) => sql`REGEXP_LIKE(${text}, ${pattern}, 'c')`,
+};
+
 export const scalar: ScalarSyntax = {
   cast: (value, kind) => CASTS[kind](value),
   bind,
@@ -41,4 +137,6 @@ export const scalar: ScalarSyntax = {
   truncate: (value) => sql`TRUNCATE(${value}, 0)`,
   concat: (parts) => sql`CONCAT(${join(parts, sql`, `)})`,
   left: (text, width) => sql`LEFT(${text}, ${int(width)})`,
+  int32,
+  regex,
 };
