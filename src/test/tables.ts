@@ -52,6 +52,7 @@ export function Numbers(places: number): Sql {
 export interface TableSnapshot {
   readonly columns: readonly (readonly string[])[];
   readonly indexes: readonly (readonly string[])[];
+  readonly triggers: readonly (readonly string[])[];
   readonly rows: readonly (readonly string[])[];
 }
 
@@ -77,6 +78,10 @@ export async function Snapshot(
     sql`SELECT INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME, EXPRESSION, INDEX_COMMENT FROM information_schema.STATISTICS WHERE ${where} ORDER BY INDEX_NAME, SEQ_IN_INDEX`,
     held,
   );
+  const triggers = await Read(
+    sql`SELECT TRIGGER_NAME, EVENT_MANIPULATION FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = DATABASE() AND EVENT_OBJECT_TABLE = ${param(table)} ORDER BY TRIGGER_NAME`,
+    held,
+  );
   const rows = await Read(
     sql`SELECT * FROM ${ident(table)} ORDER BY _instance, _id`,
     held,
@@ -84,6 +89,7 @@ export async function Snapshot(
   return {
     columns: Cells(columns),
     indexes: Cells(indexes),
+    triggers: Cells(triggers),
     rows: Cells(rows),
   };
 }
