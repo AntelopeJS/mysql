@@ -166,7 +166,7 @@ function StepSubStream(
  * The seed is read off the relation once, before any of the mapper is decoded, and never mutated,
  * since one mapper binds this provider as many times as it names the parameter.
  */
-export function SubStreamProvider(
+function SubStreamProvider(
   relation: Relation,
   context: DecodingContext,
 ): SubqueryProvider {

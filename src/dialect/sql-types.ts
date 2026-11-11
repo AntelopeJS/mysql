@@ -121,7 +121,7 @@ export interface TimeSyntax {
  * A correlated subselect brought into the statement that reads it: the join clause that brings it
  * in, absent where the engine reads it inline instead, and how the row reads its one column.
  */
-export interface CorrelatedRead {
+interface CorrelatedRead {
   readonly join?: Sql;
   readonly value: Sql;
 }
