@@ -78,7 +78,7 @@ Then decide whether the code or the model is wrong:
 3. Ask whether the scenario could happen: the writers, ticks, reapers and feed are concurrent in production, and `check.ts` starts them as production does. A run that only a wrong scenario reaches is a modelling error too.
 4. Otherwise the code breaks the promise. Report it with the trace, and do not weaken a rule or the model to make it pass. To record it as a known finding, add the rule to `FINDINGS` in `check.ts` and describe it under Findings.
 
-A footprint that is too small in `steps.ts`, `server.ts` or `check.ts` makes the explorer skip orders, and the check then passes on code it would fail. When you add or change a step, give it every resource its outcome depends on, and its blocked check every lock it waits on. Then compare the explorer with full enumeration: make `dependent` in `explore.ts` answer `true` in a scratch copy, run both on scenarios small enough to finish, and compare the outcomes each reaches. At the sync commit, 19 drawn scenarios that finish without reduction reached the same outcomes both ways, and so did a two-writer scenario of one document: 34 outcomes, in 82,598 orders without reduction and under a thousand with it.
+A footprint that is too small in `steps.ts`, `server.ts` or `check.ts` makes the explorer skip orders, and the check then passes on code it would fail. When you add or change a step, give it every resource its outcome depends on, and its blocked check every lock it waits on. Then compare the explorer with full enumeration: make `dependent` in `explore.ts` answer `true` in a scratch copy, run both on scenarios small enough to finish, and compare the outcomes each reaches. At `0631d5f`, before any step or footprint changed since, 19 drawn scenarios that finish without reduction reached the same outcomes both ways, and so did a two-writer scenario of one document: 34 outcomes, in 82,598 orders without reduction and under a thousand with it.
 
 ## Scope and assumptions
 
@@ -86,11 +86,11 @@ What the check covers, at the sync commit:
 
 | File | What runs | Functions |
 | --- | --- | --- |
-| `src/implementations/database/feeds.ts` | the real code | `ReadFeedEvent`, `Advance`, `Open`, `Poll`, `Waited`, `Wake`, `Retire`, `CloseOneFeed` |
+| `src/implementations/database/feeds.ts` | the real code | `ReadFeedEvent`, `Advance`, `Open`, `Polled`, `Poll`, `Waited`, `Wake`, `Retire`, `CloseOneFeed` |
 | `src/implementations/database/feed-poll.ts` | the real code | `PollStatement`, `ReadPoll` |
 | `src/implementations/database/sequencer.ts` | the real code | `Sequence`, `SequenceOnce`, `Numbered`, `InSessionTransaction`, `ReadFrontier` |
 | `src/implementations/database/reaper.ts` | the real code | `ReapOnce`, `ReapBatch`, `LockName` |
-| `src/dialect/mysql/capture.ts` | its SQL, read by `statements.ts` | `lockClock`, `unsequenced`, `stamp`, `advance`, `frontier`, `poll` (all but the projected documents), `reapThrough`, `raiseReaped`, `reap` |
+| `src/dialect/mysql/capture.ts` | its SQL, read by `statements.ts` | `lockClock`, `unsequenced`, `stamp`, `advance`, `frontier` and `poll` (all but the projected documents, with the epoch read as the clock's own beside the log's identity and birth row), `reapThrough`, `raiseReaped` and `reap` (whose range starts past the birth row's `seq` 0) |
 | `src/implementations/database/feeds.ts` | copied in `server.ts`, guarded by `check.mjs` | `LIVE.open`: a `Sequence` pass that waits for the clock, then `ReadFrontier` |
 | `src/implementations/database/change-loop.ts` | copied in `check.ts`, guarded by `check.mjs` | `Look`: read the frontier, and run a `Sequence` pass that skips a busy clock when rows wait |
 | `src/implementations/database/change-loop.ts` | modelled in `server.ts` | `Announce`: the wake step, which the explorer may run whenever the feed waits and the polled state moved |
@@ -108,7 +108,9 @@ The model assumes:
 Left out, each covered by its own tests or not at all:
 
 - Trigger swaps under `LOCK TABLES` (`ApplyTriggerSwap` in `change-log.ts`) and convergence, which `feeds-convergence.test.ts` covers on a real server.
-- A log recreated or emptied: the epoch never changes in a scenario, so the `restarted` ending is not reached. `feeds-log.test.ts` covers it.
+- A log recreated, altered or emptied: the log's identity and birth row never change in a scenario, so the `restarted` ending is not reached, and the model answers the clock's epoch for the composite one. `feeds-log.test.ts` covers it on a real server.
+- A document deeper than the server builds: no statement fails in a scenario, so a feed never polls one event at a time and never ends as too deep. `feeds-depth.test.ts` covers it.
+- A declaration registered again while a feed is open: the origin never changes in a scenario, so `Polled` never compiles the stages again. `feeds-declaration.test.ts` covers it.
 - Lost connections, failed statements and retried polls: no statement fails in a scenario unless the code issues one the model refuses.
 - A backlog of more than 10,000 rows, which a pass numbers in several transactions.
 - Filtered feeds, `CROSS_INSTANCE` feeds and the documents a poll projects: every side matches, and its document carries only the change's label.
@@ -120,21 +122,21 @@ Each scratch change was applied to `src/` in a scratch worktree at the sync comm
 
 | Scratch change in the code | Result, CI bounds |
 | --- | --- |
-| `unsequenced` reads with `FOR UPDATE SKIP LOCKED` again, as before the fix (capture.ts:262) | `BROKEN KeepsRowOrder` |
-| `Poll` moves the watermark to the frontier after a full batch (feeds.ts:289-290) | `BROKEN DeliversEveryChange` |
-| `Poll` moves the watermark to one below the last row of a full batch (feeds.ts:290) | `BROKEN DeliversOnce` |
-| `Poll` ends the feed when its watermark equals the high-water (feeds.ts:277) | `BROKEN LapsesOnlyOnLoss` |
-| `Poll` names a lost range that ends 100 past the high-water (feeds.ts:278) | `BROKEN NamesTheLostRange` |
-| `Poll` names a lost range that ends where it starts (feeds.ts:278) | `BROKEN NamesTheLostRange` |
+| `unsequenced` reads with `FOR UPDATE SKIP LOCKED` again, as before the fix (capture.ts:378) | `BROKEN KeepsRowOrder` |
+| `Poll` moves the watermark to the frontier after a full batch (feeds.ts:339) | `BROKEN DeliversEveryChange` |
+| `Poll` moves the watermark to one below the last row of a full batch (feeds.ts:339) | `BROKEN DeliversOnce` |
+| `Poll` ends the feed when its watermark equals the high-water (feeds.ts:319) | `BROKEN LapsesOnlyOnLoss` |
+| `Poll` names a lost range that ends 100 past the high-water (feeds.ts:320) | `BROKEN NamesTheLostRange` |
+| `Poll` names a lost range that ends where it starts (feeds.ts:320) | `BROKEN NamesTheLostRange` |
 | `ReapBatch` deletes without raising the high-water (reaper.ts:48) | `BROKEN DeliversEveryChange` |
 | `ReapBatch` passes a retention of 0 whatever it is given (reaper.ts:41) | `BROKEN KeepsRetention` |
-| `unsequenced` numbers the newest row first (`ORDER BY id DESC`, capture.ts:262) | `BROKEN NumbersEachPassInLogOrder` |
+| `unsequenced` numbers the newest row first (`ORDER BY id DESC`, capture.ts:378) | `BROKEN NumbersEachPassInLogOrder` |
 | `SequenceOnce` runs its statements outside a transaction (sequencer.ts:112) | `BROKEN LapsesOnlyOnLoss`, `BROKEN Settles` |
 | `Numbered` skips a busy clock even when the feed's open asks to wait (sequencer.ts:77) | `BROKEN SkipsChangesBeforeOpen` |
 | `Numbered` moves the clock one short of the rows it numbered (sequencer.ts:87) | `BROKEN DeliversEveryChange`, `BROKEN LapsesOnlyOnLoss`, `BROKEN Settles` |
-| `LIVE.open` skips a busy clock (feeds.ts:83) | exit 2: the copied open no longer matches |
+| `LIVE.open` skips a busy clock (feeds.ts:94) | exit 2: the copied open no longer matches |
 | `Look` reads the frontier without numbering (change-loop.ts:73) | exit 2: the copied look no longer matches |
-| `poll` reads `id` as `seq` (capture.ts:228) | exit 2: the model does not know the statement |
+| `poll` reads `id` as `seq` (capture.ts:309) | exit 2: the model does not know the statement |
 
 Each `BROKEN` run exited 1.
 
@@ -143,7 +145,7 @@ The rules a run reports depend on the first scenario that breaks one, so a row l
 
 ## Keep it in step
 
-Sync commit: `0631d5f`. At that commit the model and the covered files above describe the same code.
+Sync commit: `7d0dfe4`. At that commit the model and the covered files above describe the same code.
 
 When a change touches a covered file:
 
