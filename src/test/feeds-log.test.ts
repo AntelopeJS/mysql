@@ -1,12 +1,12 @@
 import { expect } from "chai";
 import { Schema } from "@antelopejs/interface-database/schema";
 
-import { ident, sql } from "../statement";
+import { type Sql, ident, sql } from "../statement";
 import { AcquireConnection, Read } from "../connection";
 import { CHANGE_LOG } from "../implementations/database/registry";
 import { Schemas } from "../implementations/database/schema";
 import { Run } from "./tables";
-import { Opened, Pause, QUIET_MS, type Row } from "./watch";
+import { DeliveredRow, Opened, Pause, QUIET_MS, type Row } from "./watch";
 
 const SCHEMA_ID = "feeds-log";
 const DEFINITION = { rows: { fields: { label: "string" }, indexes: {} } };
@@ -77,6 +77,70 @@ describe("a change log dropped and created again", function () {
         (err: unknown) => String(err),
       );
       expect(failure).to.contain("the change log was recreated");
+    } finally {
+      await feed.return?.();
+    }
+  });
+});
+
+/** What an open feed answers next, once `change` ran on the log with no registration after it. */
+async function AnsweredAfter(probe: string, change: Sql): Promise<string> {
+  const rows = logged.instance().table("rows");
+  const feed = await Opened(rows, probe);
+  try {
+    await rows.insert({ _id: `${probe}-unread`, label: "written before" });
+    await Pause(NEXT_SECOND_MS);
+    await Run(change);
+    await rows.insert({ _id: `${probe}-after`, label: "logged anew" });
+    return await feed.next().then(
+      (step) => `delivered ${JSON.stringify(step.value)}`,
+      (err: unknown) => String(err),
+    );
+  } finally {
+    await feed.return?.();
+  }
+}
+
+describe("a change log emptied or altered under an open feed", function () {
+  this.timeout(30_000);
+
+  /** `TRUNCATE` takes the rows the feed had not read and fires no trigger. */
+  it("ends the feed with the loss when the log is truncated", async () => {
+    const answer = await AnsweredAfter(
+      "truncated",
+      sql`TRUNCATE TABLE ${ident(CHANGE_LOG.log)}`,
+    );
+    expect(answer).to.contain(
+      "the change log was recreated, altered or emptied",
+    );
+  });
+
+  /** An `ALTER` gives the log another creation time, which is all a recreated log shows either. */
+  it("ends the feed with the loss when the log is altered", async () => {
+    const answer = await AnsweredAfter(
+      "altered",
+      sql`ALTER TABLE ${ident(CHANGE_LOG.log)} COMMENT = 'altered by hand'`,
+    );
+    expect(answer).to.contain(
+      "the change log was recreated, altered or emptied",
+    );
+  });
+
+  /** A registration that took the altered log for a new one would end a feed that lost nothing. */
+  it("keeps a feed opened after the log was altered and emptied open through a registration", async () => {
+    await Pause(NEXT_SECOND_MS);
+    await Run(
+      sql`ALTER TABLE ${ident(CHANGE_LOG.log)} COMMENT = 'altered again'`,
+    );
+    await Run(sql`TRUNCATE TABLE ${ident(CHANGE_LOG.log)}`);
+    const rows = logged.instance().table("rows");
+    const feed = await Opened(rows, "reopened");
+    try {
+      await Schemas.register(SCHEMA_ID, DEFINITION);
+      await rows.insert({ _id: "reopened-after", label: "logged anew" });
+      expect(
+        await DeliveredRow(feed, "reopened-after"),
+      ).to.have.nested.property("newValue.label", "logged anew");
     } finally {
       await feed.return?.();
     }

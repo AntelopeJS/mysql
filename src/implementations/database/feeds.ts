@@ -10,6 +10,7 @@ import {
   Read,
   RegisterBeforeDisconnect,
   type Row,
+  Write,
 } from "../../connection";
 import type { TablePlan } from "./plan";
 import type { RowObject } from "./result";
@@ -17,6 +18,7 @@ import type { TableOrigin } from "./relation";
 import { WaitForSchemaReady } from "./schema";
 import { RegisteredOrigin } from "./selection";
 import { EnsureTriggers } from "./change-log";
+import { CHANGE_LOG } from "./registry";
 import { OnDedicatedSession } from "./locks";
 import { SubscribeToChanges } from "./change-loop";
 import { type Frontier, ReadFrontier, Sequence } from "./sequencer";
@@ -76,7 +78,10 @@ export interface FeedEnvironment {
 const LIVE: FeedEnvironment = {
   dialect: GetDialect,
   origin: RegisteredOrigin,
-  install: EnsureTriggers,
+  install: async (plan) => {
+    await EnsureTriggers(plan);
+    await Write(GetDialect().capture.birth(CHANGE_LOG));
+  },
   open: () =>
     OnDedicatedSession(async (session) => {
       const dialect = GetDialect();
@@ -143,7 +148,7 @@ function LapsedMessage(target: FeedTarget, gap: FeedGap): string {
 }
 
 function RestartedMessage(target: FeedTarget): string {
-  return `change feed on '${Named(target)}' cannot continue: the change log was recreated, so every event it had not read is gone; re-open the feed`;
+  return `change feed on '${Named(target)}' cannot continue: the change log was recreated, altered or emptied, so the events it had not read may be gone; re-open the feed`;
 }
 
 function Registered(reqId: number, env?: FeedEnvironment): FeedState {

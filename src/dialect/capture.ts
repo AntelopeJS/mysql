@@ -56,11 +56,12 @@ export interface PollRequest {
  */
 export interface CaptureSyntax {
   /**
-   * Creates the log, the clock and the reaped table where absent, and seeds the clock once. A log
-   * created now is named `logId`, and the clock renews its epoch whenever the log it numbers is not
-   * the one it last saw, so a log created again ends every feed that read the one before.
+   * Creates the log, the clock and the reaped table where absent, seeds the clock once, and writes
+   * the log's birth row where it has none. A log created now is named `logId`.
    */
   bootstrap(tables: ChangeLogTables, logId: string): readonly Sql[];
+  /** Writes the log's birth row where it has none, as an emptied log has not. */
+  birth(tables: ChangeLogTables): Sql;
   /**
    * The bodies of the three triggers that log a table's writes. An image is a JSON object of
    * `columns`, a JSON-backed column boxed so its SQL NULL stays apart from a JSON null, as a value
@@ -114,7 +115,8 @@ export interface CaptureSyntax {
   advance(tables: ChangeLogTables, count: number): Sql;
   /**
    * One row: `epoch`, the `frontier` (the highest `seq` handed out) and `pending`, whether a
-   * committed row still waits for its number.
+   * committed row still waits for its number. The epoch, here and in a poll, is another one once
+   * the log is created again, altered or emptied.
    */
   frontier(tables: ChangeLogTables): Sql;
   /** The tables, as `tbl`, with a row numbered after `after`. */
