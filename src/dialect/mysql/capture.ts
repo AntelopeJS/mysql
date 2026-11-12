@@ -52,6 +52,7 @@ const INSTANCE = ident("inst");
 const OPERATION = ident("op");
 const NEXT_SEQ = ident("next_seq");
 const EPOCH = ident("epoch");
+const LOG_ID = ident("log_id");
 const HIGH_WATER = ident("high_water");
 
 const EVENTS: Record<ChangeOperation, Sql> = {
@@ -65,11 +66,20 @@ function Seq(value: bigint): Sql {
   return sql`CAST(${param(value.toString())} AS UNSIGNED)`;
 }
 
+/** The identity of the log as it stands: the comment it was created with. */
+function CurrentLogId(tables: ChangeLogTables): Sql {
+  return sql`(SELECT TABLE_COMMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${lit(tables.log)})`;
+}
+
 /**
  * The clock is seeded with `INSERT IGNORE`, which only reads the row it finds: an upsert would take
  * that row's lock shared and then exclusive, and two registrations doing so at once deadlock.
+ *
+ * The log carries an identity in its comment, chosen when it is created, and the clock records the
+ * identity of the log it numbers. A log dropped and created again has another, and the first
+ * bootstrap that sees it renews the epoch, once: the update matches only while the two differ.
  */
-function Bootstrap(tables: ChangeLogTables): readonly Sql[] {
+function Bootstrap(tables: ChangeLogTables, logId: string): readonly Sql[] {
   const log = [
     sql`${ID} BIGINT UNSIGNED NOT NULL AUTO_INCREMENT`,
     sql`${SEQ} BIGINT UNSIGNED NULL`,
@@ -88,6 +98,7 @@ function Bootstrap(tables: ChangeLogTables): readonly Sql[] {
     sql`${ID} TINYINT UNSIGNED NOT NULL`,
     sql`${NEXT_SEQ} BIGINT UNSIGNED NOT NULL`,
     sql`${EPOCH} CHAR(36) NOT NULL`,
+    sql`${LOG_ID} CHAR(36) NOT NULL`,
     sql`PRIMARY KEY (${ID})`,
   ];
   const reaped = [
@@ -95,11 +106,13 @@ function Bootstrap(tables: ChangeLogTables): readonly Sql[] {
     sql`${HIGH_WATER} BIGINT UNSIGNED NOT NULL`,
     sql`PRIMARY KEY (${TABLE})`,
   ];
+  const current = CurrentLogId(tables);
   return [
-    sql`CREATE TABLE IF NOT EXISTS ${ident(tables.log)} (${join(log, COMMA)}) ${TABLE_OPTIONS}`,
+    sql`CREATE TABLE IF NOT EXISTS ${ident(tables.log)} (${join(log, COMMA)}) ${TABLE_OPTIONS} COMMENT = ${lit(logId)}`,
     sql`CREATE TABLE IF NOT EXISTS ${ident(tables.clock)} (${join(clock, COMMA)}) ${TABLE_OPTIONS}`,
     sql`CREATE TABLE IF NOT EXISTS ${ident(tables.reaped)} (${join(reaped, COMMA)}) ${TABLE_OPTIONS}`,
-    sql`INSERT IGNORE INTO ${ident(tables.clock)} (${ID}, ${NEXT_SEQ}, ${EPOCH}) VALUES (${CLOCK_ROW}, 1, UUID())`,
+    sql`INSERT IGNORE INTO ${ident(tables.clock)} (${ID}, ${NEXT_SEQ}, ${EPOCH}, ${LOG_ID}) VALUES (${CLOCK_ROW}, 1, UUID(), ${current})`,
+    sql`UPDATE ${ident(tables.clock)} SET ${EPOCH} = UUID(), ${LOG_ID} = ${current} WHERE ${ID} = ${CLOCK_ROW} AND ${LOG_ID} <> ${current}`,
   ];
 }
 

@@ -55,8 +55,12 @@ export interface PollRequest {
  * `new_side` beside the frontier's.
  */
 export interface CaptureSyntax {
-  /** Creates the log, the clock and the reaped table where absent, and seeds the clock once. */
-  bootstrap(tables: ChangeLogTables): readonly Sql[];
+  /**
+   * Creates the log, the clock and the reaped table where absent, and seeds the clock once. A log
+   * created now is named `logId`, and the clock renews its epoch whenever the log it numbers is not
+   * the one it last saw, so a log created again ends every feed that read the one before.
+   */
+  bootstrap(tables: ChangeLogTables, logId: string): readonly Sql[];
   /**
    * The bodies of the three triggers that log a table's writes. An image is a JSON object of
    * `columns`, a JSON-backed column boxed so its SQL NULL stays apart from a JSON null and the image

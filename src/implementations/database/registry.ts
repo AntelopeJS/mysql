@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type { Sql } from "../../statement";
 import type { ChangeLogTables, Dialect, InstancesTable } from "../../dialect";
 import { GetSchemaPrefix } from "../../connection";
@@ -33,7 +35,7 @@ export const CHANGE_LOG: ChangeLogTables = {
 export function RegistryStatements(dialect: Dialect): readonly Sql[] {
   return [
     dialect.ddl.createInstances(INSTANCES),
-    ...dialect.capture.bootstrap(CHANGE_LOG),
+    ...dialect.capture.bootstrap(CHANGE_LOG, randomUUID()),
   ];
 }
 

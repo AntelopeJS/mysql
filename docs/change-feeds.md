@@ -55,7 +55,7 @@ Retention is a contract. Every owned instance runs a reaper that numbers the log
 
 The reaper records, per table, the highest `seq` it deleted. A feed whose watermark is below its own table's high-water has lost events, and it ends with an error that names the range it lost, so it never falls out of sync without a signal. A feed on a table nobody writes is never ended because another table's rows went.
 
-The log is an InnoDB table, so it survives a server restart, and a restart ends no feed. A feed ends with a loss only if the log itself is created again, for example after someone dropped it. The clock row carries an epoch that changes then, and the feed's next read refuses.
+The log is an InnoDB table, so it survives a server restart, and a restart ends no feed. A feed ends with a loss only if the log itself is created again, for example after someone dropped it. The log carries an identity it gets when it is created, and the clock row records the identity of the log it numbers. The next registration that finds the log created again gives the clock a new epoch, and every feed's next read refuses. Emptying the log with `TRUNCATE` keeps its identity, so a feed does not notice that.
 
 ## Filtered feeds
 
