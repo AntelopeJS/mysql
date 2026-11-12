@@ -65,6 +65,8 @@ Feeds capture changes with row triggers on both engines and never read the binar
 
 The sequencer numbers the rows it picked by key, naming each one in its `UPDATE`. MariaDB would otherwise scan the log beside a `JSON_TABLE` of the ids and wait on the row of a transaction that is still open.
 
+The first `changes()` on a table creates its three triggers. MariaDB writes a DDL recovery log and the trigger files with an fsync of their own for each, where MySQL keeps triggers in its InnoDB dictionary, so on a slow disk a first feed takes longer to open on MariaDB. A write made while it opens is not logged. The test servers keep their data on tmpfs for that reason.
+
 ## External mode
 
 | MySQL                                                                                  | MariaDB                                                                                                                                                                                                                 |
