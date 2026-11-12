@@ -33,10 +33,11 @@ const SUBQUERY_BLOCKERS: readonly RelationFlag[] = [
 
 /**
  * Collects a nested query's groups without a derived table over them: a walk of the distinct group
- * keys, each the canonical text of every term, reads the outer row, and each key's group is the
- * grouped select restricted to the rows whose terms have that text, so it reads the outer row too.
- * Two terms with one canonical text are one group, as JSON equality takes them, so the select groups
- * by the texts; the session leaves `ONLY_FULL_GROUP_BY` off, so the mapper still reads a term.
+ * keys, each the text a dedup compares every term by, reads the outer row, and each key's group is
+ * the grouped select restricted to the rows whose terms have that text, so it reads the outer row
+ * too. It reads the rows once per group. The select groups by the texts, which the walk carries
+ * exactly, where a JSON value read back from the walk is reformatted; the session leaves
+ * `ONLY_FULL_GROUP_BY` off, so the mapper still reads a term.
  */
 function GroupedInPlace(
   relation: Relation,
@@ -45,7 +46,7 @@ function GroupedInPlace(
 ): Compiled {
   const dialect = context.dialect;
   const texts = relation.groupBy.map((term) =>
-    inPlace.canonical(AsJson(dialect, term).sql),
+    inPlace.dedupText(AsJson(dialect, term).sql),
   );
   const key = BuildDocument(
     dialect,

@@ -59,10 +59,10 @@ export interface InPlaceSyntax {
    */
   collect(element: Sql, rows: CollectedRows): Sql;
   /**
-   * Text two JSON values share exactly when they are equal as JSON, whatever the order of an
-   * object's keys or the spelling of a number; SQL NULL stays SQL NULL.
+   * The text a dedup compares a JSON value by, which two values share exactly when a `DISTINCT`
+   * keeps one of them; SQL NULL stays SQL NULL.
    */
-  canonical(json: Sql): Sql;
+  dedupText(json: Sql): Sql;
 }
 
 /** One member of a document assembled from columns. `container` marks a JSON-backed member. */

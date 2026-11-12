@@ -143,12 +143,9 @@ function CollectInPlace(element: Sql, rows: CollectedRows): Sql {
   return sql`COALESCE(JSON_ARRAYAGG(${value}${order}${limit}), JSON_ARRAY())`;
 }
 
-/**
- * `JSON_NORMALIZE` sorts an object's keys and spells every number one way, keeping all 17
- * significant digits of a double, and answers it as text in the session's collation.
- */
-function Canonical(json: Sql): Sql {
-  return sql`CONVERT(JSON_NORMALIZE(${json}) USING utf8mb4) COLLATE ${ident(BINARY_COLLATION)}`;
+/** MariaDB stores JSON as text, and a dedup compares that text in the binary collation. */
+function DedupText(json: Sql): Sql {
+  return sql`CONVERT(${json} USING utf8mb4) COLLATE ${ident(BINARY_COLLATION)}`;
 }
 
 /**
@@ -262,7 +259,7 @@ const MARIADB: Flavour = {
     sql`(CASE ${truth} WHEN TRUE THEN ${Json(lit("true"))} WHEN FALSE THEN ${Json(lit("false"))} END)`,
   includes: Includes,
   collect: Collect,
-  inPlace: { collect: CollectInPlace, canonical: Canonical },
+  inPlace: { collect: CollectInPlace, dedupText: DedupText },
   returning: true,
   lateral: false,
   hold: Hold,
