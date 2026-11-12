@@ -8,6 +8,8 @@ const VIEW_KINDS = 4;
 const KIND_COUNT = 3;
 /** Items of 1 view are 1, 5, 9…; every other one writes its tag with its keys reversed. */
 const TAG_ORDERS = 8;
+const NOTED_ITEM = 2;
+const NOTED_VIEWS = NOTED_ITEM % VIEW_KINDS;
 
 interface Item {
   _id: string;
@@ -15,6 +17,7 @@ interface Item {
   kind: string | null;
   views: number;
   tag?: Record<string, number>;
+  note?: null;
 }
 
 interface Owner {
@@ -44,6 +47,7 @@ const KINDS = ["a", "b", "c"];
  * Item `n` has `n % 4` views and kind `a`, `b` or `c` by `n % 3`, so each view count meets every
  * kind; one more item of 3 views has no kind, which a dedup and a group keep as a value of its own.
  * An item of 1 view has an undeclared `tag`, one document written with its keys in either order.
+ * Item 2 alone holds an undeclared `note`, a JSON null, which every other item of 2 views lacks.
  */
 const ITEM_ROWS: Item[] = [
   ...Array.from({ length: ITEMS }, (_, n) => {
@@ -55,6 +59,9 @@ const ITEM_ROWS: Item[] = [
     };
     if (item.views === 1) {
       item.tag = n % TAG_ORDERS === 1 ? { x: 1, y: 2 } : { y: 2, x: 1 };
+    }
+    if (n === NOTED_ITEM) {
+      item.note = null;
     }
     return item;
   }),
@@ -173,6 +180,29 @@ async function DistinctSlicedByOuterRow(): Promise<void> {
   }
 }
 
+/** A nested dedup keeps an absent `note` and a JSON null apart, as a dedup at the top does. */
+async function DistinctKeepsAbsentApartFromNull(): Promise<void> {
+  const top = await Items()
+    .filter((item) => item.key("views").eq(NOTED_VIEWS))
+    .distinct("note")
+    .run();
+  const [read] = await Owners()
+    .filter((owner) => owner.key("take").eq(NOTED_VIEWS))
+    .map((owner) => ({
+      notes: Items()
+        .filter((item) => item.key("views").eq(owner.key("take")))
+        .distinct("note"),
+      sliced: Items()
+        .filter((item) => item.key("views").eq(owner.key("take")))
+        .distinct("note")
+        .slice(0, owner.key("take")),
+    }))
+    .run();
+  expect(top).to.deep.equal([null, null]);
+  expect(read.notes).to.have.deep.members(top);
+  expect(read.sliced).to.have.deep.members(top);
+}
+
 async function GroupFilteredByOuterRow(): Promise<void> {
   const read = await Owners()
     .map((owner) => ({
@@ -264,6 +294,10 @@ describe("nested queries that read their outer row", function () {
     CountOfDistinct,
   );
   it("slices a dedup by a count the outer row holds", DistinctSlicedByOuterRow);
+  it(
+    "keeps an absent field apart from a JSON null in a dedup that reads the outer row",
+    DistinctKeepsAbsentApartFromNull,
+  );
   it(
     "slices the rows it selects by a count the outer row holds",
     RowsSlicedByOuterRow,
