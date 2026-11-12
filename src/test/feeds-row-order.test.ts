@@ -33,7 +33,7 @@ const START_DEADLINE_MS = 30_000;
 /** Whether the connection `id` is running a `SELECT` that reads the change log. */
 async function ReadingLog(id: number): Promise<boolean> {
   const rows = await Read(
-    sql`SELECT 1 AS reading FROM performance_schema.processlist WHERE ID = ${param(id)} AND INFO LIKE 'SELECT%' AND LOCATE(${param(CHANGE_LOG.log)}, INFO) > 0`,
+    sql`SELECT 1 AS reading FROM information_schema.PROCESSLIST WHERE ID = ${param(id)} AND INFO LIKE 'SELECT%' AND LOCATE(${param(CHANGE_LOG.log)}, INFO) > 0`,
   );
   return rows.length > 0;
 }
