@@ -184,10 +184,13 @@ export function BuildRoot(
     alias,
     origin,
   );
+  relation.table = origin;
   const scope = RootInstanceScope(instance, context);
   relation.crossInstance = scope === CROSS_INSTANCE;
   if (scope !== CROSS_INSTANCE) {
-    relation.where.push(InstancePredicate(alias, scope));
+    relation.where.push(
+      context.fragment(() => InstancePredicate(alias, scope)),
+    );
   }
   return { relation, rest, instance: scope };
 }

@@ -93,6 +93,11 @@ export interface Relation {
   source: RowSource;
   projection?: Compiled;
   origin?: TableOrigin;
+  /**
+   * The table the adapter owns, while `from` names it rather than a subselect or a walk. Set by the
+   * root, and kept by every stage that keeps `from`, whatever it projects.
+   */
+  table?: TableOrigin;
   /** The source a plain projection renamed — see {@link SetPlainProjection}. */
   projectedFrom?: RowSource;
 }

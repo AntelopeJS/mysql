@@ -156,11 +156,17 @@ function Bounded(
  */
 const FilterStage: PipelineStage = (relation, stage, context) => {
   const prepared = Prepare(relation, WHERE_BLOCKERS, context);
-  const body = DecodeFunction(RecordedLambda(stage, FIRST_OPERAND), context, [
-    prepared.source,
-  ]);
-  const predicate = RequireOperand(body, stage, FIRST_OPERAND);
-  prepared.where.push(sql`(${Predicate(context.dialect, predicate).sql})`);
+  prepared.where.push(
+    context.fragment(() => {
+      const body = DecodeFunction(
+        RecordedLambda(stage, FIRST_OPERAND),
+        context,
+        [prepared.source],
+      );
+      const predicate = RequireOperand(body, stage, FIRST_OPERAND);
+      return sql`(${Predicate(context.dialect, predicate).sql})`;
+    }),
+  );
   return prepared;
 };
 

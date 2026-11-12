@@ -63,6 +63,25 @@ export interface InPlaceSyntax {
    * keeps one of them; SQL NULL stays SQL NULL.
    */
   dedupText(json: Sql): Sql;
+  /**
+   * A number the engine can key a lookup by, which two equal texts share, SQL NULL included. Two
+   * different texts may share it too.
+   */
+  hash(text: Sql): Sql;
+  /**
+   * One row holding the {@link InPlaceSyntax.hash} of a text, as a FROM item without its alias,
+   * and the column that holds the hash at that alias. The engine builds a key on a derived table
+   * for an equality with a column of a table joined before it, and not with an outer column.
+   */
+  hashRow(text: Sql, alias: string): HashRow;
+  /** A select the engine materializes once, rather than merging it into the query that reads it. */
+  materialized(select: Sql): Sql;
+}
+
+/** What {@link InPlaceSyntax.hashRow} answers. */
+export interface HashRow {
+  readonly from: Sql;
+  readonly hash: Sql;
 }
 
 /** One member of a document assembled from columns. `container` marks a JSON-backed member. */
