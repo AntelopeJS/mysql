@@ -205,6 +205,31 @@ const CLASS_ESCAPE_CASES: readonly PatternCase[] = [
   [BYTE_ORDER_MARK, "^[\\s]$"],
 ];
 
+/** A hyphen beside a class escape inside a class, which JavaScript reads as a hyphen and never as a range. */
+const HYPHEN_CASES: readonly PatternCase[] = [
+  ["a", "^[\\w-.]$"],
+  [".", "^[\\w-.]$"],
+  ["-", "^[\\w-.]$"],
+  ["-", "^[\\w-]$"],
+  ["-", "^[-\\w]$"],
+  [" ", "^[\\s-.]$"],
+  ["-", "^[\\s-.]$"],
+  ["/", "^[\\d-/]$"],
+  ["a", "^[\\W-.]$"],
+  ["-", "^[\\W-.]$"],
+  ["a", "^[\\w-\\d]$"],
+  ["-", "^[\\w-\\d]$"],
+  ["`", "^[\\w-a]$"],
+  ["-", "^[\\w-a]$"],
+  ["@", "^[.-\\w]$"],
+  ["-", "^[.-\\w]$"],
+  ["Q", "^[a-c\\d-z]$"],
+  ["-", "^[a-c\\d-z]$"],
+  ["a@b-c.com", "^[\\w-.]+@([\\w-]+\\.)+[\\w-]{2,4}$"],
+  ["a.b+c@d.co", "^[\\w.+-]+@[\\w-]+\\.[\\w.-]+$"],
+  ["my-host.example", "^[\\w-]+(\\.[\\w-]+)*$"],
+];
+
 /** A text as its code points, which names an invisible or a look-alike character unambiguously. */
 function CodePoints(text: string): string {
   return Array.from(
@@ -214,15 +239,15 @@ function CodePoints(text: string): string {
   ).join(" ");
 }
 
-/** The cases whose literal pattern the module matches otherwise than JavaScript's `RegExp` does. */
+/** The cases whose literal pattern the module matches otherwise than JavaScript's `RegExp` does, or refuses. */
 async function Mismatches(cases: readonly PatternCase[]): Promise<string[]> {
   const mismatches: string[] = [];
   for (const [text, pattern] of cases) {
     const matched = await First(
       table.rows().map(() => ValueProxy.constant(text).match(pattern)),
-    );
+    ).catch((err: unknown) => String(err));
     if (matched !== new RegExp(pattern).test(text)) {
-      mismatches.push(`${CodePoints(text)} against ${pattern}`);
+      mismatches.push(`${CodePoints(text)} against ${pattern}: ${matched}`);
     }
   }
   return mismatches;
@@ -251,6 +276,10 @@ describe("The string stages", () => {
 
   it("match a JavaScript class escape the way JavaScript does, with ASCII digits and word characters and its own whitespace", async () => {
     assert.deepEqual(await Mismatches(CLASS_ESCAPE_CASES), []);
+  });
+
+  it("match a hyphen beside a class escape in a class as a hyphen, as JavaScript does", async () => {
+    assert.deepEqual(await Mismatches(HYPHEN_CASES), []);
   });
 
   it("match against a pattern the statement computes, bound as it is", async () => {
