@@ -117,16 +117,24 @@ function Bootstrap(tables: ChangeLogTables, logId: string): readonly Sql[] {
 }
 
 /**
+ * The deepest a JSON-backed column's value is boxed in its image: the image's object and the box
+ * take two of the 100 levels MySQL stores, and `JSON_DEPTH` counts a level for the scalar inside the
+ * deepest container, so a value of depth 98 nests no more than 98 containers.
+ */
+const BOXED_MAX_DEPTH = 98;
+
+/**
  * A column as an image holds it. A scalar goes as the JSON value the compiler's own reading turns
- * back into it. A JSON-backed column goes as its JSON text, a string, so a column holding SQL NULL
- * logs `null` and one holding a JSON null logs `"null"`. Logged as a value, it would nest one level
- * deeper in the image than in its column, and MySQL refuses to store a document past its depth
- * limit, so a value the column holds would fail the write that logs it.
+ * back into it. A JSON-backed column is boxed in a one-element array, so a column holding SQL NULL
+ * logs `null` and one holding a JSON null logs `[null]`. A value too deep for the box and the image
+ * around it goes as its JSON text, a string, since MySQL refuses to store a document past its depth
+ * limit and the write that logs it would fail. Only such a value goes as text, because a feed parses
+ * text back, and MySQL 8.4's parser reads some doubles of 17 significant digits as a neighbour.
  */
 function Imaged(row: Sql, column: CapturedColumn): Sql {
   const value = sql`${row}.${ident(column.name)}`;
   if (IsJsonBacked(column.type)) {
-    return json.text(value);
+    return sql`IF(JSON_DEPTH(${value}) <= ${int(BOXED_MAX_DEPTH)}, JSON_ARRAY(${value}), ${json.of(json.text(value), "text")})`;
   }
   return json.of(value, column.type.kind);
 }
@@ -239,7 +247,7 @@ export const capture: CaptureSyntax = {
   unmarkMoves: sql`SET ${MOVING} = NULL`,
   loggedType: LoggedType,
   unbox: (member) =>
-    sql`(CASE WHEN ${json.is(member, ["string"])} THEN ${json.parse(sql`JSON_UNQUOTE(${member})`)} END)`,
+    sql`(CASE WHEN ${json.is(member, ["array"])} THEN JSON_EXTRACT(${member}, '$[0]') WHEN ${json.is(member, ["string"])} THEN ${json.parse(sql`JSON_UNQUOTE(${member})`)} END)`,
   lockClock: (tables, wait) =>
     sql`SELECT ${NEXT_SEQ} AS next_seq, ${EPOCH} AS epoch FROM ${ident(tables.clock)} WHERE ${ID} = ${CLOCK_ROW} FOR UPDATE${wait ? sql`` : sql` SKIP LOCKED`}`,
   unsequenced: (tables, limit) =>

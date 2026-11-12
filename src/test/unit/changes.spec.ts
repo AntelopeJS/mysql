@@ -99,11 +99,13 @@ describe("the change log's triggers", () => {
   const plan = Plan(ITEMS);
   const bodies = Bodies(plan);
 
-  it("logs a JSON-backed column as its text, which nests no deeper than the column and keeps SQL NULL apart from JSON null", () => {
+  it("boxes a JSON-backed column's value where the image has room for it, and logs its text only where it has not", () => {
     for (const column of ["meta", "_extra"]) {
-      expect(bodies.INSERT).to.contain(`CAST(NEW.\`${column}\` AS CHAR)`);
+      expect(bodies.INSERT).to.contain(
+        `IF(JSON_DEPTH(NEW.\`${column}\`) <= 98, JSON_ARRAY(NEW.\`${column}\`), CAST(JSON_QUOTE(CAST(NEW.\`${column}\` AS CHAR)) AS JSON))`,
+      );
     }
-    expect(bodies.INSERT).to.not.contain("CAST(NEW.`price` AS CHAR)");
+    expect(bodies.INSERT).to.not.contain("JSON_ARRAY(NEW.`price`)");
   });
 
   it("logs an update only when some column changed, comparing every column null-safely, unless the session moves values", () => {

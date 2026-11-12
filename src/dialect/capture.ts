@@ -63,8 +63,9 @@ export interface CaptureSyntax {
   bootstrap(tables: ChangeLogTables, logId: string): readonly Sql[];
   /**
    * The bodies of the three triggers that log a table's writes. An image is a JSON object of
-   * `columns`, a JSON-backed column boxed so its SQL NULL stays apart from a JSON null and the image
-   * nests no deeper than the column, and an update that leaves every column as it was logs nothing.
+   * `columns`, a JSON-backed column boxed so its SQL NULL stays apart from a JSON null, as a value
+   * where the image has room for it and as its text where the column nests to the depth limit, and
+   * an update that leaves every column as it was logs nothing.
    */
   triggers(
     tables: ChangeLogTables,

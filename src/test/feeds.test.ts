@@ -146,6 +146,21 @@ describe("a watched table holding JSON as deep as MySQL stores it", function () 
     expect(await rows.get("deep")).to.equal(undefined);
   });
 
+  it("logs a column of empty arrays nested to each depth around the image's limit", async () => {
+    const rows = deep.instance().table("stored");
+    await rows.insert({ _id: "hollow" });
+    const feed = await Opened(rows, "hollow-probe");
+    await feed.return?.();
+    const table = ident(PhysicalTable("feeds-depth", "stored"));
+    for (const levels of [IN_COLUMN - 2, IN_COLUMN - 1, IN_COLUMN]) {
+      const hollow = `${"[".repeat(levels)}${"]".repeat(levels)}`;
+      await Run(
+        sql`UPDATE ${table} SET tree = CAST(${param(hollow)} AS JSON) WHERE _instance = '' AND _id = 'hollow'`,
+      );
+    }
+    expect(await rows.get("hollow").delete()).to.equal(1);
+  });
+
   it("delivers the changes of a row as deep as a document holds", async () => {
     const rows = deep.instance().table("delivered");
     const stored = { deep: Nested(IN_EXTRA), tree: Nested(IN_DOCUMENT) };
