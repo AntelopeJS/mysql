@@ -225,10 +225,72 @@ const HYPHEN_CASES: readonly PatternCase[] = [
   ["-", "^[.-\\w]$"],
   ["Q", "^[a-c\\d-z]$"],
   ["-", "^[a-c\\d-z]$"],
+  ["b", "^[\\d-a-f]$"],
+  ["5", "^[\\s-0-9]+$"],
+  ["5", "^[\\s-.-9]$"],
+  ["b", "^[\\d-a-z]$"],
+  ["q", "^[\\d-a-z]$"],
+  ["a", "^[\\d-a-z]$"],
+  ["b", "^[\\s-a-c]$"],
+  ["#", "^[\\w-!-%]$"],
+  ["5", "^[\\w-!-%]$"],
+  ["b", "^[.-\\w-a-c]$"],
+  [".", "^[\\d--e]$"],
+  ["a", "^[\\w--0]$"],
+  [".", "^[--e]$"],
+  ["-", "^[---]$"],
   ["a@b-c.com", "^[\\w-.]+@([\\w-]+\\.)+[\\w-]{2,4}$"],
   ["a.b+c@d.co", "^[\\w.+-]+@[\\w-]+\\.[\\w.-]+$"],
   ["my-host.example", "^[\\w-]+(\\.[\\w-]+)*$"],
 ];
+
+/** The members a class of the fuzz below is built from: class escapes, hyphens and range ends. */
+const CLASS_PARTS = ["\\d", "\\w", "\\s", "\\D", "-", ".", "a", "e", "0"];
+
+/** Texts on every side of those members: digits, letters, a space, a hyphen, a dot and punctuation. */
+const CLASS_TEXTS = [
+  "-",
+  ".",
+  "/",
+  "0",
+  "5",
+  "a",
+  "b",
+  "e",
+  "f",
+  "_",
+  " ",
+  "#",
+];
+
+/** Whether JavaScript accepts a pattern, which it does not for a range whose ends are out of order. */
+function IsPattern(pattern: string): boolean {
+  try {
+    RegExp(pattern);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Every class of three members, and every fifth of four, that JavaScript accepts, against each text. */
+function ClassFuzzCases(): PatternCase[] {
+  const bodies = (length: number): string[] =>
+    length === 0
+      ? [""]
+      : bodies(length - 1).flatMap((body) =>
+          CLASS_PARTS.map((part) => body + part),
+        );
+  const patterns = [
+    ...bodies(3),
+    ...bodies(4).filter((_, index) => index % 5 === 0),
+  ]
+    .map((body) => `^[${body}]$`)
+    .filter(IsPattern);
+  return patterns.flatMap((pattern) =>
+    CLASS_TEXTS.map((text): PatternCase => [text, pattern]),
+  );
+}
 
 /** A text as its code points, which names an invisible or a look-alike character unambiguously. */
 function CodePoints(text: string): string {
@@ -239,16 +301,47 @@ function CodePoints(text: string): string {
   ).join(" ");
 }
 
+/** How many cases one statement matches at once. */
+const CASES_PER_STATEMENT = 200;
+
+/**
+ * What the module answers for each case, in one statement per batch. A batch the server refuses is
+ * matched again one case per statement, so a pattern it cannot read is named alone.
+ */
+async function Answers(batch: readonly PatternCase[]): Promise<unknown[]> {
+  const matches = () =>
+    batch.map(([text, pattern]) => ValueProxy.constant(text).match(pattern));
+  const together = await First(table.rows().map(matches)).catch(
+    () => undefined,
+  );
+  if (together) {
+    return together;
+  }
+  const alone: unknown[] = [];
+  for (const [text, pattern] of batch) {
+    alone.push(
+      await First(
+        table.rows().map(() => ValueProxy.constant(text).match(pattern)),
+      ).catch((err: unknown) => String(err)),
+    );
+  }
+  return alone;
+}
+
 /** The cases whose literal pattern the module matches otherwise than JavaScript's `RegExp` does, or refuses. */
 async function Mismatches(cases: readonly PatternCase[]): Promise<string[]> {
   const mismatches: string[] = [];
-  for (const [text, pattern] of cases) {
-    const matched = await First(
-      table.rows().map(() => ValueProxy.constant(text).match(pattern)),
-    ).catch((err: unknown) => String(err));
-    if (matched !== new RegExp(pattern).test(text)) {
-      mismatches.push(`${CodePoints(text)} against ${pattern}: ${matched}`);
-    }
+  for (let first = 0; first < cases.length; first += CASES_PER_STATEMENT) {
+    const batch = cases.slice(first, first + CASES_PER_STATEMENT);
+    const answers = await Answers(batch);
+    batch.forEach(([text, pattern], index) => {
+      const answer = answers[index];
+      if (answer !== new RegExp(pattern).test(text)) {
+        mismatches.push(
+          `${CodePoints(text)} against ${pattern}: ${String(answer)}`,
+        );
+      }
+    });
   }
   return mismatches;
 }
@@ -280,6 +373,10 @@ describe("The string stages", () => {
 
   it("match a hyphen beside a class escape in a class as a hyphen, as JavaScript does", async () => {
     assert.deepEqual(await Mismatches(HYPHEN_CASES), []);
+  });
+
+  it("match every class of class escapes, hyphens and range ends as JavaScript does", async () => {
+    assert.deepEqual(await Mismatches(ClassFuzzCases()), []);
   });
 
   it("match against a pattern the statement computes, bound as it is", async () => {
