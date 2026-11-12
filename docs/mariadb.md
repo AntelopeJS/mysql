@@ -81,4 +81,10 @@ MariaDB 11.8 answers `score = 5.5` on an `INT` column through an index on it wit
 
 ## Performance
 
-The nested-field benchmark in [`bench/RESULTS.md`](../bench/RESULTS.md) runs on MariaDB 11.8 and 12.3 beside MySQL and PostgreSQL. Its findings name each gap over 2x and its cause.
+The nested-field benchmark in [`bench/RESULTS.md`](../bench/RESULTS.md) runs on MariaDB 11.8 and 12.3 beside MySQL and PostgreSQL 18. A declared index serves every read it serves on MySQL, in 0.4 to 1.6 ms. Without an index, MariaDB is 2.6 to 136 times slower than PostgreSQL on 15 of the 26 queries, and [`bench/findings.md`](../bench/findings.md) gives the cause of each:
+
+- MariaDB stores JSON as text, so reading a path costs more the longer the document is. One read of a 430-byte document over 100,000 rows takes about 110 ms, against 16 ms on MySQL 8.4.
+- MariaDB has no hash join at its default `join_cache_level`. A join no index serves evaluates its condition once per pair of rows in the join buffer.
+- A sort over a value of no declared type reads the document once per term of MySQL's JSON order.
+
+Declare an index on a nested path that a filter, sort or join reads, and the read goes through its key column on both engines.
