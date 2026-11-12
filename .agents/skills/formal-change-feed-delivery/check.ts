@@ -343,7 +343,11 @@ async function main(): Promise<number> {
     } else if (counterexample === undefined) {
       changed ||= isFinding;
       if (isFinding) {
-        console.log(`HOLDS ${rule}`);
+        console.log(
+          cut === 0
+            ? `HOLDS ${rule}`
+            : `HOLDS ${rule} (unconfirmed: ${cut} scenarios were cut at ${options.orders} orders and may hide it; rerun with a larger --orders)`,
+        );
       } else {
         holding.push(rule);
       }

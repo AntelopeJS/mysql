@@ -154,7 +154,7 @@ Sync commit: `9417068`. At that commit the model and the covered files above des
 
 When a change touches a covered file:
 
-1. Run both bounds. A `BROKEN` rule is a bug in the change until the steps in "Read a result" show it is the model's. A `HOLDS KeepsRowOrder` means the change fixed the finding: remove it from `FINDINGS` and from Findings.
+1. Run both bounds. A `BROKEN` rule is a bug in the change until the steps in "Read a result" show it is the model's. A `HOLDS KeepsRowOrder` means no explored order breaks it any more. When the line says unconfirmed, scenarios were cut at the cap, and a change that only moves the counterexample past the cap reads the same: rerun with a larger `--orders`, 400,000 or more, until the finding returns or no scenario is cut. Only then remove it from `FINDINGS` and from Findings.
 2. If the change is intended and changes what a statement says or what a covered function does, update `statements.ts`, `steps.ts`, `server.ts`, `check.ts` or the copied text in `check.mjs` to match, and the coverage table above.
 3. Apply each row of "Confirm the check can fail" again, and update a row whose code moved.
 4. Move the sync commit forward only once you have confirmed that the model describes the code at the new commit.
