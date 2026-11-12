@@ -1,56 +1,60 @@
 ## Findings
 
-Causes were measured on the same seeded servers after the run: the module's captured statements timed by hand against variants (median of 5 after 1 warm-up). The variants are diagnostics, not module output.
+This run measures the module after four compiler changes; "before" is the run of 2026-11-11. Numbers marked _scratch_ time hand-written variants, which are diagnostics and not module output, on a 100,000-row table seeded by SQL on a MySQL container of its own: median of 7 after a warm-up.
 
-**Verdict.** Where MySQL's plan uses the declared index (`filter` by key chain, `orderBy("<index>")`, `lookup` by path), it answers in 0.3 to 0.8 ms, against 20 to 70 ms for postgres' best correct form. Wherever postgres uses an index, MySQL does too; postgres uses one only for `orderBy("<index>")`, where its answer is wrong. MySQL exceeds 2× on five shapes, each with a cause below. Two of them miss a declared index this module could use: the decorators' fallback and `joinInner`. Fixing the compiler is left to the lead.
+**Verdict.** Wherever a declared index can serve a question, MySQL now uses it, in every form the question takes: key chains, the decorators' localized read, `orderBy("<index>")`, `lookup` by path and `joinInner`. Each answers in 0.3 to 0.8 ms, against 20 to 80 ms for postgres' best correct form. Without an index, `joinInner` now hash joins like postgres, at 1.1× to 1.8× postgres instead of 23× to 41×. Every MySQL answer is now correct. MySQL still exceeds 2× on unindexed filters (2.2× to 3.7×), on the decorators' sort after `map` (2.3× to 2.4×) and on the unindexed `lookup` (9× to 12×). The causes are in sections 3, 4 and 6.
 
-### 1. The decorators' fallback defeats the key column (filter: 137 ms, declared index unused)
+### 1. The decorators' fallback reaches the key column (filter 137 → 0.33 ms)
 
-`unlockrequest` reads `fr` with `.default(en)`, which compiles to `COALESCE(NULLIF(<fr>, JSON null), <en>)`. `Compare` reaches a key column only through a plain path read (`PathReference`), so the comparison of a `default` names no key, and MySQL scans 100k rows (`rows_examined` 100000).
+`unlockrequest` reads `fr` with `.default(en)`, which compiles to `COALESCE(NULLIF(<fr>, JSON null), <en>)`. Before, the result of a `default` carried no key column, so its comparison scanned 100,000 rows. Now a `default` keeps the key column of the read it falls back from, marked as holding the value only on the rows where it is set. Wherever `fr` is present the result is `fr`, and the key column is NULL on every other row. A comparison through such a key column adds the bound `(key = LEFT(v, w) OR key IS NULL)` before the exact test of the value. MySQL serves it as `ref_or_null` on `internalTitleFr`, reading 1 row: 0.33 ms on 8.4 and 0.34 ms on 9.7, against 137 ms before. This holds for every comparison operator and for chained defaults, and the answer is the one the value test alone gives.
 
-Proposed fix: when one operand of `=` is `x.default(y)` and `x` has a key reference, add the bound `(key(x) = LEFT(v, w) OR key(x) IS NULL)` in front of the current predicate, which stays as the exact recheck. A row whose `fr` is missing has a NULL key, so the bound keeps every row the fallback can match. Measured on `books_indexed`, 8.4 and 9.7 alike: 133.7 ms → **0.3 ms**, plan `ref_or_null` on `internalTitleFr`, 2 rows estimated, same answer.
+### 2. `joinInner` joins the table itself (24× to 41× → 1.1× to 1.8×, and 0.7 ms indexed)
 
-### 2. `joinInner` is a nested loop over the whole instance (24× to 41×)
+Before, every `joinInner` read 2,000,020 rows, 100,000 per review. The other side was a derived table that selected only the stored columns, so the condition could not name a key column. Its `_instance` equality on the primary key's prefix also made MySQL read the books by `ref` access, which it never hash joins.
 
-Every `joinInner` reads 2,000,020 rows (slow log), 100k per review, against 100,020 for postgres' hash join. The plan is `Index lookup on t2 using PRIMARY (_instance='bench')`, filtered once per review. The constant `_instance` equality on the primary key's prefix makes MySQL choose `ref` access, and `ref` access rules out its hash join. The right side is also a derived table that selects only the stored columns, so the condition cannot name a key column on `books_indexed`.
+Now a join against a whole table the adapter owns joins the table itself, with the instance as part of the join condition. Where the condition names a column that an index keys right after `_instance`, the instance stays an equality and the index looks each review's book up: `_id` for the primary key, or the key column of `titleFr` or `internalTitleFr`. Elsewhere the instance is spelled as a closed range over the same rows. MySQL then reads the instance once by a range scan and hash joins it, reading 100,020 rows as postgres does.
 
-Measured on 8.4, hand-written joins over the same 20 reviews:
+The proposed `IGNORE INDEX FOR JOIN (PRIMARY)` was measured against the range spelling and not used. It also stops the primary key from bounding the hash join's build side to the instance. Measured on scratch 8.4 with 20 reviews:
 
-| join                                                                     |      median | plan                                                 |
-| ------------------------------------------------------------------------ | ----------: | ---------------------------------------------------- |
-| module, `lookup:title:keys:bare`                                         |     1044 ms | nested loop, 100000 rows × 20                        |
-| optimizer hints `NO_INDEX(t2 PRIMARY) BNL(t2)` on the module's statement |     1048 ms | unchanged: `t2` sits inside the merged derived table |
-| direct join, plain equality                                              |      764 ms | nested loop, `ref` on PRIMARY                        |
-| same, `IGNORE INDEX (PRIMARY)` on books                                  | **41.7 ms** | inner hash join, one scan of 100000                  |
-| direct join on the key column of `books_indexed`                         |  **0.3 ms** | `ref` on `titleFr`                                   |
+| join, 100,000 books per instance                | one instance | five instances |
+| ----------------------------------------------- | -----------: | -------------: |
+| module before (derived table, `ref` on PRIMARY) |      1048 ms |        1051 ms |
+| `IGNORE INDEX FOR JOIN (PRIMARY)`               |      57.5 ms |       161.6 ms |
+| instance as a closed range (shipped)            |      66.3 ms |        68.0 ms |
+| `_id` join, before / after                      | 0.5 / 0.4 ms |   0.5 / 0.3 ms |
 
-Proposed fix: join a right side that is a bare table read directly, not as a derived table, so the predicate goes through `PathReference` and `Compare` and names the key column where a declared index has one. Where no key column serves the condition, mark the right table `IGNORE INDEX FOR JOIN (PRIMARY)` unless the condition reads `_id`, which lets MySQL hash join, as postgres does.
+The range must not reach a condition that an index serves. Through the key column, the equality form takes 0.4 to 0.6 ms and the range form 92 to 96 ms (scratch, 8.4 and 9.7).
 
-### 3. Unindexed scans: engine cost plus the predicate's shape (filter 2.5×, decorators filter 4.2×)
+In the run, the three unindexed joins fell from 1045, 1608 and 2745 ms to 62, 77 and 121 ms on 8.4, and the indexed ones from 1120 to 2810 ms to 0.72 ms. They are bound by one scan of the instance that evaluates the JSON read on every row, the cost of the matching unindexed filter (52, 67 and 109 ms) plus the hash join; section 3 covers it.
 
-On `books_bare`, 8.4 (9.7 within 1 ms):
+### 3. Unindexed scans: one JSON path, still read twice (heading filter 79 → 67 ms)
 
-| statement                                              |   median |
-| ------------------------------------------------------ | -------: |
-| scan floor, `COUNT(*) WHERE _instance`                 |  12.5 ms |
-| minimal `title->>'$.fr' = v`                           |  37.2 ms |
-| module, `filter:title:keys:bare`                       |  50.3 ms |
-| single path `_extra->>'$._internal.data.title.fr' = v` |  41.4 ms |
-| four chained `JSON_EXTRACT` calls, once                |  48.6 ms |
-| module, `filter:heading:keys:bare`                     |  78.1 ms |
-| module, `filter:heading:decorators:bare`               | 130.8 ms |
+A nested read such as `key("_internal").key("data").key("title").key("fr")` used to compile to four chained `JSON_EXTRACT` calls. Each call built the intermediate subdocument before the next one read it. Now a JSON read carries its document and path, so one more key extends the path, and the whole read is one `JSON_EXTRACT(_extra, '$."_internal"."data"."title"."fr"')`. The key columns' generation expression reads the same way, so the compiler and the index read one spelling.
 
-Postgres takes 18 ms, 28 ms and 32 ms for the three module filters, and the same with parallel query off (18.2, 28.1, 32.3 ms with `max_parallel_workers_per_gather = 0`). So the engine alone is about 2× (37 against 18 ms). The module's `CASE WHEN JSON_TYPE(<read>) … THEN CAST(JSON_UNQUOTE(<read>)) END` evaluates the read twice and adds 13 ms on `title.fr`. On `_internal.*`, the read is four chained `JSON_EXTRACT` calls, each copying the subdocument, and it is evaluated twice, which adds 37 ms over one path. Proposed fix: compile a nested read as one JSON path (`'$."_internal"."data"."title"."fr"'`) and evaluate it once, which measures 41 ms here, 1.5× postgres. A declared index removes the scan entirely (0.33 ms).
+The type-guarded string read, `CASE WHEN JSON_TYPE(<read>) … THEN CAST(JSON_UNQUOTE(<read>)) END`, still evaluates the read twice. MySQL has no function that reads a JSON string, and NULL for every other kind, from one evaluation. Dropping the type test would let `eq("7")` match a stored number 7, which the contract forbids. Measured on scratch 8.4:
 
-### 4. Sorts after `map`: postgres sorts in parallel (decorators form 2.5×)
+| `_internal.data.title.fr = v` on 100,000 rows                  |   median |
+| -------------------------------------------------------------- | -------: |
+| module before: four chained reads, twice                       |  75.3 ms |
+| module after: one path, twice                                  |  63.0 ms |
+| one path, once, without the type test (not the contract)       |  45.3 ms |
+| one path, once, typed through `REGEXP_SUBSTR` of its JSON text | 100.9 ms |
 
-Postgres plans these as `Gather Merge` over three processes. With parallel query off, it takes 394 ms for `title.fr` (MySQL 204 ms) and 137 ms for the decorators' read (MySQL 139 ms). The gap is postgres' parallel query, which MySQL does not have for a sort. An index cannot serve an `orderBy` after `map` on either server.
+In the run, the heading filter fell from 79.2 to 67.2 ms (8.4) and from 80.4 to 68.3 ms (9.7), 2.2× postgres' 30.1 ms. `title.fr`, a one-key path, stays at 52 ms; one untyped read of it takes 41.9 ms (scratch), against postgres' 20 ms.
+
+The decorators' unindexed filter takes 109 ms, 3.6× postgres. Its string read evaluates the whole fallback twice. On scratch 8.4, one evaluation of `COALESCE(NULLIF(fr, null), en)` takes 60.7 ms and the module's read 106 ms.
+
+An upgrade runs no DDL on existing key columns. A key column's signature names what it holds (read, width, source and path), not how its expression is spelled, so convergence keeps a column generated with the chained read, which holds the same value on every row. `src/test/key-upgrade.test.ts` checks this on both versions, including documents whose path runs through an array, a null, a scalar or a missing key. Columns created after the upgrade use the one-path expression.
+
+### 4. Sorts after `map`: postgres sorts in parallel (decorators form 2.3×)
+
+Postgres plans these as `Gather Merge` over three processes. With parallel query off it took 394 ms for `title.fr` (MySQL 204 ms) and 137 ms for the decorators' read (MySQL then 139 ms, now 129 ms). MySQL has no parallel sort, and no index can serve an `orderBy` after `map` on either server.
 
 ### 5. Wrong answers
 
-- `orderBy("title.fr")` on a table that declares no index sorts by the literal top-level key `title.fr` on both servers: MySQL emits `ORDER BY JSON_EXTRACT(_extra, '$."title.fr"')` and postgres `_extra -> 'title.fr'`. Every row ties, so the page is any 20 rows the sort leaves first (postgres `book-000001`…, MySQL `book-099965`…). MySQL reads the same dotted name as a nested path when an index declares it, and in `lookup`'s other key. Proposed fix: resolve an undeclared dotted name in `IndexColumns` the way `OtherKey` does.
-- Postgres answers every `path` form wrong: its indexes, `orderBy` and `lookup` read a dotted name as a literal `_extra` key (`CREATE INDEX … ((_extra -> 'title.fr'))`), so its `lookup` finds no book. This is the documented difference; the ratios use postgres' correct forms.
+- `orderBy("title.fr")` on a table that declares no index used to sort by the literal top-level key `title.fr`, so every row tied. MySQL now reads an undeclared dotted name as a nested path, the rule index fields and `lookup`'s other key already used: an exact declared name first, otherwise a path below its first segment. It sorts the 100,000 books correctly in 114 ms (8.4), and `orderBy("_internal.data.title.fr")` in 106 ms. `getAll`, `between` and `group` take names through the same function and follow the same rule.
+- Postgres still answers every `path` form wrong. Its indexes, `orderBy` and `lookup` read a dotted name as a literal `_extra` key (`CREATE INDEX … ((_extra -> 'title.fr'))`), so its `lookup` finds no book. This is the documented difference, and the ratios use postgres' correct forms.
 
-### 6. Unindexed `lookup` (12×)
+### 6. Unindexed `lookup` (9× to 12×)
 
-Without an index, MySQL's `lookup` is a correlated `LIMIT 1` subquery per review that scans until it finds the book: 478 ms server time for 20 reviews, about half a 50 ms scan each. The slow log's `rows_examined` (40) leaves out rows read inside correlated subqueries. Postgres' only correct answer is the `joinInner` hash join (40 ms). With the declared index the lookup takes 0.68 ms. A hash-joinable `lookup` (first match per review) would close the gap; not measured.
+Without an index, MySQL's `lookup` is a correlated `LIMIT 1` subquery per review that scans until it finds the book. That costs 489 ms for 20 reviews by `title.fr`, about half a scan each, and 634 ms by the `_internal` path (756 before). The slow log's `rows_examined` (40) leaves out rows read inside correlated subqueries. Postgres' only correct answer is the `joinInner` hash join (41 ms). With the declared index the lookup takes 0.65 to 0.68 ms. A `lookup` that hash joins and keeps the first match per review would close the gap; not measured.

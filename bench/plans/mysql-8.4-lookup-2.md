@@ -5,25 +5,25 @@ The statements the module sent, from the server's own log, and their plans. Back
 <details><summary><code>lookup:heading:path:indexed</code>: declared index internalTitleFr</summary>
 
 ```sql
-SELECT JSON_SET(JSON_MERGE_PRESERVE(JSON_MERGE_PATCH(JSON_OBJECT(), JSON_OBJECT('_id', CAST(JSON_QUOTE(`t0`.`_id`) AS JSON), '_instance', CAST(JSON_QUOTE(NULLIF(`t0`.`_instance`, '')) AS JSON), 'rating', CAST(`t0`.`rating` AS JSON), 'bookTitle', CAST(JSON_QUOTE(`t0`.`bookTitle`) AS JSON), 'bookHeading', CAST(JSON_QUOTE(`t0`.`bookHeading`) AS JSON))), JSON_REMOVE(COALESCE(`t0`.`_extra`, JSON_OBJECT()), '$."_id"', '$."_instance"', '$."rating"', '$."bookTitle"', '$."bookHeading"')), '$."bookHeading"', `t2`.`value`) AS `value` FROM `nested-bench__reviews` AS `t0` LEFT JOIN LATERAL (SELECT JSON_MERGE_PRESERVE(JSON_MERGE_PATCH(JSON_OBJECT(), JSON_OBJECT('_id', CAST(JSON_QUOTE(`t1`.`_id`) AS JSON), '_instance', CAST(JSON_QUOTE(NULLIF(`t1`.`_instance`, '')) AS JSON), 'category', CAST(JSON_QUOTE(`t1`.`category`) AS JSON))), IF(`t1`.`title` IS NULL, JSON_OBJECT(), JSON_OBJECT('title', `t1`.`title`)), JSON_REMOVE(COALESCE(`t1`.`_extra`, JSON_OBJECT()), '$."_id"', '$."_instance"', '$."category"', '$."title"')) AS `value` FROM `nested-bench__books_indexed` AS `t1` WHERE (`t1`.`_instance` = 'bench') AND (`t1`.`__k__internal_data_title_fr_cca329fe` = LEFT(`t0`.`bookHeading`, 640) AND (CASE WHEN (JSON_TYPE(JSON_EXTRACT(JSON_EXTRACT(JSON_EXTRACT(JSON_EXTRACT(`t1`.`_extra`, '$."_internal"'), '$."data"'), '$."title"'), '$."fr"')) IN ('STRING' COLLATE utf8mb4_bin)) THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(JSON_EXTRACT(JSON_EXTRACT(JSON_EXTRACT(`t1`.`_extra`, '$."_internal"'), '$."data"'), '$."title"' …(1627 chars)
+SELECT JSON_SET(JSON_MERGE_PRESERVE(JSON_MERGE_PATCH(JSON_OBJECT(), JSON_OBJECT('_id', CAST(JSON_QUOTE(`t0`.`_id`) AS JSON), '_instance', CAST(JSON_QUOTE(NULLIF(`t0`.`_instance`, '')) AS JSON), 'rating', CAST(`t0`.`rating` AS JSON), 'bookTitle', CAST(JSON_QUOTE(`t0`.`bookTitle`) AS JSON), 'bookHeading', CAST(JSON_QUOTE(`t0`.`bookHeading`) AS JSON))), JSON_REMOVE(COALESCE(`t0`.`_extra`, JSON_OBJECT()), '$."_id"', '$."_instance"', '$."rating"', '$."bookTitle"', '$."bookHeading"')), '$."bookHeading"', `t2`.`value`) AS `value` FROM `nested-bench__reviews` AS `t0` LEFT JOIN LATERAL (SELECT JSON_MERGE_PRESERVE(JSON_MERGE_PATCH(JSON_OBJECT(), JSON_OBJECT('_id', CAST(JSON_QUOTE(`t1`.`_id`) AS JSON), '_instance', CAST(JSON_QUOTE(NULLIF(`t1`.`_instance`, '')) AS JSON), 'category', CAST(JSON_QUOTE(`t1`.`category`) AS JSON))), IF(`t1`.`title` IS NULL, JSON_OBJECT(), JSON_OBJECT('title', `t1`.`title`)), JSON_REMOVE(COALESCE(`t1`.`_extra`, JSON_OBJECT()), '$."_id"', '$."_instance"', '$."category"', '$."title"')) AS `value` FROM `nested-bench__books_indexed` AS `t1` WHERE (`t1`.`_instance` = 'bench') AND (`t1`.`__k__internal_data_title_fr_cca329fe` = LEFT(`t0`.`bookHeading`, 640) AND (CASE WHEN (JSON_TYPE(JSON_EXTRACT(`t1`.`_extra`, '$."_internal"."data"."title"."fr"')) IN ('STRING' COLLATE utf8mb4_bin)) THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(`t1`.`_extra`, '$."_internal"."data"."title"."fr"')) AS CHAR) END) = `t0`.`bookHeading`) LIMIT 1) AS `t2` ON TRUE WHERE (`t0`.`_instance` = 'bench') LIMI …(1513 chars)
 ```
 
 ```text
 EXPLAIN FORMAT=TRADITIONAL
 id | select_type | table | type | possible_keys | key | key_len | rows | filtered | Extra
-1 | PRIMARY | t0 | ref | PRIMARY | PRIMARY | 514 | 48523 | 100 | Rematerialize (<derived2>)
+1 | PRIMARY | t0 | ref | PRIMARY | PRIMARY | 514 | 49775 | 100 | Rematerialize (<derived2>)
 1 | PRIMARY | <derived2> | ALL | NULL | NULL | NULL | 2 | 100 | Using where
 2 | DEPENDENT DERIVED | t1 | ref | PRIMARY,titleFr,internalTitleFr | internalTitleFr | 3077 | 1 | 100 | Using where
 
 EXPLAIN ANALYZE
--> Limit: 20 row(s)  (cost=137092 rows=20) (actual time=0.0403..0.269 rows=20 loops=1)
-    -> Nested loop left join  (cost=137092 rows=97046) (actual time=0.04..0.268 rows=20 loops=1)
-        -> Invalidate materialized tables (row from t0)  (cost=4867 rows=48523) (actual time=0.00634..0.0162 rows=20 loops=1)
-            -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4867 rows=48523) (actual time=0.00619..0.0152 rows=20 loops=1)
-        -> Table scan on t2  (cost=2.53..2.53 rows=1) (actual time=0.0123..0.0124 rows=1 loops=20)
-            -> Materialize (invalidate on row from t0)  (cost=0.55..0.55 rows=2) (actual time=0.0121..0.0121 rows=1 loops=20)
-                -> Limit: 1 row(s)  (cost=0.35 rows=1) (actual time=0.00778..0.00781 rows=1 loops=20)
-                    -> Filter: ((t1.__k__internal_data_title_fr_cca329fe = left(t0.bookHeading,640)) and ((case when (json_type(json_extract(json_extract(json_e…
+-> Limit: 20 row(s)  (cost=140630 rows=20) (actual time=0.035..0.248 rows=20 loops=1)
+    -> Nested loop left join  (cost=140630 rows=99550) (actual time=0.0348..0.247 rows=20 loops=1)
+        -> Invalidate materialized tables (row from t0)  (cost=4992 rows=49775) (actual time=0.0046..0.0143 rows=20 loops=1)
+            -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4992 rows=49775) (actual time=0.00446..0.0134 rows=20 loops=1)
+        -> Table scan on t2  (cost=2.53..2.53 rows=1) (actual time=0.0113..0.0114 rows=1 loops=20)
+            -> Materialize (invalidate on row from t0)  (cost=0.56..0.56 rows=2) (actual time=0.0112..0.0112 rows=1 loops=20)
+                -> Limit: 1 row(s)  (cost=0.36 rows=1) (actual time=0.0071..0.00712 rows=1 loops=20)
+                    -> Filter: ((t1.__k__internal_data_title_fr_cca329fe = left(t0.bookHeading,640)) and ((case when (json_type(json_extract(t1._extra,'$."_inte…
                         -> Index lookup on t1 using internalTitleFr (_instance='bench', __k__internal_data_title_fr_cca329fe=left(t0.bookHeading,640))  (cost=0.…
 
 ```
@@ -32,49 +32,51 @@ EXPLAIN ANALYZE
 <details><summary><code>lookup:heading:keys:bare</code>: declared index not used</summary>
 
 ```sql
-SELECT JSON_OBJECT('review', JSON_MERGE_PRESERVE(JSON_MERGE_PATCH(JSON_OBJECT(), JSON_OBJECT('_id', CAST(JSON_QUOTE(`t1`.`_id`) AS JSON), '_instance', CAST(JSON_QUOTE(NULLIF(`t1`.`_instance`, '')) AS JSON), 'rating', CAST(`t1`.`rating` AS JSON), 'bookTitle', CAST(JSON_QUOTE(`t1`.`bookTitle`) AS JSON), 'bookHeading', CAST(JSON_QUOTE(`t1`.`bookHeading`) AS JSON))), JSON_REMOVE(COALESCE(`t1`.`_extra`, JSON_OBJECT()), '$."_id"', '$."_instance"', '$."rating"', '$."bookTitle"', '$."bookHeading"')), 'book', JSON_MERGE_PRESERVE(JSON_MERGE_PATCH(JSON_OBJECT(), JSON_OBJECT('_id', CAST(JSON_QUOTE(`t3`.`_id`) AS JSON), '_instance', CAST(JSON_QUOTE(NULLIF(`t3`.`_instance`, '')) AS JSON), 'category', CAST(JSON_QUOTE(`t3`.`category`) AS JSON))), IF(`t3`.`title` IS NULL, JSON_OBJECT(), JSON_OBJECT('title', `t3`.`title`)), JSON_REMOVE(COALESCE(`t3`.`_extra`, JSON_OBJECT()), '$."_id"', '$."_instance"', '$."category"', '$."title"'))) AS `value` FROM (SELECT `t0`.`_id`, `t0`.`_instance`, `t0`.`rating`, `t0`.`bookTitle`, `t0`.`bookHeading`, `t0`.`_extra` FROM `nested-bench__reviews` AS `t0` WHERE (`t0`.`_instance` = 'bench') LIMIT 20 OFFSET 0) AS `t1` JOIN (SELECT `t2`.`_id`, `t2`.`_instance`, `t2`.`category`, `t2`.`title`, `t2`.`_extra` FROM `nested-bench__books_bare` AS `t2` WHERE (`t2`.`_instance` = 'bench')) AS `t3` ON (((CASE WHEN (JSON_TYPE(JSON_EXTRACT(JSON_EXTRACT(JSON_EXTRACT(JSON_EXTRACT(`t3`.`_extra`, '$."_internal"'), '$."data"'), '$."title"'), '$."fr"')) IN ('STRING' COLLATE utf8mb4_ …(1688 chars)
+SELECT JSON_OBJECT('review', JSON_MERGE_PRESERVE(JSON_MERGE_PATCH(JSON_OBJECT(), JSON_OBJECT('_id', CAST(JSON_QUOTE(`t1`.`_id`) AS JSON), '_instance', CAST(JSON_QUOTE(NULLIF(`t1`.`_instance`, '')) AS JSON), 'rating', CAST(`t1`.`rating` AS JSON), 'bookTitle', CAST(JSON_QUOTE(`t1`.`bookTitle`) AS JSON), 'bookHeading', CAST(JSON_QUOTE(`t1`.`bookHeading`) AS JSON))), JSON_REMOVE(COALESCE(`t1`.`_extra`, JSON_OBJECT()), '$."_id"', '$."_instance"', '$."rating"', '$."bookTitle"', '$."bookHeading"')), 'book', JSON_MERGE_PRESERVE(JSON_MERGE_PATCH(JSON_OBJECT(), JSON_OBJECT('_id', CAST(JSON_QUOTE(`t2`.`_id`) AS JSON), '_instance', CAST(JSON_QUOTE(NULLIF(`t2`.`_instance`, '')) AS JSON), 'category', CAST(JSON_QUOTE(`t2`.`category`) AS JSON))), IF(`t2`.`title` IS NULL, JSON_OBJECT(), JSON_OBJECT('title', `t2`.`title`)), JSON_REMOVE(COALESCE(`t2`.`_extra`, JSON_OBJECT()), '$."_id"', '$."_instance"', '$."category"', '$."title"'))) AS `value` FROM (SELECT `t0`.`_id`, `t0`.`_instance`, `t0`.`rating`, `t0`.`bookTitle`, `t0`.`bookHeading`, `t0`.`_extra` FROM `nested-bench__reviews` AS `t0` WHERE (`t0`.`_instance` = 'bench') LIMIT 20 OFFSET 0) AS `t1` JOIN `nested-bench__books_bare` AS `t2` ON ((`t2`.`_instance` >= 'bench' AND `t2`.`_instance` <= 'bench') AND (((CASE WHEN (JSON_TYPE(JSON_EXTRACT(`t2`.`_extra`, '$."_internal"."data"."title"."fr"')) IN ('STRING' COLLATE utf8mb4_bin)) THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(`t2`.`_extra`, '$."_internal"."data"."title"."fr"')) AS CHAR) END) = `t1`.`bookH …(1510 chars)
 ```
 
 ```text
 EXPLAIN FORMAT=TRADITIONAL
 id | select_type | table | type | possible_keys | key | key_len | rows | filtered | Extra
 1 | PRIMARY | <derived2> | ALL | NULL | NULL | NULL | 20 | 100 | NULL
-1 | PRIMARY | t2 | ref | PRIMARY | PRIMARY | 514 | 48165 | 100 | Using where
-2 | DERIVED | t0 | ref | PRIMARY | PRIMARY | 514 | 48523 | 100 | NULL
+1 | PRIMARY | t2 | range | PRIMARY | PRIMARY | 514 | 48165 | 100 | Using where; Using join buffer (hash join)
+2 | DERIVED | t0 | ref | PRIMARY | PRIMARY | 514 | 49775 | 100 | NULL
 
 EXPLAIN ANALYZE
--> Nested loop inner join  (cost=101400 rows=963300) (actual time=0.0304..2003 rows=20 loops=1)
-    -> Table scan on t1  (cost=4869..4871 rows=20) (actual time=0.0219..0.0708 rows=20 loops=1)
-        -> Materialize  (cost=4869..4869 rows=20) (actual time=0.0213..0.0213 rows=20 loops=1)
-            -> Limit: 20 row(s)  (cost=4867 rows=20) (actual time=0.00366..0.0107 rows=20 loops=1)
-                -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4867 rows=48523) (actual time=0.00348..0.00962 rows=20 loops=1)
-    -> Filter: ((case when (json_type(json_extract(json_extract(json_extract(json_extract(t2._extra,'$."_internal"'),'$."data"'),'$."title"'),'$."fr"')) = <cach…
-        -> Index lookup on t2 using PRIMARY (_instance='bench')  (cost=251 rows=48165) (actual time=0.00917..36.1 rows=100000 loops=20)
+-> Filter: ((case when (json_type(json_extract(t2._extra,'$."_internal"."data"."title"."fr"')) = <cache>(('STRING' collate utf8mb4_bin))) then cast(json_unquote…
+    -> Inner hash join (<hash>((case when (json_type(json_extract(t2._extra,'$."_internal"."data"."title"."fr"')) = <cache>(('STRING' collate utf8mb4_bin))) the…
+        -> Filter: ((t2._instance >= 'bench') and (t2._instance <= 'bench'))  (cost=5067 rows=48165) (actual time=0.00441..41.9 rows=100000 loops=1)
+            -> Index range scan on t2 using PRIMARY over (_instance = 'bench')  (cost=5067 rows=48165) (actual time=0.00364..34.7 rows=100000 loops=1)
+        -> Hash
+            -> Table scan on t1  (cost=4994..4997 rows=20) (actual time=0.0215..0.0232 rows=20 loops=1)
+                -> Materialize  (cost=4994..4994 rows=20) (actual time=0.0208..0.0208 rows=20 loops=1)
+                    -> Limit: 20 row(s)  (cost=4992 rows=20) (actual time=0.00393..0.0107 rows=20 loops=1)
+                        -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4992 rows=49775) (actual time=0.00373..0.00969 rows=20 loops=1)
 
 ```
 
 </details>
-<details><summary><code>lookup:heading:keys:indexed</code>: declared index not used</summary>
+<details><summary><code>lookup:heading:keys:indexed</code>: declared index internalTitleFr</summary>
 
 ```sql
-SELECT JSON_OBJECT('review', JSON_MERGE_PRESERVE(JSON_MERGE_PATCH(JSON_OBJECT(), JSON_OBJECT('_id', CAST(JSON_QUOTE(`t1`.`_id`) AS JSON), '_instance', CAST(JSON_QUOTE(NULLIF(`t1`.`_instance`, '')) AS JSON), 'rating', CAST(`t1`.`rating` AS JSON), 'bookTitle', CAST(JSON_QUOTE(`t1`.`bookTitle`) AS JSON), 'bookHeading', CAST(JSON_QUOTE(`t1`.`bookHeading`) AS JSON))), JSON_REMOVE(COALESCE(`t1`.`_extra`, JSON_OBJECT()), '$."_id"', '$."_instance"', '$."rating"', '$."bookTitle"', '$."bookHeading"')), 'book', JSON_MERGE_PRESERVE(JSON_MERGE_PATCH(JSON_OBJECT(), JSON_OBJECT('_id', CAST(JSON_QUOTE(`t3`.`_id`) AS JSON), '_instance', CAST(JSON_QUOTE(NULLIF(`t3`.`_instance`, '')) AS JSON), 'category', CAST(JSON_QUOTE(`t3`.`category`) AS JSON))), IF(`t3`.`title` IS NULL, JSON_OBJECT(), JSON_OBJECT('title', `t3`.`title`)), JSON_REMOVE(COALESCE(`t3`.`_extra`, JSON_OBJECT()), '$."_id"', '$."_instance"', '$."category"', '$."title"'))) AS `value` FROM (SELECT `t0`.`_id`, `t0`.`_instance`, `t0`.`rating`, `t0`.`bookTitle`, `t0`.`bookHeading`, `t0`.`_extra` FROM `nested-bench__reviews` AS `t0` WHERE (`t0`.`_instance` = 'bench') LIMIT 20 OFFSET 0) AS `t1` JOIN (SELECT `t2`.`_id`, `t2`.`_instance`, `t2`.`category`, `t2`.`title`, `t2`.`_extra` FROM `nested-bench__books_indexed` AS `t2` WHERE (`t2`.`_instance` = 'bench')) AS `t3` ON (((CASE WHEN (JSON_TYPE(JSON_EXTRACT(JSON_EXTRACT(JSON_EXTRACT(JSON_EXTRACT(`t3`.`_extra`, '$."_internal"'), '$."data"'), '$."title"'), '$."fr"')) IN ('STRING' COLLATE utf8m …(1691 chars)
+SELECT JSON_OBJECT('review', JSON_MERGE_PRESERVE(JSON_MERGE_PATCH(JSON_OBJECT(), JSON_OBJECT('_id', CAST(JSON_QUOTE(`t1`.`_id`) AS JSON), '_instance', CAST(JSON_QUOTE(NULLIF(`t1`.`_instance`, '')) AS JSON), 'rating', CAST(`t1`.`rating` AS JSON), 'bookTitle', CAST(JSON_QUOTE(`t1`.`bookTitle`) AS JSON), 'bookHeading', CAST(JSON_QUOTE(`t1`.`bookHeading`) AS JSON))), JSON_REMOVE(COALESCE(`t1`.`_extra`, JSON_OBJECT()), '$."_id"', '$."_instance"', '$."rating"', '$."bookTitle"', '$."bookHeading"')), 'book', JSON_MERGE_PRESERVE(JSON_MERGE_PATCH(JSON_OBJECT(), JSON_OBJECT('_id', CAST(JSON_QUOTE(`t2`.`_id`) AS JSON), '_instance', CAST(JSON_QUOTE(NULLIF(`t2`.`_instance`, '')) AS JSON), 'category', CAST(JSON_QUOTE(`t2`.`category`) AS JSON))), IF(`t2`.`title` IS NULL, JSON_OBJECT(), JSON_OBJECT('title', `t2`.`title`)), JSON_REMOVE(COALESCE(`t2`.`_extra`, JSON_OBJECT()), '$."_id"', '$."_instance"', '$."category"', '$."title"'))) AS `value` FROM (SELECT `t0`.`_id`, `t0`.`_instance`, `t0`.`rating`, `t0`.`bookTitle`, `t0`.`bookHeading`, `t0`.`_extra` FROM `nested-bench__reviews` AS `t0` WHERE (`t0`.`_instance` = 'bench') LIMIT 20 OFFSET 0) AS `t1` JOIN `nested-bench__books_indexed` AS `t2` ON ((`t2`.`_instance` = 'bench') AND ((`t2`.`__k__internal_data_title_fr_cca329fe` = LEFT(`t1`.`bookHeading`, 640) AND (CASE WHEN (JSON_TYPE(JSON_EXTRACT(`t2`.`_extra`, '$."_internal"."data"."title"."fr"')) IN ('STRING' COLLATE utf8mb4_bin)) THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(`t2`.`_extra`, '$."_internal". …(1560 chars)
 ```
 
 ```text
 EXPLAIN FORMAT=TRADITIONAL
 id | select_type | table | type | possible_keys | key | key_len | rows | filtered | Extra
 1 | PRIMARY | <derived2> | ALL | NULL | NULL | NULL | 20 | 100 | NULL
-1 | PRIMARY | t2 | ref | PRIMARY,titleFr,internalTitleFr | PRIMARY | 514 | 48165 | 100 | Using where
-2 | DERIVED | t0 | ref | PRIMARY | PRIMARY | 514 | 48523 | 100 | NULL
+1 | PRIMARY | t2 | ref | PRIMARY,titleFr,internalTitleFr | internalTitleFr | 3077 | 1 | 100 | Using where
+2 | DERIVED | t0 | ref | PRIMARY | PRIMARY | 514 | 49775 | 100 | NULL
 
 EXPLAIN ANALYZE
--> Nested loop inner join  (cost=101400 rows=963300) (actual time=0.0716..2026 rows=20 loops=1)
-    -> Table scan on t1  (cost=4869..4871 rows=20) (actual time=0.0512..0.093 rows=20 loops=1)
-        -> Materialize  (cost=4869..4869 rows=20) (actual time=0.0499..0.0499 rows=20 loops=1)
-            -> Limit: 20 row(s)  (cost=4867 rows=20) (actual time=0.0125..0.0265 rows=20 loops=1)
-                -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4867 rows=48523) (actual time=0.0118..0.0248 rows=20 loops=1)
-    -> Filter: ((case when (json_type(json_extract(json_extract(json_extract(json_extract(t2._extra,'$."_internal"'),'$."data"'),'$."title"'),'$."fr"')) = <cach…
-        -> Index lookup on t2 using PRIMARY (_instance='bench')  (cost=251 rows=48165) (actual time=0.00882..38.6 rows=100000 loops=20)
+-> Nested loop inner join  (cost=5004 rows=20.6) (actual time=0.0349..0.168 rows=20 loops=1)
+    -> Table scan on t1  (cost=4994..4997 rows=20) (actual time=0.0218..0.0241 rows=20 loops=1)
+        -> Materialize  (cost=4994..4994 rows=20) (actual time=0.0212..0.0212 rows=20 loops=1)
+            -> Limit: 20 row(s)  (cost=4992 rows=20) (actual time=0.00407..0.0106 rows=20 loops=1)
+                -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4992 rows=49775) (actual time=0.00383..0.00954 rows=20 loops=1)
+    -> Filter: ((t2.__k__internal_data_title_fr_cca329fe = left(t1.bookHeading,640)) and ((case when (json_type(json_extract(t2._extra,'$."_internal"."data"."ti…
+        -> Index lookup on t2 using internalTitleFr (_instance='bench', __k__internal_data_title_fr_cca329fe=left(t1.bookHeading,640))  (cost=0.262 rows=1.03) (…
 
 ```
 
@@ -82,49 +84,51 @@ EXPLAIN ANALYZE
 <details><summary><code>lookup:heading:decorators:bare</code>: declared index not used</summary>
 
 ```sql
-SELECT JSON_OBJECT('review', JSON_MERGE_PRESERVE(JSON_MERGE_PATCH(JSON_OBJECT(), JSON_OBJECT('_id', CAST(JSON_QUOTE(`t1`.`_id`) AS JSON), '_instance', CAST(JSON_QUOTE(NULLIF(`t1`.`_instance`, '')) AS JSON), 'rating', CAST(`t1`.`rating` AS JSON), 'bookTitle', CAST(JSON_QUOTE(`t1`.`bookTitle`) AS JSON), 'bookHeading', CAST(JSON_QUOTE(`t1`.`bookHeading`) AS JSON))), JSON_REMOVE(COALESCE(`t1`.`_extra`, JSON_OBJECT()), '$."_id"', '$."_instance"', '$."rating"', '$."bookTitle"', '$."bookHeading"')), 'book', JSON_MERGE_PRESERVE(JSON_MERGE_PATCH(JSON_OBJECT(), JSON_OBJECT('_id', CAST(JSON_QUOTE(`t3`.`_id`) AS JSON), '_instance', CAST(JSON_QUOTE(NULLIF(`t3`.`_instance`, '')) AS JSON), 'category', CAST(JSON_QUOTE(`t3`.`category`) AS JSON))), IF(`t3`.`title` IS NULL, JSON_OBJECT(), JSON_OBJECT('title', `t3`.`title`)), JSON_REMOVE(COALESCE(`t3`.`_extra`, JSON_OBJECT()), '$."_id"', '$."_instance"', '$."category"', '$."title"'))) AS `value` FROM (SELECT `t0`.`_id`, `t0`.`_instance`, `t0`.`rating`, `t0`.`bookTitle`, `t0`.`bookHeading`, `t0`.`_extra` FROM `nested-bench__reviews` AS `t0` WHERE (`t0`.`_instance` = 'bench') LIMIT 20 OFFSET 0) AS `t1` JOIN (SELECT `t2`.`_id`, `t2`.`_instance`, `t2`.`category`, `t2`.`title`, `t2`.`_extra` FROM `nested-bench__books_bare` AS `t2` WHERE (`t2`.`_instance` = 'bench')) AS `t3` ON (((CASE WHEN (JSON_TYPE(COALESCE(NULLIF(JSON_EXTRACT(JSON_EXTRACT(JSON_EXTRACT(JSON_EXTRACT(`t3`.`_extra`, '$."_internal"'), '$."data"'), '$."title"'), '$."fr"'), CAST('null' A …(2014 chars)
+SELECT JSON_OBJECT('review', JSON_MERGE_PRESERVE(JSON_MERGE_PATCH(JSON_OBJECT(), JSON_OBJECT('_id', CAST(JSON_QUOTE(`t1`.`_id`) AS JSON), '_instance', CAST(JSON_QUOTE(NULLIF(`t1`.`_instance`, '')) AS JSON), 'rating', CAST(`t1`.`rating` AS JSON), 'bookTitle', CAST(JSON_QUOTE(`t1`.`bookTitle`) AS JSON), 'bookHeading', CAST(JSON_QUOTE(`t1`.`bookHeading`) AS JSON))), JSON_REMOVE(COALESCE(`t1`.`_extra`, JSON_OBJECT()), '$."_id"', '$."_instance"', '$."rating"', '$."bookTitle"', '$."bookHeading"')), 'book', JSON_MERGE_PRESERVE(JSON_MERGE_PATCH(JSON_OBJECT(), JSON_OBJECT('_id', CAST(JSON_QUOTE(`t2`.`_id`) AS JSON), '_instance', CAST(JSON_QUOTE(NULLIF(`t2`.`_instance`, '')) AS JSON), 'category', CAST(JSON_QUOTE(`t2`.`category`) AS JSON))), IF(`t2`.`title` IS NULL, JSON_OBJECT(), JSON_OBJECT('title', `t2`.`title`)), JSON_REMOVE(COALESCE(`t2`.`_extra`, JSON_OBJECT()), '$."_id"', '$."_instance"', '$."category"', '$."title"'))) AS `value` FROM (SELECT `t0`.`_id`, `t0`.`_instance`, `t0`.`rating`, `t0`.`bookTitle`, `t0`.`bookHeading`, `t0`.`_extra` FROM `nested-bench__reviews` AS `t0` WHERE (`t0`.`_instance` = 'bench') LIMIT 20 OFFSET 0) AS `t1` JOIN `nested-bench__books_bare` AS `t2` ON ((`t2`.`_instance` >= 'bench' AND `t2`.`_instance` <= 'bench') AND (((CASE WHEN (JSON_TYPE(COALESCE(NULLIF(JSON_EXTRACT(`t2`.`_extra`, '$."_internal"."data"."title"."fr"'), CAST('null' AS JSON)), JSON_EXTRACT(`t2`.`_extra`, '$."_internal"."data"."title"."en"'))) IN ('STRING' COLLATE utf8mb4_bin)) THEN CAST( …(1722 chars)
 ```
 
 ```text
 EXPLAIN FORMAT=TRADITIONAL
 id | select_type | table | type | possible_keys | key | key_len | rows | filtered | Extra
 1 | PRIMARY | <derived2> | ALL | NULL | NULL | NULL | 20 | 100 | NULL
-1 | PRIMARY | t2 | ref | PRIMARY | PRIMARY | 514 | 48165 | 100 | Using where
-2 | DERIVED | t0 | ref | PRIMARY | PRIMARY | 514 | 48523 | 100 | NULL
+1 | PRIMARY | t2 | range | PRIMARY | PRIMARY | 514 | 48165 | 100 | Using where; Using join buffer (hash join)
+2 | DERIVED | t0 | ref | PRIMARY | PRIMARY | 514 | 49775 | 100 | NULL
 
 EXPLAIN ANALYZE
--> Nested loop inner join  (cost=101400 rows=963300) (actual time=0.0509..2845 rows=20 loops=1)
-    -> Table scan on t1  (cost=4869..4871 rows=20) (actual time=0.0354..0.0736 rows=20 loops=1)
-        -> Materialize  (cost=4869..4869 rows=20) (actual time=0.0347..0.0347 rows=20 loops=1)
-            -> Limit: 20 row(s)  (cost=4867 rows=20) (actual time=0.00538..0.0217 rows=20 loops=1)
-                -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4867 rows=48523) (actual time=0.00502..0.0204 rows=20 loops=1)
-    -> Filter: ((case when (json_type(coalesce(nullif(json_extract(json_extract(json_extract(json_extract(t2._extra,'$."_internal"'),'$."data"'),'$."title"'),'$…
-        -> Index lookup on t2 using PRIMARY (_instance='bench')  (cost=251 rows=48165) (actual time=0.00717..31.7 rows=100000 loops=20)
+-> Filter: ((case when (json_type(coalesce(nullif(json_extract(t2._extra,'$."_internal"."data"."title"."fr"'),<cache>(cast('null' as json))),json_extract(t2._ex…
+    -> Inner hash join (<hash>((case when (json_type(coalesce(nullif(json_extract(t2._extra,'$."_internal"."data"."title"."fr"'),<cache>(cast('null' as json))),…
+        -> Filter: ((t2._instance >= 'bench') and (t2._instance <= 'bench'))  (cost=5067 rows=48165) (actual time=0.00719..42.5 rows=100000 loops=1)
+            -> Index range scan on t2 using PRIMARY over (_instance = 'bench')  (cost=5067 rows=48165) (actual time=0.00659..35.2 rows=100000 loops=1)
+        -> Hash
+            -> Table scan on t1  (cost=4994..4997 rows=20) (actual time=0.0198..0.0215 rows=20 loops=1)
+                -> Materialize  (cost=4994..4994 rows=20) (actual time=0.0192..0.0192 rows=20 loops=1)
+                    -> Limit: 20 row(s)  (cost=4992 rows=20) (actual time=0.00342..0.0101 rows=20 loops=1)
+                        -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4992 rows=49775) (actual time=0.00323..0.00911 rows=20 loops=1)
 
 ```
 
 </details>
-<details><summary><code>lookup:heading:decorators:indexed</code>: declared index not used</summary>
+<details><summary><code>lookup:heading:decorators:indexed</code>: declared index internalTitleFr</summary>
 
 ```sql
-SELECT JSON_OBJECT('review', JSON_MERGE_PRESERVE(JSON_MERGE_PATCH(JSON_OBJECT(), JSON_OBJECT('_id', CAST(JSON_QUOTE(`t1`.`_id`) AS JSON), '_instance', CAST(JSON_QUOTE(NULLIF(`t1`.`_instance`, '')) AS JSON), 'rating', CAST(`t1`.`rating` AS JSON), 'bookTitle', CAST(JSON_QUOTE(`t1`.`bookTitle`) AS JSON), 'bookHeading', CAST(JSON_QUOTE(`t1`.`bookHeading`) AS JSON))), JSON_REMOVE(COALESCE(`t1`.`_extra`, JSON_OBJECT()), '$."_id"', '$."_instance"', '$."rating"', '$."bookTitle"', '$."bookHeading"')), 'book', JSON_MERGE_PRESERVE(JSON_MERGE_PATCH(JSON_OBJECT(), JSON_OBJECT('_id', CAST(JSON_QUOTE(`t3`.`_id`) AS JSON), '_instance', CAST(JSON_QUOTE(NULLIF(`t3`.`_instance`, '')) AS JSON), 'category', CAST(JSON_QUOTE(`t3`.`category`) AS JSON))), IF(`t3`.`title` IS NULL, JSON_OBJECT(), JSON_OBJECT('title', `t3`.`title`)), JSON_REMOVE(COALESCE(`t3`.`_extra`, JSON_OBJECT()), '$."_id"', '$."_instance"', '$."category"', '$."title"'))) AS `value` FROM (SELECT `t0`.`_id`, `t0`.`_instance`, `t0`.`rating`, `t0`.`bookTitle`, `t0`.`bookHeading`, `t0`.`_extra` FROM `nested-bench__reviews` AS `t0` WHERE (`t0`.`_instance` = 'bench') LIMIT 20 OFFSET 0) AS `t1` JOIN (SELECT `t2`.`_id`, `t2`.`_instance`, `t2`.`category`, `t2`.`title`, `t2`.`_extra` FROM `nested-bench__books_indexed` AS `t2` WHERE (`t2`.`_instance` = 'bench')) AS `t3` ON (((CASE WHEN (JSON_TYPE(COALESCE(NULLIF(JSON_EXTRACT(JSON_EXTRACT(JSON_EXTRACT(JSON_EXTRACT(`t3`.`_extra`, '$."_internal"'), '$."data"'), '$."title"'), '$."fr"'), CAST('null …(2017 chars)
+SELECT JSON_OBJECT('review', JSON_MERGE_PRESERVE(JSON_MERGE_PATCH(JSON_OBJECT(), JSON_OBJECT('_id', CAST(JSON_QUOTE(`t1`.`_id`) AS JSON), '_instance', CAST(JSON_QUOTE(NULLIF(`t1`.`_instance`, '')) AS JSON), 'rating', CAST(`t1`.`rating` AS JSON), 'bookTitle', CAST(JSON_QUOTE(`t1`.`bookTitle`) AS JSON), 'bookHeading', CAST(JSON_QUOTE(`t1`.`bookHeading`) AS JSON))), JSON_REMOVE(COALESCE(`t1`.`_extra`, JSON_OBJECT()), '$."_id"', '$."_instance"', '$."rating"', '$."bookTitle"', '$."bookHeading"')), 'book', JSON_MERGE_PRESERVE(JSON_MERGE_PATCH(JSON_OBJECT(), JSON_OBJECT('_id', CAST(JSON_QUOTE(`t2`.`_id`) AS JSON), '_instance', CAST(JSON_QUOTE(NULLIF(`t2`.`_instance`, '')) AS JSON), 'category', CAST(JSON_QUOTE(`t2`.`category`) AS JSON))), IF(`t2`.`title` IS NULL, JSON_OBJECT(), JSON_OBJECT('title', `t2`.`title`)), JSON_REMOVE(COALESCE(`t2`.`_extra`, JSON_OBJECT()), '$."_id"', '$."_instance"', '$."category"', '$."title"'))) AS `value` FROM (SELECT `t0`.`_id`, `t0`.`_instance`, `t0`.`rating`, `t0`.`bookTitle`, `t0`.`bookHeading`, `t0`.`_extra` FROM `nested-bench__reviews` AS `t0` WHERE (`t0`.`_instance` = 'bench') LIMIT 20 OFFSET 0) AS `t1` JOIN `nested-bench__books_indexed` AS `t2` ON ((`t2`.`_instance` = 'bench') AND (((`t2`.`__k__internal_data_title_fr_cca329fe` = LEFT(`t1`.`bookHeading`, 640) OR `t2`.`__k__internal_data_title_fr_cca329fe` IS NULL) AND (CASE WHEN (JSON_TYPE(COALESCE(NULLIF(JSON_EXTRACT(`t2`.`_extra`, '$."_internal"."data"."title"."fr"'), CAST('null' AS JSON)), JSON_ …(1829 chars)
 ```
 
 ```text
 EXPLAIN FORMAT=TRADITIONAL
 id | select_type | table | type | possible_keys | key | key_len | rows | filtered | Extra
 1 | PRIMARY | <derived2> | ALL | NULL | NULL | NULL | 20 | 100 | NULL
-1 | PRIMARY | t2 | ref | PRIMARY,titleFr,internalTitleFr | PRIMARY | 514 | 48165 | 100 | Using where
-2 | DERIVED | t0 | ref | PRIMARY | PRIMARY | 514 | 48523 | 100 | NULL
+1 | PRIMARY | t2 | ref_or_null | PRIMARY,titleFr,internalTitleFr | internalTitleFr | 3077 | 2 | 100 | Using where
+2 | DERIVED | t0 | ref | PRIMARY | PRIMARY | 514 | 49775 | 100 | NULL
 
 EXPLAIN ANALYZE
--> Nested loop inner join  (cost=101400 rows=963300) (actual time=0.0389..2900 rows=20 loops=1)
-    -> Table scan on t1  (cost=4869..4871 rows=20) (actual time=0.0259..0.0663 rows=20 loops=1)
-        -> Materialize  (cost=4869..4869 rows=20) (actual time=0.0253..0.0253 rows=20 loops=1)
-            -> Limit: 20 row(s)  (cost=4867 rows=20) (actual time=0.00578..0.0127 rows=20 loops=1)
-                -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4867 rows=48523) (actual time=0.00543..0.0116 rows=20 loops=1)
-    -> Filter: ((case when (json_type(coalesce(nullif(json_extract(json_extract(json_extract(json_extract(t2._extra,'$."_internal"'),'$."data"'),'$."title"'),'$…
-        -> Index lookup on t2 using PRIMARY (_instance='bench')  (cost=251 rows=48165) (actual time=0.00782..34.1 rows=100000 loops=20)
+-> Nested loop inner join  (cost=5011 rows=41.2) (actual time=0.0383..0.198 rows=20 loops=1)
+    -> Table scan on t1  (cost=4994..4997 rows=20) (actual time=0.022..0.0245 rows=20 loops=1)
+        -> Materialize  (cost=4994..4994 rows=20) (actual time=0.0214..0.0214 rows=20 loops=1)
+            -> Limit: 20 row(s)  (cost=4992 rows=20) (actual time=0.00414..0.0108 rows=20 loops=1)
+                -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4992 rows=49775) (actual time=0.00388..0.00972 rows=20 loops=1)
+    -> Filter: ((t2._instance = 'bench') and ((t2.__k__internal_data_title_fr_cca329fe = left(t1.bookHeading,640)) or (t2.__k__internal_data_title_fr_cca329fe i…
+        -> Index lookup on t2 using internalTitleFr (_instance='bench', __k__internal_data_title_fr_cca329fe=left(t1.bookHeading,640) or NULL)  (cost=0.525 rows…
 
 ```
 
