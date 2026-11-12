@@ -122,7 +122,7 @@ export function Cast(
     return {
       sql: dialect.sql.json.as(value.sql, target.kind),
       type: target,
-      key: PathReference(value.path, target),
+      key: PathReference(value, target),
     };
   }
   return { sql: dialect.sql.scalar.cast(value.sql, target.kind), type: target };
@@ -239,6 +239,13 @@ function DefaultType(value: SqlType, def: SqlType): SqlType {
   return Unify(value, def);
 }
 
+/**
+ * A value, or `def` where the value is absent.
+ *
+ * Wherever the value is present the result is the value, so a key column that holds the value
+ * holds the result on those rows and is NULL on the rest: the result keeps that key column as one
+ * `set` only where it is, and the read it falls back from, which a later cast names one by.
+ */
 export function WithDefault(
   dialect: Dialect,
   value: Compiled,
@@ -248,13 +255,16 @@ export function WithDefault(
     return value;
   }
   const type = DefaultType(value.type, def.type);
+  const left = Cast(dialect, value, type);
   const pair: CompiledPair = {
-    left: Cast(dialect, value, type),
+    left,
     right: Cast(dialect, def, type),
     type,
   };
   return {
     sql: sql`COALESCE(${Absent(dialect, pair)}, ${pair.right.sql})`,
     type: pair.type,
+    key: left.key && { ...left.key, rows: "set" },
+    defaulted: left.path ?? left.defaulted,
   };
 }

@@ -48,7 +48,17 @@ export function KeyAt(
       key.source === source && key.read === read && SamePath(key.path, path),
   );
   const best = matches.sort((left, right) => KeyRank(right) - KeyRank(left))[0];
-  return best && { column: QualifiedColumn(alias, best.name), key: best };
+  return (
+    best && {
+      column: QualifiedColumn(alias, best.name),
+      key: best,
+      rows: "every",
+    }
+  );
+}
+
+function KeyOfPath(path: ValuePath, read: KeyRead): KeyReference | undefined {
+  return KeyAt(path.alias, path.keys, path.source, path.path, read);
 }
 
 /**
@@ -57,17 +67,22 @@ export function KeyAt(
  * A read of the value at a path as text, a number or a boolean is exactly what a key column of that
  * read holds, so the read names the column beside its own SQL and a comparison can be served by the
  * column's index. The engine's own recognition of a generated column's expression is not relied
- * on: MySQL does it only for some spellings, and MariaDB not at all.
+ * on: MySQL does it only for some spellings, and MariaDB not at all. A value that falls back from
+ * such a read to a default names the column too, as holding it only where it is set.
  */
 export function PathReference(
-  path: ValuePath | undefined,
+  value: Pick<Compiled, "path" | "defaulted">,
   target: SqlType,
 ): KeyReference | undefined {
   const read = MEMBER_KEY_READS[target.kind];
-  if (!path || !read) {
+  if (!read) {
     return undefined;
   }
-  return KeyAt(path.alias, path.keys, path.source, path.path, read);
+  if (value.path) {
+    return KeyOfPath(value.path, read);
+  }
+  const fallback = value.defaulted && KeyOfPath(value.defaulted, read);
+  return fallback && { ...fallback, rows: "set" };
 }
 
 /**
@@ -123,11 +138,11 @@ function KeyedBound(
   operator: Ordering,
 ): Sql {
   const fit = "fit" in key.key ? key.key.fit : undefined;
-  if (fit?.kind !== "prefix") {
-    return sql`${key.column} ${OPERATORS[operator]} ${other.sql}`;
-  }
-  const bound = dialect.sql.scalar.left(other.sql, fit.width);
-  return sql`${key.column} ${OPERATORS[PREFIX_BOUNDS[operator]]} ${bound}`;
+  const bound =
+    fit?.kind === "prefix"
+      ? sql`${key.column} ${OPERATORS[PREFIX_BOUNDS[operator]]} ${dialect.sql.scalar.left(other.sql, fit.width)}`
+      : sql`${key.column} ${OPERATORS[operator]} ${other.sql}`;
+  return key.rows === "set" ? sql`(${bound} OR ${key.column} IS NULL)` : bound;
 }
 
 /**
@@ -135,9 +150,10 @@ function KeyedBound(
  * operand.
  *
  * The key column's bound narrows the rows through its index, and the comparison of the values
- * themselves decides them: a prefix key holds a value's first characters only, and a test of the
- * value itself is cheap on the rows the index already chose. So an index never changes which rows
- * match, only how fast they are found.
+ * themselves decides them: a prefix key holds a value's first characters only, a key `set` only
+ * on some rows leaves the others to its NULL entries, and a test of the value itself is cheap on
+ * the rows the index already chose. So an index never changes which rows match, only how fast they
+ * are found.
  */
 export function Compare(
   dialect: Dialect,
@@ -158,14 +174,15 @@ export function Compare(
 
 /**
  * The key column an equality on `value` can be served by, and `other` fitted to what it holds: the
- * form a list of keys takes, where {@link Compare} takes one pair at a time.
+ * form a list of keys takes, where {@link Compare} takes one pair at a time. A key `set` only on
+ * some rows cannot stand for the value in a list, so it serves none.
  */
 export function EqualityKey(
   dialect: Dialect,
   value: Compiled,
   other: Sql,
 ): { readonly column: Sql; readonly bound: Sql } | undefined {
-  if (!value.key) {
+  if (!value.key || value.key.rows === "set") {
     return undefined;
   }
   const key = value.key;

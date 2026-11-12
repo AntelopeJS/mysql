@@ -11,10 +11,16 @@ export type { ConstantJson } from "../../dialect/sql-types";
  * A key column that holds the value a {@link Compiled} reads, as a comparison can use it: by name,
  * at the alias of the row it belongs to. A `prefix` key holds the value's first `width`
  * characters, so a comparison served by it also tests the value itself.
+ *
+ * `rows` says where the column holds the value: on `every` row, or only on the rows where the
+ * column is `set`. A value that falls back to a default is the read the column keys wherever that
+ * read is present, and the column is NULL wherever the default stands in, so a bound through it
+ * keeps the rows it is NULL on.
  */
 export interface KeyReference {
   readonly column: Sql;
   readonly key: KeyColumn;
+  readonly rows: "every" | "set";
 }
 
 /**
@@ -39,6 +45,11 @@ export interface Compiled {
   key?: KeyReference;
   /** The row column and JSON path this value reads, while it is still exactly that read. */
   path?: ValuePath;
+  /**
+   * The row column and JSON path a default stands in for: this value is that read on every row
+   * where the read is present, and the default elsewhere.
+   */
+  defaulted?: ValuePath;
   /** The column underneath, in its own type, where `sql` reads it converted (external relations only). */
   native?: NativeOperand;
 }

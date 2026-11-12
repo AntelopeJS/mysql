@@ -11,7 +11,12 @@ import {
   ID_COLUMN,
   INSTANCE_COLUMN,
 } from "./utils";
-import { type Compiled, QualifiedColumn, type ValuePath } from "./sql";
+import {
+  type Compiled,
+  type KeyReference,
+  QualifiedColumn,
+  type ValuePath,
+} from "./sql";
 import {
   BOOL,
   FLOAT,
@@ -296,8 +301,9 @@ export class ColumnRowSource implements RowSource {
       return { value, order: value.sql };
     }
     const column = QualifiedColumn(this.keys.alias, key.name);
+    const reference: KeyReference = { column, key, rows: "every" };
     const comparable =
-      key.read === "json" ? value : { ...value, key: { column, key } };
+      key.read === "json" ? value : { ...value, key: reference };
     return { value: comparable, order: column };
   }
 }
