@@ -43,6 +43,11 @@ export interface PollRequest {
   /** Each side: a statement answering one row of one JSON column, `{doc, matched}`. */
   readonly old: Sql;
   readonly new: Sql;
+  /**
+   * The JSON-backed columns a side's document holds a value of at its top level, which can nest as
+   * deep as the engine builds a document, leaving no level for the document around it.
+   */
+  readonly nested: readonly string[];
 }
 
 /**
@@ -51,8 +56,8 @@ export interface PollRequest {
  * spelled here is how an engine writes, locks and reads it.
  *
  * Every statement answers its columns under fixed aliases: `next_seq`, `epoch`, `frontier`,
- * `pending`, `id`, `tbl`, `high_water`, `through`, and for a poll `seq`, `op`, `old_side` and
- * `new_side` beside the frontier's.
+ * `pending`, `id`, `tbl`, `high_water`, `through`, and for a poll `seq`, `op`, `old_side`,
+ * `new_side` and `deep` beside the frontier's.
  */
 export interface CaptureSyntax {
   /**
@@ -80,6 +85,8 @@ export interface CaptureSyntax {
    * a server setting, naming the cause and every remedy; `undefined` for any other failure.
    */
   triggerRefusal(error: Error): string | undefined;
+  /** Whether a statement failed because a JSON document it built nests deeper than the engine allows. */
+  tooDeep(error: Error): boolean;
   /** Holds a table against every other session, so no write runs while its triggers change. */
   lockTable(table: string): Sql;
   readonly unlockTables: Sql;
@@ -125,7 +132,8 @@ export interface CaptureSyntax {
    * The frontier's row with the table's reaped `high_water`, joined to the rows of `request`
    * numbered after `after` and at most the frontier, in `seq` order, up to the limit; one row with
    * no event when there is none. Everything is read in one statement, so the rows, the frontier
-   * and the high-water agree.
+   * and the high-water agree. An event `deep` holds a value of a `nested` column too deep for the
+   * document around it, and answers neither side, since building one would fail the statement.
    */
   poll(tables: ChangeLogTables, request: PollRequest): Sql;
   /**

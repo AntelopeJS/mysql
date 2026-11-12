@@ -9,7 +9,7 @@ import { DecodingContext } from "./context";
 import { CompileSubquery } from "./subquery";
 import { QualifiedColumn } from "./sql";
 import { CompileExpression } from "./expression";
-import { OPAQUE, type SqlType } from "./types";
+import { IsJsonBacked, OPAQUE, type SqlType } from "./types";
 import { ApplyStages, CompileRelation, IsPipelineStage } from "./pipeline";
 import {
   CurrentValue,
@@ -60,6 +60,8 @@ export interface FeedPlan {
   readonly old: Sql;
   readonly new: Sql;
   readonly type: SqlType;
+  /** The declared JSON-backed columns, whose values a document holds one level down. */
+  readonly nested: readonly string[];
 }
 
 function IsKnownStage(stage: QueryStage): boolean {
@@ -178,5 +180,10 @@ export function CompileFeed(
     old: Render(Side(before)),
     new: Render(Side(after)),
     type: CurrentValue(before).type,
+    nested: origin.plan.columns.flatMap((column) =>
+      column.role === "declared" && IsJsonBacked(column.type)
+        ? [column.name]
+        : [],
+    ),
   };
 }

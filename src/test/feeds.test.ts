@@ -10,6 +10,7 @@ import { CHANGE_LOG } from "../implementations/database/registry";
 import { PhysicalTable, Run } from "./tables";
 import {
   Delivered,
+  DeliveredRow,
   type Feed,
   type Nest,
   Opened,
@@ -155,10 +156,22 @@ async function Nests(levels: number): Promise<boolean> {
   return Number(row.get("valid")) === 1;
 }
 
-const deep = new Schema<{ stored: Row; delivered: Row }>("feeds-depth", {
-  stored: { fields: { label: "string", tree: "object" }, indexes: {} },
-  delivered: { fields: { label: "string", tree: "object" }, indexes: {} },
-});
+/** Whether the server builds a document `levels` deep; MySQL refuses to with an error. */
+async function Builds(levels: number): Promise<boolean> {
+  return Nests(levels).catch(() => false);
+}
+
+/** How long a feed may take to end once it reaches an event it cannot deliver. */
+const ENDS_WITHIN_MS = 2000;
+
+const deep = new Schema<{ stored: Row; delivered: Row; ending: Row }>(
+  "feeds-depth",
+  {
+    stored: { fields: { label: "string", tree: "object" }, indexes: {} },
+    delivered: { fields: { label: "string", tree: "object" }, indexes: {} },
+    ending: { fields: { label: "string", tree: "object" }, indexes: {} },
+  },
+);
 
 describe("a watched table holding JSON as deep as the server stores it", function () {
   this.timeout(30_000);
@@ -197,6 +210,42 @@ describe("a watched table holding JSON as deep as the server stores it", functio
       );
     }
     expect(await rows.get("hollow").delete()).to.equal(1);
+  });
+
+  /**
+   * A document around a field as deep as the server stores is one level deeper still. MySQL fails
+   * the poll that builds it and MariaDB 11.8 builds SQL NULL, so the feed either retried until the
+   * event was reaped or delivered a null document. MariaDB 12.3 builds it, and delivers it.
+   */
+  it("ends at once, naming where it stopped, at a document deeper than the server builds", async () => {
+    const rows = deep.instance().table("ending");
+    const feed = await Opened(rows, "ending");
+    try {
+      await rows.insert({ _id: "shallow", label: "before" });
+      await rows.insert({ _id: "deepest", tree: Nested(depths.inColumn) });
+      expect(await DeliveredRow(feed, "shallow")).to.have.nested.property(
+        "newValue.label",
+        "before",
+      );
+      const next = feed.next();
+      if (await Builds(depths.inColumn + 1)) {
+        expect((await Delivered(next)).newValue).to.deep.equal({
+          _id: "deepest",
+          tree: Nested(depths.inColumn),
+        });
+        return;
+      }
+      expect(await SettlesWithin(next, ENDS_WITHIN_MS)).to.equal(true);
+      const failure = await next.then(
+        (step) => `delivered ${JSON.stringify(step.value)}`,
+        (err: unknown) => String(err),
+      );
+      expect(failure).to.match(
+        /change feed on 'feeds-depth\.ending' cannot deliver its next event after seq \d+: the event's document nests deeper than the server builds/,
+      );
+    } finally {
+      await feed.return?.();
+    }
   });
 
   it("delivers the changes of a row as deep as a document holds", async () => {

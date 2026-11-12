@@ -36,12 +36,14 @@ import { IsString } from "./guards";
 /**
  * Why a feed stopped, and therefore what a read arriving after it is told.
  * `lapsed` and `restarted` are losses and raise, naming the feed and the range that went;
- * `closed` is an ending and resolves `done`.
+ * `tooDeep` raises, naming the last `seq` the feed got past; `closed` is an ending and resolves
+ * `done`.
  */
 type FeedEnd =
   | { reason: "closed" }
   | { reason: "restarted"; target: FeedTarget }
-  | { reason: "lapsed"; target: FeedTarget; gap: FeedGap };
+  | { reason: "lapsed"; target: FeedTarget; gap: FeedGap }
+  | { reason: "tooDeep"; target: FeedTarget; after: bigint };
 
 const CLOSED: FeedEnd = { reason: "closed" };
 
@@ -153,6 +155,10 @@ function Named(target: FeedTarget): string {
 /** Names the range that went, which is the whole reason the reaper records a high-water at all. */
 function LapsedMessage(target: FeedTarget, gap: FeedGap): string {
   return `change feed on '${Named(target)}' fell behind the retention window (changeRetentionMs): events ${gap.from} through ${gap.to} were reaped before it read them, so it cannot continue; re-open the feed`;
+}
+
+function TooDeepMessage(target: FeedTarget, after: bigint): string {
+  return `change feed on '${Named(target)}' cannot deliver its next event after seq ${after}: the event's document nests deeper than the server builds a JSON document (100 levels on MySQL), so it cannot continue; re-open the feed to read on from the newest event`;
 }
 
 function RestartedMessage(target: FeedTarget): string {
@@ -292,13 +298,19 @@ async function Poll(
     Retire(reqId, state, { reason: "lapsed", target, gap });
     return;
   }
-  state.full = answer.scanned.length >= limit;
-  for (const event of answer.scanned) {
+  const deep = answer.scanned.findIndex((event) => event.deep);
+  if (deep === 0) {
+    Retire(reqId, state, { reason: "tooDeep", target, after: state.watermark });
+    return;
+  }
+  const scanned = deep === -1 ? answer.scanned : answer.scanned.slice(0, deep);
+  state.full = deep !== -1 || scanned.length >= limit;
+  for (const event of scanned) {
     if (Admitted(event)) {
       state.buffer.push(Delivered(event));
     }
   }
-  const last = answer.scanned.at(-1);
+  const last = scanned.at(-1);
   if (state.full && last) {
     state.watermark = last.seq;
   } else if (answer.frontier > state.watermark) {
@@ -392,14 +404,16 @@ async function Open(state: FeedState, stages: QueryStage[]): Promise<void> {
 }
 
 function Ended(end: FeedEnd): IteratorResult<RowObject, void> {
-  if (end.reason === "closed") {
-    return { done: true, value: undefined };
+  switch (end.reason) {
+    case "closed":
+      return { done: true, value: undefined };
+    case "lapsed":
+      throw new Error(LapsedMessage(end.target, end.gap));
+    case "restarted":
+      throw new Error(RestartedMessage(end.target));
+    case "tooDeep":
+      throw new Error(TooDeepMessage(end.target, end.after));
   }
-  throw new Error(
-    end.reason === "lapsed"
-      ? LapsedMessage(end.target, end.gap)
-      : RestartedMessage(end.target),
-  );
 }
 
 /**
@@ -428,9 +442,17 @@ async function Advance(
       continue;
     }
     state.woken = false;
+    const open = state;
     await Promise.race([
-      Polled(reqId, state, stages, options).catch((err: unknown) => {
-        if (!state.end) {
+      Polled(reqId, open, stages, options).catch((err: unknown) => {
+        if (err instanceof Error && open.env.dialect().capture.tooDeep(err)) {
+          const after = open.watermark;
+          Retire(reqId, open, {
+            reason: "tooDeep",
+            target: open.target,
+            after,
+          });
+        } else if (!open.end) {
           Logger.Warn(POLL_FAILED, err);
         }
       }),
