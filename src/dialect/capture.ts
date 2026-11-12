@@ -77,6 +77,11 @@ export interface CaptureSyntax {
   /** Holds a table against every other session, so no write runs while its triggers change. */
   lockTable(table: string): Sql;
   readonly unlockTables: Sql;
+  /**
+   * The type an image logs a column as, from the type the catalog reports for it; `undefined` for a
+   * type the module never gives a column it stores.
+   */
+  loggedType(columnType: string): SqlType | undefined;
   /** A boxed member of an image, unboxed to its JSON value: SQL NULL where the column held SQL NULL. */
   unbox(member: Sql): Sql;
   /**

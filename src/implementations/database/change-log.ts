@@ -1,13 +1,17 @@
 import { createHash } from "node:crypto";
 
 import { Bind, type Sql } from "../../statement";
-import type { CapturedColumn, ChangeOperation, Dialect } from "../../dialect";
+import type {
+  CapturedColumn,
+  ChangeOperation,
+  Dialect,
+  ObservedTable,
+} from "../../dialect";
 import { GetDialect, RegisterBeforeDisconnect } from "../../connection";
 import { Observe } from "./observe";
 import type { TablePlan } from "./plan";
 import { CHANGE_LOG, SchemaKey } from "./registry";
 import { type ConvergenceSession, WithTablesLock } from "./locks";
-import { OPAQUE, type SqlType, TEXT } from "./types";
 
 /** Every trigger this module makes for capture starts with it, and no other trigger may. */
 const TRIGGER_PREFIX = "ajs_chg_";
@@ -42,52 +46,51 @@ export interface TriggerSwap {
 }
 
 /**
- * Who asks for a swap. Convergence keeps a watched table's triggers in step with its plan, and
+ * Who asks for a swap. Convergence keeps a watched table's triggers in step with its columns, and
  * leaves an unwatched table alone. A feed installs them on a table that lacks a trigger for some
- * operation, and otherwise accepts what is there: in a rolling deploy, a process with an older
- * plan must not swap back the triggers a newer one converged.
+ * operation, and otherwise accepts what is there, which the convergence every registration runs
+ * first keeps in step.
  */
 type SwapIntent = "converge" | "install";
 
-function ColumnType(column: TablePlan["columns"][number]): SqlType {
-  switch (column.role) {
-    case "id":
-    case "instance":
-      return TEXT;
-    case "extra":
-      return OPAQUE;
-    case "declared":
-      return column.type;
-  }
-}
-
-/** The columns an image holds: every stored column. A key column is derived from them, so it is left out. */
-function CapturedColumns(plan: TablePlan): CapturedColumn[] {
-  return plan.columns.map((column) => ({
-    name: column.name,
-    type: ColumnType(column),
-  }));
+/**
+ * The columns an image holds: every column the table stores, as the catalog has them, but those in
+ * `dropping`, which the triggers stop reading before they go. A generated column is derived from
+ * the others, so it is left out. Taken from the catalog rather than from a declaration, they are the
+ * same for every process: one that declares an older version of the schema plans the triggers a
+ * newer one did, and never swaps them for ones that skip a column the newer one's feed reads.
+ */
+export function CapturedColumns(
+  dialect: Dialect,
+  observed: ObservedTable,
+  dropping: ReadonlySet<string>,
+): CapturedColumn[] {
+  return observed.columns.flatMap((column) => {
+    const type = dialect.capture.loggedType(column.type);
+    const isStored = !column.generated && !dropping.has(column.name);
+    return type && isStored ? [{ name: column.name, type }] : [];
+  });
 }
 
 /**
- * The triggers that log a table's writes, as its plan wants them. Each name carries a digest of
- * the three bodies, which name the table and every column they read, so a body that changes for
- * any reason is a trigger of another name and the swap that replaces it is planned from names alone.
+ * The triggers that log a table's writes. Each name carries a digest of the three bodies, which name
+ * the table and every column they read, so a body that changes for any reason is a trigger of
+ * another name and the swap that replaces it is planned from names alone.
  */
-function DesiredTriggers(dialect: Dialect, plan: TablePlan): Trigger[] {
+function DesiredTriggers(
+  dialect: Dialect,
+  table: string,
+  captured: readonly CapturedColumn[],
+): Trigger[] {
   const { capture } = dialect;
-  const bodies = capture.triggers(
-    CHANGE_LOG,
-    plan.table,
-    CapturedColumns(plan),
-  );
+  const bodies = capture.triggers(CHANGE_LOG, table, captured);
   const digest = createHash("sha256")
     .update(JSON.stringify(bodies.map((trigger) => Bind(trigger.body))))
     .digest("hex")
     .slice(0, SIGNATURE_CHARS);
   return bodies.map((trigger) => {
     const name = `${TRIGGER_PREFIX}${digest}${OPERATION_SUFFIXES[trigger.operation]}`;
-    return { name, create: capture.createTrigger(name, plan.table, trigger) };
+    return { name, create: capture.createTrigger(name, table, trigger) };
   });
 }
 
@@ -101,12 +104,13 @@ function CoversEveryOperation(ours: readonly string[]): boolean {
 }
 
 /**
- * Pure. The swap that leaves exactly the plan's triggers on a table that has `observed`, or none
- * when there is nothing to do for `intent`.
+ * Pure. The swap that leaves exactly the triggers that log `captured` on `table`, which has the
+ * triggers `observed`, or none when there is nothing to do for `intent`.
  */
 export function PlanTriggerSwap(
   dialect: Dialect,
-  plan: TablePlan,
+  table: string,
+  captured: readonly CapturedColumn[],
   observed: readonly string[],
   intent: SwapIntent,
 ): TriggerSwap | undefined {
@@ -116,7 +120,7 @@ export function PlanTriggerSwap(
   if (!isNeeded) {
     return undefined;
   }
-  const desired = DesiredTriggers(dialect, plan);
+  const desired = DesiredTriggers(dialect, table, captured);
   const wanted = new Set(desired.map((trigger) => trigger.name));
   const present = new Set(ours);
   const create = desired.filter((trigger) => !present.has(trigger.name));
@@ -125,7 +129,7 @@ export function PlanTriggerSwap(
     return undefined;
   }
   return {
-    lock: dialect.capture.lockTable(plan.table),
+    lock: dialect.capture.lockTable(table),
     statements: [
       ...create.map((trigger) => trigger.create),
       ...drop.map((name) => dialect.capture.dropTrigger(name)),
@@ -174,7 +178,14 @@ async function Install(plan: TablePlan): Promise<void> {
         `Table '${plan.table}' of '${plan.schemaId}.${plan.tableId}' does not exist, so its changes cannot be captured`,
       );
     }
-    const swap = PlanTriggerSwap(dialect, plan, observed.triggers, "install");
+    const captured = CapturedColumns(dialect, observed, new Set());
+    const swap = PlanTriggerSwap(
+      dialect,
+      plan.table,
+      captured,
+      observed.triggers,
+      "install",
+    );
     if (swap) {
       await ApplyTriggerSwap(session, swap);
     }

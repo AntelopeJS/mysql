@@ -19,8 +19,10 @@ import { ConvergeIndexes } from "../implementations/database/migrate-indexes";
 import { RegistryStatements } from "../implementations/database/registry";
 import {
   ApplyTriggerSwap,
+  CapturedColumns,
   PlanTriggerSwap,
 } from "../implementations/database/change-log";
+import { Observe } from "../implementations/database/observe";
 import { Numbers, Snapshot } from "./tables";
 
 /** What a session that dies mid-convergence throws in place of its next statement. */
@@ -245,7 +247,16 @@ async function Start(
   if (crash.start) {
     const start = Plan(schemaId, crash.start);
     await Converge(session, start, SAFE);
-    const install = PlanTriggerSwap(GetDialect(), start, [], "install");
+    const observed = await Observe(session, start.table);
+    const install =
+      observed &&
+      PlanTriggerSwap(
+        GetDialect(),
+        start.table,
+        CapturedColumns(GetDialect(), observed, new Set()),
+        [],
+        "install",
+      );
     if (crash.watched && install) {
       await ApplyTriggerSwap(session, install);
     }

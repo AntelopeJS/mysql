@@ -7,6 +7,7 @@ import type {
   TriggerBody,
 } from "../capture";
 import {
+  Bind,
   MAX_IDENTIFIER_CHARS,
   type Sql,
   ident,
@@ -16,13 +17,22 @@ import {
   param,
   sql,
 } from "../../statement";
-import { IsJsonBacked } from "../../implementations/database/types";
+import {
+  BOOL,
+  FLOAT,
+  IsJsonBacked,
+  OPAQUE,
+  type SqlType,
+  TEXT,
+  TIMESTAMP,
+} from "../../implementations/database/types";
 import {
   INSTANCE_COLUMN,
   MAX_INSTANCE_ID_CHARS,
 } from "../../implementations/database/utils";
 import { session } from "./session";
 import { json } from "./sql-json";
+import { sqlCore } from "./sql-core";
 
 const COMMA = sql`, `;
 
@@ -115,6 +125,22 @@ function Image(row: Sql, columns: readonly CapturedColumn[]): Sql {
   return sql`JSON_OBJECT(${join(members, COMMA)})`;
 }
 
+/** The key columns `_id` and `_instance`, text of a bounded width rather than a field's type. */
+const BOUNDED_TEXT = /^varchar\(\d+\)$/;
+
+/** Each type a stored field's column is created with, as the catalog spells it, and how it is logged. */
+const LOGGED_TYPES = new Map(
+  [TEXT, FLOAT, BOOL, TIMESTAMP, OPAQUE].map((type) => [
+    Bind(sqlCore.physical(type)).sql.toLowerCase(),
+    type,
+  ]),
+);
+
+function LoggedType(columnType: string): SqlType | undefined {
+  const spelled = columnType.toLowerCase();
+  return BOUNDED_TEXT.test(spelled) ? TEXT : LOGGED_TYPES.get(spelled);
+}
+
 const OLD = sql`OLD`;
 const NEW = sql`NEW`;
 
@@ -193,6 +219,7 @@ export const capture: CaptureSyntax = {
   triggerRefusal: TriggerRefusal,
   lockTable: (table) => sql`LOCK TABLES ${ident(table)} WRITE`,
   unlockTables: sql`UNLOCK TABLES`,
+  loggedType: LoggedType,
   unbox: (member) =>
     sql`(CASE WHEN ${json.is(member, ["string"])} THEN ${json.parse(sql`JSON_UNQUOTE(${member})`)} END)`,
   lockClock: (tables, wait) =>

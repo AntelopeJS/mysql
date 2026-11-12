@@ -8,7 +8,11 @@ import type {
 } from "../../dialect";
 import { IsKeyColumnSignature } from "./paths";
 import type { DeclaredColumn, IndexPlan, TablePlan } from "./plan";
-import { PlanTriggerSwap, type TriggerSwap } from "./change-log";
+import {
+  CapturedColumns,
+  PlanTriggerSwap,
+  type TriggerSwap,
+} from "./change-log";
 
 const VENDOR = "antelopejs:";
 const DESTRUCTIVE: MigrationMode = "destructive";
@@ -240,7 +244,19 @@ function DropUndeclared(view: TableView): TableStep | undefined {
  */
 function SwapTriggers(view: TableView): TableStep | undefined {
   const { dialect, plan, observed } = view;
-  const swap = PlanTriggerSwap(dialect, plan, observed.triggers, "converge");
+  const dropping = new Set(
+    view.mode === DESTRUCTIVE
+      ? Undeclared(view).map((column) => column.name)
+      : [],
+  );
+  const captured = CapturedColumns(dialect, observed, dropping);
+  const swap = PlanTriggerSwap(
+    dialect,
+    plan.table,
+    captured,
+    observed.triggers,
+    "converge",
+  );
   return swap && { kind: "swapTriggers", target: plan.table, swap };
 }
 

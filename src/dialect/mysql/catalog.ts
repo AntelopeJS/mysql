@@ -3,7 +3,8 @@ import { param, sql } from "../../statement";
 import type { CatalogSyntax, ObservedColumn, ObservedIndex } from "../ddl";
 
 const BASE_TABLE = "BASE TABLE";
-const GENERATED = "GENERATED";
+/** A column the server computes; `DEFAULT_GENERATED` only marks a default that is an expression. */
+const GENERATED = /\b(VIRTUAL|STORED) GENERATED\b/i;
 
 /** A catalog cell as text: the server answers some `information_schema` columns as binary strings. */
 function Text(row: Row, column: string): string {
@@ -18,7 +19,7 @@ function ParseColumn(row: Row): ObservedColumn {
   return {
     name: Text(row, "name"),
     type: Text(row, "type").toLowerCase(),
-    generated: Text(row, "extra").toUpperCase().includes(GENERATED),
+    generated: GENERATED.test(Text(row, "extra")),
     comment: Text(row, "comment"),
   };
 }

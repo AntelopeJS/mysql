@@ -2,7 +2,7 @@ import { expect } from "chai";
 import type { TableDefinition } from "@antelopejs/interface-database/schema";
 
 import { Bind } from "../../statement";
-import { DIALECTS } from "../../dialect";
+import { DIALECTS, type ObservedTable } from "../../dialect";
 import { ParseTable } from "../../implementations/database/fields";
 import {
   BuildTablePlan,
@@ -10,11 +10,13 @@ import {
 } from "../../implementations/database/plan";
 import {
   ApplyTriggerSwap,
+  CapturedColumns,
   EnsureTriggers,
   PlanTriggerSwap,
   type TriggerSwap,
 } from "../../implementations/database/change-log";
 import type { ConvergenceSession } from "../../implementations/database/locks";
+import { CatalogColumns } from "./catalog-fixture";
 
 const MYSQL = DIALECTS.mysql;
 const { capture } = MYSQL;
@@ -39,6 +41,30 @@ function Plan(definition: TableDefinition): TablePlan {
   ).plan;
 }
 
+/** The table as the catalog reports it once `plan` converged, with `more` columns after the plan's. */
+function Observed(
+  plan: TablePlan,
+  more: ObservedTable["columns"] = [],
+): ObservedTable {
+  return {
+    kind: "table",
+    comment: "",
+    columns: [...CatalogColumns(plan), ...more],
+    indexes: [],
+    triggers: [],
+  };
+}
+
+/** The swap of `plan`'s table, logging what the catalog reports once it converged. */
+function Swap(
+  plan: TablePlan,
+  triggers: readonly string[],
+  intent: "converge" | "install",
+): TriggerSwap | undefined {
+  const captured = CapturedColumns(MYSQL, Observed(plan), new Set());
+  return PlanTriggerSwap(MYSQL, plan.table, captured, triggers, intent);
+}
+
 function Texts(swap: TriggerSwap | undefined): string[] {
   return (swap?.statements ?? []).map((statement) => Bind(statement).sql);
 }
@@ -60,14 +86,12 @@ function Dropped(swap: TriggerSwap | undefined): string[] {
 
 /** The triggers a plan wants, as a first install creates them. */
 function Desired(plan: TablePlan): string[] {
-  return Created(PlanTriggerSwap(MYSQL, plan, [], "install"));
+  return Created(Swap(plan, [], "install"));
 }
 
 /** The statements a first install creates, one per event, in the order it creates them. */
 function Bodies(plan: TablePlan) {
-  const [INSERT, UPDATE, DELETE] = Texts(
-    PlanTriggerSwap(MYSQL, plan, [], "install"),
-  );
+  const [INSERT, UPDATE, DELETE] = Texts(Swap(plan, [], "install"));
   return { INSERT, UPDATE, DELETE };
 }
 
@@ -119,7 +143,7 @@ describe("planning a table's trigger swap", () => {
   const desired = Desired(plan);
 
   it("installs one trigger per operation on a table a feed watches first, under the table's lock", () => {
-    const swap = PlanTriggerSwap(MYSQL, plan, [], "install");
+    const swap = Swap(plan, [], "install");
     expect(desired).to.have.length(3);
     expect(
       Texts(swap).map((text) => / AFTER (\w+) /.exec(text)?.[1]),
@@ -133,16 +157,12 @@ describe("planning a table's trigger swap", () => {
   });
 
   it("leaves a table no feed ever watched alone when converging", () => {
-    expect(PlanTriggerSwap(MYSQL, plan, [], "converge")).to.equal(undefined);
-    expect(PlanTriggerSwap(MYSQL, plan, ["audit_insert"], "converge")).to.equal(
-      undefined,
-    );
+    expect(Swap(plan, [], "converge")).to.equal(undefined);
+    expect(Swap(plan, ["audit_insert"], "converge")).to.equal(undefined);
   });
 
   it("does nothing once a watched table's triggers match its plan", () => {
-    expect(PlanTriggerSwap(MYSQL, plan, desired, "converge")).to.equal(
-      undefined,
-    );
+    expect(Swap(plan, desired, "converge")).to.equal(undefined);
   });
 
   it("names the triggers after what they log, so a new column is a new set of names", () => {
@@ -152,7 +172,7 @@ describe("planning a table's trigger swap", () => {
   });
 
   it("creates the new triggers before it drops the old ones, so a crash part way leaves duplicates rather than a gap", () => {
-    const swap = PlanTriggerSwap(MYSQL, wider, desired, "converge");
+    const swap = Swap(wider, desired, "converge");
     expect(Created(swap)).to.deep.equal(Desired(wider));
     expect(Dropped(swap)).to.deep.equal(desired);
     const texts = Texts(swap);
@@ -169,34 +189,22 @@ describe("planning a table's trigger swap", () => {
 
   it("finishes a swap a crash interrupted, from whatever triggers it left", () => {
     const next = Desired(wider);
-    const swap = PlanTriggerSwap(
-      MYSQL,
-      wider,
-      [...desired, next[0]],
-      "converge",
-    );
+    const swap = Swap(wider, [...desired, next[0]], "converge");
     expect(Created(swap)).to.deep.equal(next.slice(1));
     expect(Dropped(swap)).to.deep.equal(desired);
   });
 
   it("never drops a trigger another tool made", () => {
-    const swap = PlanTriggerSwap(
-      MYSQL,
-      wider,
-      ["audit_insert", ...desired],
-      "converge",
-    );
+    const swap = Swap(wider, ["audit_insert", ...desired], "converge");
     expect(Dropped(swap)).to.not.include("audit_insert");
   });
 
   it("accepts on install a complete set an older plan made, which only convergence replaces", () => {
-    expect(PlanTriggerSwap(MYSQL, wider, desired, "install")).to.equal(
-      undefined,
-    );
+    expect(Swap(wider, desired, "install")).to.equal(undefined);
   });
 
   it("completes on install a set that lacks an operation, replacing what was there", () => {
-    const swap = PlanTriggerSwap(MYSQL, wider, [desired[0]], "install");
+    const swap = Swap(wider, [desired[0]], "install");
     expect(Created(swap)).to.deep.equal(Desired(wider));
     expect(Dropped(swap)).to.deep.equal([desired[0]]);
   });
@@ -239,8 +247,25 @@ describe("installing a table's triggers for its first feed", () => {
   });
 });
 
+describe("the columns a table's triggers log", () => {
+  const plan = Plan(ITEMS);
+
+  it("are every column the catalog reports but a generated one, one of a type no field has, and one being dropped", () => {
+    const observed = Observed(plan, [
+      { name: "key_name", type: "varchar(640)", generated: true, comment: "" },
+      { name: "legacy", type: "mediumblob", generated: false, comment: "" },
+    ]);
+    const logged = CapturedColumns(MYSQL, observed, new Set(["price"]));
+    expect(logged.map((column) => column.name)).to.deep.equal(
+      plan.columns
+        .map((column) => column.name)
+        .filter((name) => name !== "price"),
+    );
+  });
+});
+
 describe("applying a table's trigger swap", () => {
-  const planned = PlanTriggerSwap(MYSQL, Plan(ITEMS), [], "install");
+  const planned = Swap(Plan(ITEMS), [], "install");
   if (!planned) {
     throw new Error("a table without triggers needs a swap");
   }

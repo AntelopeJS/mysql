@@ -18,25 +18,16 @@ import {
   PENDING,
   type TableStep,
 } from "../../implementations/database/convergence";
-import { PlanTriggerSwap } from "../../implementations/database/change-log";
+import {
+  CapturedColumns,
+  PlanTriggerSwap,
+} from "../../implementations/database/change-log";
+import { CatalogColumns } from "./catalog-fixture";
 
 const MYSQL = DIALECTS.mysql;
 const SAFE: MigrationMode = "safe";
 const DESTRUCTIVE: MigrationMode = "destructive";
 const NOTHING_SKIPPED: ReadonlySet<string> = new Set();
-
-/** The type the catalog reports for each column a plan stores. */
-function CatalogType(column: TablePlan["columns"][number]): string {
-  switch (column.role) {
-    case "id":
-    case "instance":
-      return `varchar(${column.chars})`;
-    case "extra":
-      return "json";
-    case "declared":
-      return Bind(MYSQL.sql.physical(column.type)).sql.toLowerCase();
-  }
-}
 
 function Plan(definition: TableDefinition): TablePlan {
   return BuildTablePlan(
@@ -65,12 +56,7 @@ function Created(plan: TablePlan): ObservedTable {
     kind: "table",
     comment: OwnershipComment(plan),
     columns: [
-      ...plan.columns.map((column) => ({
-        name: column.name,
-        type: CatalogType(column),
-        generated: false,
-        comment: "",
-      })),
+      ...CatalogColumns(plan),
       ...plan.keyColumns.map((key) => ({
         name: key.name,
         type: "varchar(640)",
@@ -349,11 +335,22 @@ describe("NextTableStep on columns nothing declares", () => {
       "backfill",
     );
   });
+
+  it("keeps the triggers of a watched table an older declaration converges, still logging the column it lacks", () => {
+    const fewer = Plan({
+      fields: { name: "string", price: "number" },
+      indexes: {},
+    });
+    const newer = Plan(BARE);
+    const watched = { ...Created(newer), triggers: Installed(newer) };
+    expect(Step(fewer, watched, SAFE)).to.equal(undefined);
+  });
 });
 
-/** The capture triggers a first feed installs for a plan. */
+/** The capture triggers a first feed installs on a table once `plan` converged it. */
 function Installed(plan: TablePlan): string[] {
-  const swap = PlanTriggerSwap(MYSQL, plan, [], "install");
+  const captured = CapturedColumns(MYSQL, Created(plan), new Set());
+  const swap = PlanTriggerSwap(MYSQL, plan.table, captured, [], "install");
   return (swap?.statements ?? []).flatMap(
     (statement) =>
       /^CREATE TRIGGER `([^`]+)`/.exec(Bind(statement).sql)?.[1] ?? [],
