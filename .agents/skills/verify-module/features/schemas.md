@@ -20,6 +20,7 @@ covers:
   - src/implementations/database/duplicate-key.ts
 docs:
   - docs/storage.md
+  - docs/indexes.md
   - docs/errors.md
 journeys:
   - storage-layout

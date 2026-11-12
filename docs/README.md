@@ -4,7 +4,8 @@ Reference for `@antelopejs/mysql`. The [root README](../README.md) covers instal
 
 |                                           |                                                                                                                                       |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| [Storage and schema](./storage.md)        | What a registered schema becomes in the database, the field-type table, what reaches an index, and how registration converges         |
+| [Storage and schema](./storage.md)        | What a registered schema becomes in the database, the field-type table, and how registration converges                                |
+| [Indexes](./indexes.md)                   | How a declared index becomes a MySQL index, the key columns behind it, and which queries reach it                                     |
 | [Configuration](./configuration.md)       | Every option `construct` accepts                                                                                                      |
 | [External mode](./external-mode.md)       | Reading tables the module did not create, in a database it does not own                                                               |
 | [Change feeds](./change-feeds.md)         | `changes()`, its ordering guarantee, its retention contract and its blind spots                                                       |

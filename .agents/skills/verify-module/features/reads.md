@@ -27,6 +27,7 @@ covers:
 docs:
   - docs/behaviour.md
   - docs/storage.md
+  - docs/indexes.md
 journeys:
   - read-queries
 ---

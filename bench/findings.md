@@ -61,4 +61,4 @@ Without an index, MySQL's `lookup` is a correlated `LIMIT 1` subquery per review
 
 ### 7. A value key under `internalTitleFr`
 
-It now keys `_internal.data.title.fr` with a [value key](../docs/storage.md#key-columns): a string's bound is `key = LEFT(CONCAT('2', v), 638)`, still one `ref`. Its rows' medians stay below the previous run's p95, as `titleFr`'s do with an unchanged key.
+It now keys `_internal.data.title.fr` with a [value key](../docs/indexes.md#key-columns): a string's bound is `key = LEFT(CONCAT('2', v), 638)`, still one `ref`. Its rows' medians stay below the previous run's p95, as `titleFr`'s do with an unchanged key.
