@@ -3,6 +3,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { Logger } from "../../logger";
 import { GetDialect, type Row } from "../../connection";
 import type { MigrationMode } from "../../config";
+import type { Sql } from "../../statement";
 import type { DdlSyntax, Dialect, RowKey } from "../../dialect";
 import { Observe } from "./observe";
 import type { DeclaredColumn, TablePlan } from "./plan";
@@ -171,6 +172,35 @@ export async function ConvergeTable(
   }
 }
 
+/**
+ * Runs the module's registry statements, each idempotent, so one another session's convergence or
+ * sequencer deadlocked or held past the lock wait runs again after a pause, up to
+ * {@link LOCK_ATTEMPTS} times, as a convergence step does.
+ */
+export async function ApplyRegistry(
+  dialect: Dialect,
+  session: ConvergenceSession,
+  statements: readonly Sql[],
+): Promise<void> {
+  for (const statement of statements) {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        await session.apply(statement);
+        break;
+      } catch (err) {
+        const retried =
+          err instanceof Error &&
+          dialect.ddl.failure(err) === "lockTimeout" &&
+          attempt < LOCK_ATTEMPTS;
+        if (!retried) {
+          throw err;
+        }
+        await delay(RetryDelayMs(attempt));
+      }
+    }
+  }
+}
+
 function WarnOnce(warnings: readonly string[]): void {
   for (const warning of warnings) {
     if (!warned.has(warning)) {
@@ -191,9 +221,8 @@ export async function ConvergeTables(
   mode: MigrationMode,
 ): Promise<void> {
   const report = await WithTablesLock(SchemaKey(schemaId), async (session) => {
-    for (const statement of RegistryStatements(GetDialect())) {
-      await session.apply(statement);
-    }
+    const dialect = GetDialect();
+    await ApplyRegistry(dialect, session, RegistryStatements(dialect));
     let steps = 0;
     const warnings: string[] = [];
     for (const plan of plans) {
