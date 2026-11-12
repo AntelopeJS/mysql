@@ -5,7 +5,7 @@ import { setFlagsFromString } from "node:v8";
 import { Schema } from "@antelopejs/interface-database/schema";
 import type { SchemaDefinition } from "@antelopejs/interface-database/schema";
 
-import { ident, param, sql } from "../statement";
+import { ident, int, param, sql } from "../statement";
 import { AcquireConnection, Read } from "../connection";
 import { GetOptions, type Options } from "../config";
 import { SessionOf } from "../implementations/database/locks";
@@ -102,6 +102,31 @@ async function UntilNoneStreaming(table: string): Promise<void> {
     await delay(POLL_MS);
   }
   expect.fail("the server still streams a statement nothing reads");
+}
+
+/** Ends, server-side, the connection that streams the table's rows to a cursor. */
+async function KillStreaming(table: string): Promise<void> {
+  const pattern = `SELECT %${table}%`;
+  const rows = await Read(
+    sql`SELECT ID AS id FROM performance_schema.processlist WHERE INFO LIKE ${param(pattern)} AND INFO NOT LIKE '%processlist%'`,
+  );
+  expect(rows, "one connection streams the table").to.have.length(1);
+  await Run(sql`KILL ${int(Number(rows[0].get("id")))}`);
+}
+
+/** Reads on until a read answers no row, and says how that read ended, or `pending` after `ms`. */
+async function Ending(cursor: AsyncIterator<Item>, ms: number) {
+  const late = delay(ms).then(() => "pending");
+  for (;;) {
+    const step = cursor.next().then(
+      (result) => (result.done ? "done" : "row"),
+      (err: unknown) => `rejected: ${String(err)}`,
+    );
+    const outcome = await Promise.race([step, late]);
+    if (outcome !== "row") {
+      return outcome;
+    }
+  }
 }
 
 async function Columns(table: string): Promise<string[]> {
@@ -351,6 +376,42 @@ describe("leaving a for-await early", function () {
       failure = String(err);
     }
     expect(failure).to.contain("stopped at 0");
+    expect(CountOpenCursors()).to.equal(0);
+    for await (const row of items) {
+      expect(row.n).to.equal(0);
+      break;
+    }
+  });
+});
+
+describe("a cursor whose connection the server ends", function () {
+  this.timeout(120_000);
+  const schemaId = "cursors_killed";
+  let restore: Options;
+  let items: ItemsTable;
+
+  before(async () => {
+    restore = await Reconnected({ maxOpenCursors: 1, cursorBatchSize: BATCH });
+    items = (await Seeded(schemaId, 20_000, 1000)).instance().table("items");
+  });
+
+  after(async () => {
+    Schemas.unregister(schemaId);
+    await Reconnect(restore);
+  });
+
+  /**
+   * A read that waited on a stream its connection no longer feeds would never settle, and the
+   * cursor would hold the only place `maxOpenCursors: 1` allows for good.
+   */
+  it("rejects the read that meets the lost connection, and frees its place under the cap", async () => {
+    const cursor = items[Symbol.asyncIterator]();
+    for (let row = 0; row < 10; row += 1) {
+      expect((await cursor.next()).done).to.equal(false);
+    }
+    await KillStreaming(PhysicalTable(schemaId, "items"));
+    expect(await Ending(cursor, COMPLETES_WITHIN_MS)).to.match(/^rejected: /);
+    await cursor.return?.();
     expect(CountOpenCursors()).to.equal(0);
     for await (const row of items) {
       expect(row.n).to.equal(0);
