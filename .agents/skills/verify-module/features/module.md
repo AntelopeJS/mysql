@@ -11,6 +11,7 @@ docs:
   - README.md
   - docs/configuration.md
   - docs/errors.md
+  - docs/mariadb.md
 journeys:
   - module-dev
   - config-refused
