@@ -1,16 +1,21 @@
 import { expect } from "chai";
 import { setTimeout as delay } from "node:timers/promises";
 import type { PoolConnection } from "mysql2/promise";
-import type { SchemaDefinition } from "@antelopejs/interface-database/schema";
+import { IsDuplicateKeyError } from "@antelopejs/interface-database";
+import {
+  Schema,
+  type SchemaDefinition,
+} from "@antelopejs/interface-database/schema";
 
 import { ident, param, sql } from "../statement";
-import { AcquireConnection, Read } from "../connection";
+import { AcquireConnection, GetDialect, Read } from "../connection";
 import {
   FailureOf,
   Interrupt,
   SessionOf,
 } from "../implementations/database/locks";
 import { ConvergeIndexes } from "../implementations/database/migrate-indexes";
+import { SchemaKey } from "../implementations/database/registry";
 import {
   GetTablePlan,
   Schemas,
@@ -18,6 +23,7 @@ import {
   WaitForUniqueIndexes,
 } from "../implementations/database/schema";
 import { Numbers, PhysicalTable, Run } from "./tables";
+import { SettlesWithin } from "./watch";
 
 interface Settling {
   isSettled: boolean;
@@ -37,6 +43,15 @@ const PRICED: SchemaDefinition = {
 const UNIQUE_PRICE: SchemaDefinition = {
   items: { fields: FIELDS, indexes: { price: { unique: true } } },
 };
+const UNIQUE_PRICE_AND_SKU: SchemaDefinition = {
+  items: { fields: FIELDS, indexes: { price: { unique: true }, sku: {} } },
+};
+
+interface Item {
+  _id?: string;
+  sku?: string;
+  price?: number;
+}
 
 const LARGE_ROWS = 600_000;
 const POLL_MS = 5;
@@ -109,6 +124,41 @@ async function Release(connection: PoolConnection): Promise<void> {
   connection.release();
 }
 
+/**
+ * A connection holding the schema's index-phase lock, as another process's index phase holds it
+ * while it builds.
+ */
+async function HoldIndexPhase(schemaId: string): Promise<PoolConnection> {
+  const dialect = GetDialect();
+  const [database] = await Read(dialect.catalog.readDatabase());
+  const name = dialect.session.lockName(
+    "indexes",
+    `${String(database?.get("name"))}/${SchemaKey(schemaId)}`,
+  );
+  const connection = await AcquireConnection();
+  const [held] = await Read(dialect.session.acquireLock(name, 0), connection);
+  expect(Number(held?.get("acquired")), "the lock is free to take").to.equal(1);
+  return connection;
+}
+
+async function ReleaseIndexPhase(connection: PoolConnection): Promise<void> {
+  await Run(sql`DO RELEASE_ALL_LOCKS()`, connection);
+  connection.release();
+}
+
+/** Starts the insert at once, settled to `"stored"` or to the error it threw. */
+function Inserting(schema: Schema<{ items: Item }>, item: Item) {
+  return schema
+    .instance()
+    .table("items")
+    .insert(item)
+    .run()
+    .then(
+      () => "stored" as const,
+      (err: unknown) => err,
+    );
+}
+
 describe("an index build on a large table", function () {
   this.timeout(120_000);
   const schemaId = "index_phase_online";
@@ -161,6 +211,8 @@ describe("the unique-index write gate", function () {
   afterEach(() => {
     Schemas.unregister("index_phase_plain");
     Schemas.unregister("index_phase_unique");
+    Schemas.unregister("index_phase_elsewhere");
+    Schemas.unregister("index_phase_built");
   });
 
   it("never holds writes to a schema whose new indexes are not unique", async () => {
@@ -192,5 +244,43 @@ describe("the unique-index write gate", function () {
     await Release(held);
     await gate.done;
     expect(await IndexNames(schemaId)).to.deep.equal(["price"]);
+  });
+
+  it("holds writes while another process builds the unique index, then refuses the duplicate", async () => {
+    const schemaId = "index_phase_elsewhere";
+    await Fresh(schemaId, 100);
+    const elsewhere = await HoldIndexPhase(schemaId);
+    const schema = new Schema<{ items: Item }>(schemaId, UNIQUE_PRICE);
+    const insert = Inserting(schema, {
+      _id: "duplicate",
+      price: 7,
+    });
+    const isHeld = !(await SettlesWithin(insert, BLOCKED_MS));
+    await ReleaseIndexPhase(elsewhere);
+    expect(isHeld, "the write waits for the other process's build").to.equal(
+      true,
+    );
+    expect(IsDuplicateKeyError(await insert)).to.equal(true);
+    expect(await IndexNames(schemaId)).to.deep.equal(["price"]);
+  });
+
+  it("lets writes through while another process holds the index phase, once the unique index exists", async () => {
+    const schemaId = "index_phase_built";
+    await Fresh(schemaId, 100);
+    await Schemas.register(schemaId, UNIQUE_PRICE);
+    await WaitForIndexes(schemaId);
+    const elsewhere = await HoldIndexPhase(schemaId);
+    const schema = new Schema<{ items: Item }>(schemaId, UNIQUE_PRICE_AND_SKU);
+    const stored = Inserting(schema, { _id: "new", price: 1000 });
+    const duplicate = Inserting(schema, { _id: "duplicate", price: 7 });
+    const isPrompt = await SettlesWithin(stored, BLOCKED_MS);
+    await ReleaseIndexPhase(elsewhere);
+    expect(isPrompt, "the write does not wait for the other build").to.equal(
+      true,
+    );
+    expect(await stored).to.equal("stored");
+    expect(IsDuplicateKeyError(await duplicate)).to.equal(true);
+    await WaitForIndexes(schemaId);
+    expect(await IndexNames(schemaId)).to.deep.equal(["price", "sku"]);
   });
 });
