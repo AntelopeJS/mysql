@@ -5,6 +5,9 @@ import type { Table } from "@antelopejs/interface-database/selection";
 /** Long enough for the change clock to tick a few times; a delivery never takes this long. */
 export const QUIET_MS = 400;
 
+/** A value nested as many objects deep as a test needs, around a string. */
+export type Nest = string | { readonly n: Nest };
+
 /** A row of the tables the feed tests watch. */
 export interface Row {
   _id: string;
@@ -12,6 +15,8 @@ export interface Row {
   name?: string;
   size?: number;
   meta?: Record<string, number> | null;
+  deep?: Nest;
+  tree?: Nest;
 }
 
 export type Feed = ReturnType<ReturnType<Table<Row>["changes"]>["cursor"]>;

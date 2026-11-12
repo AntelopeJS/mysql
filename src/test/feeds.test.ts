@@ -10,6 +10,7 @@ import { PhysicalTable, Run } from "./tables";
 import {
   Delivered,
   type Feed,
+  type Nest,
   Opened,
   Pause,
   QUIET_MS,
@@ -100,6 +101,72 @@ describe("change feeds in commit order", function () {
       .to.have.property("oldValue")
       .that.does.not.have.property("meta");
     expect(change).to.have.nested.property("newValue.meta", null);
+  });
+});
+
+/** A value nested `levels` objects deep. */
+function Nested(levels: number): Nest {
+  let value: Nest = "🦌 deep";
+  for (let level = 0; level < levels; level += 1) {
+    value = { n: value };
+  }
+  return value;
+}
+
+/**
+ * The deepest a stored JSON value nests: MySQL refuses a 101st level. An undeclared field sits one
+ * level down in `_extra`, a declared object field holds its value at the top of its own column.
+ */
+const IN_EXTRA = 99;
+const IN_COLUMN = 100;
+
+/** A declared field one level short of the limit, which leaves room for the document around it. */
+const IN_DOCUMENT = IN_COLUMN - 1;
+
+const deep = new Schema<{ stored: Row; delivered: Row }>("feeds-depth", {
+  stored: { fields: { label: "string", tree: "object" }, indexes: {} },
+  delivered: { fields: { label: "string", tree: "object" }, indexes: {} },
+});
+
+describe("a watched table holding JSON as deep as MySQL stores it", function () {
+  this.timeout(30_000);
+
+  it("updates and deletes a row stored before it was watched", async () => {
+    const rows = deep.instance().table("stored");
+    await rows.insert({
+      _id: "deep",
+      deep: Nested(IN_EXTRA),
+      tree: Nested(IN_COLUMN),
+    });
+    const feed = await Opened(rows, "probe");
+    await feed.return?.();
+    expect(await rows.get("deep").update({ label: "changed" })).to.equal(1);
+    expect(await rows.get("deep")).to.have.property("label", "changed");
+    expect(await rows.get("deep").delete()).to.equal(1);
+    expect(await rows.get("deep")).to.equal(undefined);
+  });
+
+  it("delivers the changes of a row as deep as a document holds", async () => {
+    const rows = deep.instance().table("delivered");
+    const stored = { deep: Nested(IN_EXTRA), tree: Nested(IN_DOCUMENT) };
+    await rows.insert({ _id: "deep", ...stored });
+    const feed = await Opened(rows, "probe");
+    try {
+      expect(await rows.get("deep").update({ label: "changed" })).to.equal(1);
+      const modified = await Delivered(feed.next());
+      expect(modified.oldValue).to.deep.equal({ _id: "deep", ...stored });
+      expect(modified.newValue).to.deep.equal({
+        _id: "deep",
+        label: "changed",
+        ...stored,
+      });
+      expect(await rows.get("deep").delete()).to.equal(1);
+      const removed = await Delivered(feed.next());
+      expect(removed).to.have.property("changeType", "removed");
+      expect(removed.oldValue).to.deep.include(stored);
+    } finally {
+      await feed.return?.();
+    }
   });
 });
 
