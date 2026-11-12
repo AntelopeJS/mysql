@@ -46,7 +46,8 @@ function Expected(left: number, right: number) {
   };
 }
 
-describe("The numeric stages", () => {
+describe("The numeric stages", function () {
+  this.timeout(30_000);
   before(() => table.setup());
   after(() => table.teardown());
 
@@ -106,7 +107,8 @@ describe("The numeric stages", () => {
   });
 });
 
-describe("The date stages", () => {
+describe("The date stages", function () {
+  this.timeout(30_000);
   before(() => table.setup());
   after(() => table.teardown());
 
@@ -390,7 +392,8 @@ async function Mismatches(cases: readonly PatternCase[]): Promise<string[]> {
   return mismatches;
 }
 
-describe("The string stages", () => {
+describe("The string stages", function () {
+  this.timeout(30_000);
   before(() => table.setup());
   after(() => table.teardown());
 

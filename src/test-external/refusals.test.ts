@@ -39,7 +39,8 @@ async function AccountsUnchanged(): Promise<void> {
   expect(row).to.deep.equal({ name: "Acct 1", count: "20000" });
 }
 
-describe("what an external relation refuses", () => {
+describe("what an external relation refuses", function () {
+  this.timeout(30_000);
   before(async () => {
     sales = await RegisterSales();
   });

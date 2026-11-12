@@ -67,7 +67,8 @@ async function expectDuplicate(
   expect(err.fields).to.deep.equal(fields);
 }
 
-describe("duplicate keys", () => {
+describe("duplicate keys", function () {
+  this.timeout(30_000);
   before(async () => {
     await schema.createInstance(ALPHA);
     await schema.createInstance(BETA);

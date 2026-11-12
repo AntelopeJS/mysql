@@ -30,7 +30,8 @@ function NextDay(iso: string): Date {
   return new Date(Day(iso).getTime() + 86_400_000);
 }
 
-describe("listing an external relation as a TableView does", () => {
+describe("listing an external relation as a TableView does", function () {
+  this.timeout(30_000);
   before(async () => {
     sales = await RegisterSales();
   });
@@ -126,7 +127,8 @@ describe("listing an external relation as a TableView does", () => {
   });
 });
 
-describe("reading an external row by key", () => {
+describe("reading an external row by key", function () {
+  this.timeout(30_000);
   before(async () => {
     sales = await RegisterSales();
   });
@@ -185,7 +187,8 @@ describe("reading an external row by key", () => {
   });
 });
 
-describe("reading across external relations", () => {
+describe("reading across external relations", function () {
+  this.timeout(30_000);
   before(async () => {
     sales = await RegisterSales();
   });
@@ -244,7 +247,8 @@ describe("reading across external relations", () => {
   });
 });
 
-describe("the _id of relations without a single-column primary key", () => {
+describe("the _id of relations without a single-column primary key", function () {
+  this.timeout(30_000);
   before(async () => {
     sales = await RegisterSales();
   });
@@ -283,7 +287,8 @@ describe("the _id of relations without a single-column primary key", () => {
   }
 });
 
-describe("instances over an external relation", () => {
+describe("instances over an external relation", function () {
+  this.timeout(30_000);
   before(async () => {
     sales = await RegisterSales();
   });

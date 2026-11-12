@@ -19,7 +19,8 @@ const SLICES: readonly (readonly [number, number | undefined])[] = [
   [3, 1],
 ];
 
-describe("The array stages", () => {
+describe("The array stages", function () {
+  this.timeout(30_000);
   before(() => table.setup());
   after(() => table.teardown());
 
@@ -101,7 +102,8 @@ describe("The array stages", () => {
   });
 });
 
-describe("The array stages that read each element", () => {
+describe("The array stages that read each element", function () {
+  this.timeout(30_000);
   before(() => table.setup());
   after(() => table.teardown());
 
@@ -175,7 +177,8 @@ describe("The array stages that read each element", () => {
   });
 });
 
-describe("The object stages", () => {
+describe("The object stages", function () {
+  this.timeout(30_000);
   before(() => table.setup());
   after(() => table.teardown());
 

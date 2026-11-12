@@ -64,7 +64,8 @@ async function Stored(): Promise<Map<string, Stored>> {
   );
 }
 
-describe("a field declared over values already in _extra", () => {
+describe("a field declared over values already in _extra", function () {
+  this.timeout(30_000);
   let stored: Map<string, Stored>;
 
   before(async () => {

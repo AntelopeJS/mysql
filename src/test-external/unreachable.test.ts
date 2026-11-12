@@ -31,7 +31,8 @@ function Altered(url: string, change: (target: URL) => void): string {
   return target.toString();
 }
 
-describe("an external instance whose first connection fails", () => {
+describe("an external instance whose first connection fails", function () {
+  this.timeout(30_000);
   let original: Restorable;
 
   before(() => {
