@@ -122,7 +122,7 @@ export function Cast(
     return {
       sql: dialect.sql.json.as(value.sql, target.kind),
       type: target,
-      key: PathReference(value, target),
+      key: PathReference(dialect, value, target),
     };
   }
   return { sql: dialect.sql.scalar.cast(value.sql, target.kind), type: target };

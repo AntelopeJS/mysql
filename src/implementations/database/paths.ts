@@ -33,15 +33,24 @@ type IndexTarget =
  * How a generated key column reads its source.
  *
  * - `text`: a declared string column's own text.
- * - `string`: the JSON string at a path; NULL for any other JSON type, so a string constant never
- *   matches a number.
- * - `double`, `bool`: the JSON number or boolean at a path.
- * - `json`: the canonical text of the JSON value at a path, or of the whole column.
+ * - `string`: the JSON string at a path declared a string or a date; NULL for any other JSON type,
+ *   so a string constant never matches a number.
+ * - `double`, `bool`: the JSON number or boolean at a path declared one.
+ * - `ranked-text`, `ranked-number`: the two columns of a {@link ValueKey}.
  */
-type KeyRead = "text" | "string" | "double" | "bool" | "json";
+type KeyRead =
+  | "text"
+  | "string"
+  | "double"
+  | "bool"
+  | "ranked-text"
+  | "ranked-number";
 
-type TextRead = Extract<KeyRead, "text" | "string" | "json">;
+type TextRead = Extract<KeyRead, "text" | "string" | "ranked-text">;
 type ScalarRead = Exclude<KeyRead, TextRead>;
+
+/** The reads a value of a declared scalar type is keyed by. */
+type TypedRead = Extract<KeyRead, "text" | "string" | "double" | "bool">;
 
 /**
  * How much of a text key column's value it holds.
@@ -82,11 +91,30 @@ interface ScalarKeyColumn extends KeyColumnBase {
  */
 export type KeyColumn = TextKeyColumn | ScalarKeyColumn;
 
+/**
+ * The key of a value whose type nothing declares, as two columns in key order that sort it as the
+ * engine sorts JSON: on MySQL absent first, then null, numbers, strings, objects, arrays, and
+ * booleans, false before true.
+ *
+ * - `text`: a tag for the value's kind, its place in that order, followed by a string's text or an
+ *   object's or an array's JSON text; the tag alone for a number or a boolean; NULL for a null or an
+ *   absent value.
+ * - `number`: a number, or 0 and 1 for false and true; 0 for any other value, a null included, and
+ *   NULL for an absent value, which is what sorts an absent value before a null.
+ *
+ * A unique index over the two refuses two equal values of any kind, and never two nulls.
+ */
+export interface ValueKey {
+  readonly text: TextKeyColumn;
+  readonly number: ScalarKeyColumn;
+}
+
 /** One part of a physical index key, in key order. */
 export type KeyPart =
   | { readonly kind: "instance"; readonly column: string }
   | { readonly kind: "stored"; readonly field: string; readonly column: string }
   | { readonly kind: "key"; readonly field: string; readonly key: KeyColumn }
+  | { readonly kind: "value"; readonly field: string; readonly key: ValueKey }
   | {
       readonly kind: "elements";
       readonly field: string;
@@ -102,30 +130,40 @@ const BYTES_PER_CHAR = 4;
 const INSTANCE_BYTES = MAX_INSTANCE_ID_CHARS * BYTES_PER_CHAR;
 const ID_BYTES = MAX_KEY_CHARS * BYTES_PER_CHAR;
 
-/** How each declared field type is keyed when indexed whole: by its own column, or through a key column. */
+/** A value keyed by its kind as well as its value, which is how every JSON value without a scalar declared type is keyed. */
+const VALUE = "value";
+
+/** How each declared field type is keyed when indexed whole: by its own column, or through key columns. */
 const FIELD_KEYS: Record<
   SqlType["kind"],
-  { readonly stored: number } | { readonly read: TextRead }
+  { readonly stored: number } | { readonly read: "text" } | typeof VALUE
 > = {
   text: { read: "text" },
   float: { stored: 8 },
   timestamp: { stored: 8 },
   bool: { stored: 1 },
-  json: { read: "json" },
-  array: { read: "json" },
+  json: VALUE,
+  array: VALUE,
 };
 
-/** How a JSON member is read for its declared type; an undeclared member is read as a string. */
-const MEMBER_READS: Record<SqlType["kind"], KeyRead> = {
+/** How a JSON member is keyed for its declared type; a member no declaration types is a value. */
+const MEMBER_READS: Record<SqlType["kind"], TypedRead | typeof VALUE> = {
   text: "string",
   timestamp: "string",
   float: "double",
   bool: "bool",
-  json: "json",
-  array: "json",
+  json: VALUE,
+  array: VALUE,
 };
 
-const SCALAR_BYTES: Record<ScalarRead, number> = { double: 8, bool: 1 };
+const SCALAR_BYTES: Record<ScalarRead, number> = {
+  double: 8,
+  bool: 1,
+  "ranked-number": 8,
+};
+
+/** What a value key's columns take of the key budget beside its text. */
+const VALUE_BYTES = SCALAR_BYTES["ranked-number"];
 
 /** A key part before text widths are known: they depend on every other part of the index. */
 type Draft =
@@ -134,7 +172,12 @@ type Draft =
       readonly kind: "key";
       readonly source: string;
       readonly path: JsonPath;
-      readonly read: KeyRead;
+      readonly read: TypedRead;
+    }
+  | {
+      readonly kind: "value";
+      readonly source: string;
+      readonly path: JsonPath;
     };
 
 /** Whether a column's comment is a key column's signature, which makes the column the module's own. */
@@ -216,10 +259,15 @@ function DraftOf(target: IndexTarget): Draft {
     return { kind: "stored", column: ID_COLUMN, bytes: ID_BYTES };
   }
   if (target.kind === "member") {
-    const read = target.type ? MEMBER_READS[target.type.kind] : "string";
-    return { kind: "key", source: target.column, path: target.path, read };
+    const read = target.type ? MEMBER_READS[target.type.kind] : VALUE;
+    return read === VALUE
+      ? { kind: "value", source: target.column, path: target.path }
+      : { kind: "key", source: target.column, path: target.path, read };
   }
   const keyed = FIELD_KEYS[target.type.kind];
+  if (keyed === VALUE) {
+    return { kind: "value", source: target.column, path: [] };
+  }
   if ("stored" in keyed) {
     return { kind: "stored", column: target.column, bytes: keyed.stored };
   }
@@ -227,14 +275,50 @@ function DraftOf(target: IndexTarget): Draft {
 }
 
 function IsTextRead(read: KeyRead): read is TextRead {
-  return read === "text" || read === "string" || read === "json";
+  return read === "text" || read === "string" || read === "ranked-text";
 }
 
+/** The key bytes a part takes before its text: all of a fixed-width part, and none of a text part. */
 function DraftBytes(draft: Draft): number {
-  if (draft.kind === "stored") {
-    return draft.bytes;
+  switch (draft.kind) {
+    case "stored":
+      return draft.bytes;
+    case "value":
+      return VALUE_BYTES;
+    case "key":
+      return IsTextRead(draft.read) ? 0 : SCALAR_BYTES[draft.read];
   }
-  return IsTextRead(draft.read) ? 0 : SCALAR_BYTES[draft.read];
+}
+
+function HasText(draft: Draft): boolean {
+  return (
+    draft.kind === "value" || (draft.kind === "key" && IsTextRead(draft.read))
+  );
+}
+
+/** The name and the signature of a key column, from everything its definition depends on. */
+function Named(source: string, path: JsonPath, signature: string) {
+  const words = source === EXTRA_COLUMN ? path : [source, ...path];
+  const definition = `${SIGNATURE_PREFIX}:${signature}:${source}:${JSON.stringify(path)}`;
+  return { name: KeyColumnName(words, definition), definition };
+}
+
+function ScalarColumnOf(
+  source: string,
+  path: JsonPath,
+  read: ScalarRead,
+): ScalarKeyColumn {
+  return { ...Named(source, path, read), source, path, read };
+}
+
+function TextColumnOf(
+  source: string,
+  path: JsonPath,
+  read: TextRead,
+  fit: KeyFit,
+): TextKeyColumn {
+  const signature = `${read}:${fit.kind}:${fit.width}`;
+  return { ...Named(source, path, signature), source, path, read, fit };
 }
 
 function KeyColumnOf(
@@ -242,16 +326,43 @@ function KeyColumnOf(
   fit: KeyFit,
 ): KeyColumn {
   const { source, path, read } = draft;
-  const words = source === EXTRA_COLUMN ? path : [source, ...path];
-  const located = `${source}:${JSON.stringify(path)}`;
-  if (!IsTextRead(read)) {
-    const definition = `${SIGNATURE_PREFIX}:${read}:${located}`;
-    const name = KeyColumnName(words, definition);
-    return { name, source, path, read, definition };
+  return IsTextRead(read)
+    ? TextColumnOf(source, path, read, fit)
+    : ScalarColumnOf(source, path, read);
+}
+
+function ValueKeyOf(
+  draft: Extract<Draft, { kind: "value" }>,
+  fit: KeyFit,
+): ValueKey {
+  const { source, path } = draft;
+  return {
+    text: TextColumnOf(source, path, "ranked-text", fit),
+    number: ScalarColumnOf(source, path, "ranked-number"),
+  };
+}
+
+/** The characters a value key's text column spends on the tag of the value's kind, ahead of its text. */
+const TAG_CHARS = 1;
+
+/** How many characters of a value a key column holds, for a column that holds text. */
+export function TextCapacity(key: KeyColumn): number | undefined {
+  if (!("fit" in key)) {
+    return undefined;
   }
-  const definition = `${SIGNATURE_PREFIX}:${read}:${fit.kind}:${fit.width}:${located}`;
-  const name = KeyColumnName(words, definition);
-  return { name, source, path, read, fit, definition };
+  return key.read === "ranked-text" ? key.fit.width - TAG_CHARS : key.fit.width;
+}
+
+/** The key columns a part of an index reads, in key order: none for a part that is a stored column. */
+export function KeyColumnsOf(part: KeyPart): KeyColumn[] {
+  switch (part.kind) {
+    case "key":
+      return [part.key];
+    case "value":
+      return [part.key.text, part.key.number];
+    default:
+      return [];
+  }
 }
 
 /**
@@ -267,9 +378,7 @@ function TextWidth(
   session: SessionSyntax,
 ): number {
   const fixed = drafts.reduce((sum, draft) => sum + DraftBytes(draft), 0);
-  const textParts = drafts.filter(
-    (draft) => draft.kind === "key" && IsTextRead(draft.read),
-  ).length;
+  const textParts = drafts.filter(HasText).length;
   const remaining = session.keyBudgetBytes - INSTANCE_BYTES - fixed;
   const width =
     textParts === 0 ? 0 : Math.floor(remaining / BYTES_PER_CHAR / textParts);
@@ -299,11 +408,15 @@ export function KeyParts(
     kind: unique ? "exact" : "prefix",
     width: TextWidth(indexId, drafts, session),
   };
-  return drafts.map((draft, position) => {
+  return drafts.map((draft, position): KeyPart => {
     const field = fields[position];
-    if (draft.kind === "stored") {
-      return { kind: "stored", field, column: draft.column };
+    switch (draft.kind) {
+      case "stored":
+        return { kind: "stored", field, column: draft.column };
+      case "value":
+        return { kind: "value", field, key: ValueKeyOf(draft, fit) };
+      case "key":
+        return { kind: "key", field, key: KeyColumnOf(draft, fit) };
     }
-    return { kind: "key", field, key: KeyColumnOf(draft, fit) };
   });
 }

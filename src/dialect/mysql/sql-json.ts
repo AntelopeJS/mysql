@@ -77,16 +77,49 @@ const READS: Record<ScalarKind, (value: Sql) => Sql> = {
     sql`(CASE WHEN ${Is(value, ["string"])} THEN ${ParseInstant(Unquoted(value))} END)`,
 };
 
+/** MySQL's own order of JSON kinds, lowest first, as `ORDER BY` sorts a JSON column. */
+const RANKS: Readonly<Record<JsonKind, number>> = {
+  null: 0,
+  number: 1,
+  string: 2,
+  object: 3,
+  array: 4,
+  boolean: 5,
+};
+
+/** The rank of the kinds a JSON column can hold that no JSON text spells, such as a `DATE`; MySQL sorts them last. */
+const OTHER_RANK = 6;
+
+/** A rank's tag is its one digit, so the tags of the ranks sort in the ranks' order. */
+function Tagged(rank: number, text?: Sql): Sql {
+  const tag = lit(String(rank));
+  return text === undefined ? tag : sql`CONCAT(${tag}, ${text})`;
+}
+
+/**
+ * The tag of the value's kind, followed by a string's text or an object's, an array's or another
+ * value's canonical text; NULL for a null and an absent value.
+ */
+function RankedText(value: Sql): Sql {
+  return sql`(CASE WHEN ${Is(value, ["string"])} THEN ${Tagged(RANKS.string, Unquoted(value))} WHEN ${Is(value, ["number"])} THEN ${Tagged(RANKS.number)} WHEN ${Is(value, ["boolean"])} THEN ${Tagged(RANKS.boolean)} WHEN ${Is(value, ["object"])} THEN ${Tagged(RANKS.object, sql`CAST(${value} AS CHAR)`)} WHEN ${Is(value, ["array"])} THEN ${Tagged(RANKS.array, sql`CAST(${value} AS CHAR)`)} WHEN ${Is(value, ["null"])} THEN NULL ELSE ${Tagged(OTHER_RANK, sql`CAST(${value} AS CHAR)`)} END)`;
+}
+
+/** A number, 0 or 1 for a boolean, 0 for any other value, and NULL for an absent one. */
+function RankedNumber(value: Sql): Sql {
+  return sql`(CASE WHEN ${value} IS NULL THEN NULL WHEN ${Is(value, ["number"])} THEN CAST(${value} AS DOUBLE) WHEN ${Is(value, ["boolean"])} THEN (${value} = ${JSON_TRUE}) ELSE 0 END)`;
+}
+
 /**
  * How a key column's source value reads as what the column holds: a declared string column's own
- * text, a JSON string, number or boolean by kind, and any other JSON value as its canonical text.
+ * text, a JSON string, number or boolean by kind, and the two columns of a value key.
  */
 const KEY_READS: Record<KeyColumn["read"], (value: Sql) => Sql> = {
   text: (value) => value,
   string: READS.text,
   double: READS.float,
   bool: READS.bool,
-  json: (value) => sql`CAST(${value} AS CHAR)`,
+  "ranked-text": RankedText,
+  "ranked-number": RankedNumber,
 };
 
 /**
@@ -270,6 +303,8 @@ export const json: JsonSyntax = {
   is: Is,
   as: (value, kind) => READS[kind](value),
   key: (read, value) => KEY_READS[read](value),
+  ranks: RANKS,
+  tagged: Tagged,
   of: (value, kind) => WRITINGS[kind](value),
   parse: (text) => sql`CAST(${text} AS JSON)`,
   text: (value) => sql`CAST(${value} AS CHAR)`,

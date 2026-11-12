@@ -35,10 +35,14 @@ describe("a schema registered on a connected instance", () => {
       "titleFr",
       "owner",
     ]);
-    expect(plan.keyColumns.map((key) => key.source)).to.deep.equal([
-      "slug",
-      "title",
-      "_extra",
+    expect(
+      plan.keyColumns.map((key) => `${key.source}:${key.read}`),
+    ).to.deep.equal([
+      "slug:text",
+      "title:ranked-text",
+      "title:ranked-number",
+      "_extra:ranked-text",
+      "_extra:ranked-number",
     ]);
   });
 

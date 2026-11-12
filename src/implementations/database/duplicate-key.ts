@@ -3,6 +3,7 @@ import { DuplicateKeyError } from "@antelopejs/interface-database";
 import type { Dialect } from "../../dialect";
 import { ID_COLUMN } from "./utils";
 import type { IndexPlan } from "./plan";
+import { KeyColumnsOf, TextCapacity } from "./paths";
 import type { TableOrigin } from "./relation";
 
 const PRIMARY_KEY = "primary";
@@ -43,10 +44,14 @@ function DuplicateOf(origin: TableOrigin, key: string): Error | undefined {
 function TooLongFor(origin: TableOrigin, column: string): Error | undefined {
   for (const index of origin.plan.indexes) {
     for (const part of index.parts) {
-      if (part.kind !== "key" || part.key.name !== column) {
+      if (part.kind === "instance") {
         continue;
       }
-      const width = "fit" in part.key ? part.key.fit.width : undefined;
+      const key = KeyColumnsOf(part).find((one) => one.name === column);
+      if (!key) {
+        continue;
+      }
+      const width = TextCapacity(key);
       return new Error(
         `The value of '${part.field}' is longer than ${width ?? "the"} characters unique index '${index.id}' on '${origin.schemaId}.${origin.tableId}' can hold`,
       );

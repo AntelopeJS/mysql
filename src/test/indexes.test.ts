@@ -2,9 +2,9 @@ import { expect } from "chai";
 import type { SchemaDefinition } from "@antelopejs/interface-database/schema";
 
 import { Logger } from "../logger";
-import { Read, type Row } from "../connection";
+import { GetDialect, Read, type Row } from "../connection";
 import { type Sql, ident, param, sql } from "../statement";
-import type { KeyPart } from "../implementations/database/paths";
+import { KeyColumnsOf, type KeyPart } from "../implementations/database/paths";
 import type { IndexPlan } from "../implementations/database/plan";
 import {
   GetTablePlan,
@@ -82,9 +82,10 @@ async function Catalog(schemaId: string): Promise<CatalogIndex[]> {
   }));
 }
 
-/** The column each planned key part reads, as the catalog names it; an element part by its column. */
-function PartColumn(part: KeyPart): string {
-  return part.kind === "key" ? part.key.name : part.column;
+/** The columns each planned key part reads, as the catalog names them; an element part by its column. */
+function PartColumns(part: KeyPart): string[] {
+  const keys = KeyColumnsOf(part).map((key) => key.name);
+  return keys.length > 0 || !("column" in part) ? keys : [part.column];
 }
 
 /** The planned index of `name`, with the key column of its last part. */
@@ -98,7 +99,24 @@ function Planned(schemaId: string, name: string): IndexPlan {
 
 function KeyColumnOf(schemaId: string, name: string): Sql {
   const part = Planned(schemaId, name).parts.at(-1);
-  return ident(part ? PartColumn(part) : name);
+  return ident(part ? (PartColumns(part).at(0) ?? name) : name);
+}
+
+/**
+ * An equality on the value key of index `name`'s last part, as the compiler spells it: the text
+ * tagged with the value's kind, so the index can serve it.
+ */
+function ValueKeyEquals(
+  schemaId: string,
+  name: string,
+  kind: "string" | "object",
+  text: string,
+): Sql {
+  const part = Planned(schemaId, name).parts.at(-1);
+  expect(part?.kind, name).to.equal("value");
+  const [held] = part ? PartColumns(part) : [];
+  const json = GetDialect().sql.json;
+  return sql`${ident(held)} = ${json.tagged(json.ranks[kind], param(text))}`;
 }
 
 /** The index the server would read for a hand-written `SELECT _id ... WHERE condition`. */
@@ -173,8 +191,8 @@ describe("indexes declared on a populated table", function () {
       (await Catalog(schemaId)).map((index) => [index.name, index.parts]),
     );
     for (const index of GetTablePlan(schemaId, "items").indexes) {
-      const parts = index.parts.map((part) =>
-        part.kind === "elements" ? "cast(" : PartColumn(part),
+      const parts = index.parts.flatMap((part) =>
+        part.kind === "elements" ? ["cast("] : PartColumns(part),
       );
       const catalog = built.get(index.name) ?? "";
       for (const part of parts) {
@@ -192,13 +210,19 @@ describe("indexes declared on a populated table", function () {
       ["sku__g", sql`${KeyColumnOf(schemaId, "sku__g")} = 'sku-7'`],
       [
         "titleFr",
-        sql`${scoped} ${KeyColumnOf(schemaId, "titleFr")} = 'titre 7'`,
+        sql`${scoped} ${ValueKeyEquals(schemaId, "titleFr", "string", "titre 7")}`,
       ],
-      ["color", sql`${scoped} ${KeyColumnOf(schemaId, "color")} = 'color-7'`],
-      ["owner", sql`${scoped} ${KeyColumnOf(schemaId, "owner")} = 'owner-7'`],
+      [
+        "color",
+        sql`${scoped} ${ValueKeyEquals(schemaId, "color", "string", "color-7")}`,
+      ],
+      [
+        "owner",
+        sql`${scoped} ${ValueKeyEquals(schemaId, "owner", "string", "owner-7")}`,
+      ],
       [
         "wholeTitle",
-        sql`${scoped} ${KeyColumnOf(schemaId, "wholeTitle")} = '{"en": "title 7", "fr": "titre 7"}'`,
+        sql`${scoped} ${ValueKeyEquals(schemaId, "wholeTitle", "object", '{"en": "title 7", "fr": "titre 7"}')}`,
       ],
       ["tags", sql`${scoped} 'tag-7' MEMBER OF (JSON_EXTRACT(tags, '$'))`],
     ];
@@ -209,7 +233,7 @@ describe("indexes declared on a populated table", function () {
 
   it("holds the value its key column reads, so the index finds the row the field names", async () => {
     const rows = await Read(
-      sql`SELECT _id FROM ${ident(PhysicalTable(schemaId))} FORCE INDEX (owner) WHERE ${scoped} ${KeyColumnOf(schemaId, "owner")} = 'owner-7'`,
+      sql`SELECT _id FROM ${ident(PhysicalTable(schemaId))} FORCE INDEX (owner) WHERE ${scoped} ${ValueKeyEquals(schemaId, "owner", "string", "owner-7")}`,
     );
     expect(rows.map((row) => Text(row, "_id"))).to.deep.equal(["beta-7"]);
   });
@@ -240,7 +264,7 @@ describe("indexes whose declaration changes", function () {
     expect(price.name).to.equal("price");
     expect(price.comment).to.equal(Planned(schemaId, "price").signature);
     expect(price.parts).to.equal(
-      `_instance | price | ${Planned(schemaId, "price").parts.map(PartColumn)[2]}`,
+      `_instance | price | ${Planned(schemaId, "price").parts.flatMap(PartColumns)[2]}`,
     );
   });
 

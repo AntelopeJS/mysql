@@ -99,7 +99,7 @@ describe("A failed write", () => {
 
   it("names the field and the width when a value is too wide for a unique index's key", () => {
     const key = PlanOf("people").keyColumns.find(
-      (column) => column.source === "meta",
+      (column) => column.source === "meta" && "fit" in column,
     );
     const failure = DuplicateKeyFailure(
       ServerError(

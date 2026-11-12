@@ -1,10 +1,13 @@
+import assert from "node:assert";
+
 import type { Dialect } from "../../dialect";
 import { type Sql, sql } from "../../statement";
 import { Cast, WithDefault } from "./coerce";
 import { Defaulted } from "./readings";
 import { DocumentKeys, type TableModel } from "./fields";
-import type { KeyColumn, KeyPart } from "./paths";
-import { KeyAt } from "./json";
+import type { KeyColumn, KeyPart, ValueKey } from "./paths";
+import { KeyAt, TypedKeyReference } from "./json";
+import { ValueReferenceOf } from "./value-key";
 import {
   DEFAULT_INSTANCE_ID,
   EXTRA_COLUMN,
@@ -13,9 +16,9 @@ import {
 } from "./utils";
 import {
   type Compiled,
-  type KeyReference,
   QualifiedColumn,
   type ValuePath,
+  type ValueReference,
 } from "./sql";
 import {
   BOOL,
@@ -129,29 +132,43 @@ export function LoggedColumns(dialect: Dialect, row: Sql): ColumnAddress {
   };
 }
 
-/** The key columns of a table as one row of it addresses them, and the columns its multi-valued indexes cover. */
+/**
+ * The key columns of a table as one row of it addresses them, the value keys among them, and the
+ * columns its multi-valued indexes cover.
+ */
 export interface RowKeys {
   readonly alias: string;
   readonly columns: readonly KeyColumn[];
+  readonly values: readonly ValueKey[];
   readonly elements: readonly string[];
 }
 
-/** One part of an index key, read off a row: the value it compares, and what it orders by. */
+/**
+ * One part of an index key, read off a row: the value it compares, the terms it orders by, and for
+ * a value of no declared type the value key a selection by it is narrowed through.
+ */
 export interface IndexedValue {
   readonly value: Compiled;
-  readonly order: Sql;
+  readonly order: readonly Sql[];
+  readonly ranked?: ValueReference;
 }
 
-/**
- * The type a key column's read has. A `json` key holds the canonical text of its value, which the
- * compiler reads as the value itself.
- */
-const KEY_READ_TYPES: Record<Exclude<KeyColumn["read"], "json">, SqlType> = {
+type TypedRead = Extract<
+  KeyColumn["read"],
+  "text" | "string" | "double" | "bool"
+>;
+
+/** The type each typed key column's read has. */
+const KEY_READ_TYPES: Record<TypedRead, SqlType> = {
   text: TEXT,
   string: TEXT,
   double: FLOAT,
   bool: BOOL,
 };
+
+function IsTypedRead(read: KeyColumn["read"]): read is TypedRead {
+  return Object.hasOwn(KEY_READ_TYPES, read);
+}
 
 /**
  * A row of a table the adapter owns: declared fields are their own typed columns, anything else a
@@ -197,10 +214,7 @@ export class ColumnRowSource implements RowSource {
     return WithDefault(this.dialect, member, def);
   }
 
-  private keyRead(read: KeyColumn["read"], value: Sql): Compiled {
-    if (read === "json") {
-      return { sql: value, type: OPAQUE };
-    }
+  private keyRead(read: TypedRead, value: Sql): Compiled {
     return {
       sql: this.dialect.sql.json.key(read, value),
       type: KEY_READ_TYPES[read],
@@ -226,6 +240,7 @@ export class ColumnRowSource implements RowSource {
     const column = keys && {
       alias: keys.alias,
       keys: keys.columns,
+      values: keys.values,
       elements: keys.elements,
       source,
     };
@@ -280,30 +295,51 @@ export class ColumnRowSource implements RowSource {
   }
 
   /**
-   * One part of a declared index read off this row: a stored column as itself, and a key column's
-   * part as the whole value it reads, beside the key column a comparison can be served by and the
-   * column the rows are ordered by. Where the row is not the table itself, the value is read in
-   * full and ordered by.
+   * One part of a declared index read off this row: a stored column as itself, a typed key's part as
+   * the value it reads beside the key column a comparison can be served by and the rows are ordered
+   * by, and a value key's part as the JSON value itself, ordered by the value key's columns. Where
+   * the row is not the table itself, the value is read in full and ordered by.
    */
   public indexed(part: Exclude<KeyPart, { kind: "instance" }>): IndexedValue {
-    if (part.kind !== "key") {
-      const value = this.field(part.field);
-      return { value, order: value.sql };
+    switch (part.kind) {
+      case "stored":
+      case "elements": {
+        const value = this.field(part.field);
+        return { value, order: [value.sql] };
+      }
+      case "value":
+        return this.valued(part.field, part.key);
+      case "key":
+        return this.keyed(part.key);
     }
-    const key = part.key;
+  }
+
+  private keyed(key: KeyColumn): IndexedValue {
+    assert(IsTypedRead(key.read), "A key part keys on a typed read");
     const read = this.dialect.sql.json.member(
       this.address(key.source, OPAQUE).sql,
       ...key.path,
     );
     const value = this.keyRead(key.read, read);
     if (!this.keys) {
-      return { value, order: value.sql };
+      return { value, order: [value.sql] };
     }
-    const column = QualifiedColumn(this.keys.alias, key.name);
-    const reference: KeyReference = { column, key, rows: "every" };
-    const comparable =
-      key.read === "json" ? value : { ...value, key: reference };
-    return { value: comparable, order: column };
+    const reference = TypedKeyReference(this.keys.alias, key);
+    return { value: { ...value, key: reference }, order: [reference.column] };
+  }
+
+  /** The value as the same name reads it without the index, so the index never changes what it reads. */
+  private valued(field: string, key: ValueKey): IndexedValue {
+    const value = NamedField(this.dialect, this, field);
+    if (!this.keys) {
+      return { value, order: [value.sql] };
+    }
+    const ranked = ValueReferenceOf(this.keys.alias, key);
+    return {
+      value,
+      order: [ranked.text, ranked.number],
+      ranked,
+    };
   }
 }
 

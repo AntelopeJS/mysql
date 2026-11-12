@@ -4,7 +4,11 @@ import type { TableDefinition } from "@antelopejs/interface-database/schema";
 import { DIALECTS } from "../../dialect";
 import { Bind, type Sql, ident } from "../../statement";
 import { ParseTable } from "../../implementations/database/fields";
-import type { KeyColumn, KeyPart } from "../../implementations/database/paths";
+import {
+  type KeyColumn,
+  KeyColumnsOf,
+  type KeyPart,
+} from "../../implementations/database/paths";
 import { BuildTablePlan } from "../../implementations/database/plan";
 import { ColumnRowSource } from "../../implementations/database/row-source";
 import type { TablePlan } from "../../implementations/database/plan";
@@ -27,6 +31,7 @@ const DEFINITION: TableDefinition = {
     label: { fields: ["stats.label"] },
     labelExact: { fields: ["stats.label"], unique: true },
     nickname: { fields: ["nickname"] },
+    nicknameExact: { fields: ["nickname"], unique: true },
     nested: { fields: ["_internal.data.owner"] },
   },
 };
@@ -54,24 +59,30 @@ function Generated(key: KeyColumn): string {
 }
 
 /**
- * What the compiler reads for the same part of an index on a row of the table: the value the key
- * column is compared by, cut to the column's width as a comparison cuts its bound. A `json` key
- * holds the canonical text of the value the compiler reads whole.
+ * What the compiler reads for each key column of a part of an index on a row of the table, cut to
+ * the column's width as a comparison cuts its bound: the value a typed key column is compared by,
+ * and for a value key's columns what each holds of the value the compiler reads whole.
  */
-function Read(key: KeyColumn): string {
-  const part: KeyPart = { kind: "key", field: key.name, key };
+function Reads(part: KeyPart): [KeyColumn, string][] {
   const source = new ColumnRowSource(
     MYSQL,
     (column, type) => ({ sql: ident(column), type }),
     ParseTable(DEFINITION, "shop.items"),
   );
+  if (part.kind !== "key" && part.kind !== "value") {
+    return [];
+  }
   const { value } = source.indexed(part);
-  const whole =
-    key.read === "json" ? MYSQL.sql.json.text(value.sql) : value.sql;
-  const fit = "fit" in key ? key.fit : undefined;
-  return Texts(
-    fit?.kind === "prefix" ? MYSQL.sql.scalar.left(whole, fit.width) : whole,
-  );
+  return KeyColumnsOf(part).map((key) => {
+    const whole =
+      part.kind === "value"
+        ? MYSQL.sql.json.key(key.read, value.sql)
+        : value.sql;
+    const fit = "fit" in key ? key.fit : undefined;
+    const read =
+      fit?.kind === "prefix" ? MYSQL.sql.scalar.left(whole, fit.width) : whole;
+    return [key, Texts(read)];
+  });
 }
 
 describe("a key column's generation expression", () => {
@@ -86,7 +97,9 @@ describe("a key column's generation expression", () => {
     expect([...kinds].sort()).to.deep.equal([
       "bool",
       "double",
-      "json:prefix",
+      "ranked-number",
+      "ranked-text:exact",
+      "ranked-text:prefix",
       "string:exact",
       "string:prefix",
       "text:exact",
@@ -95,8 +108,12 @@ describe("a key column's generation expression", () => {
   });
 
   it("is the read the compiler makes of the same value, for every key column", () => {
+    const parts = plan.indexes.flatMap((index) => index.parts);
+    const read = new Map(
+      parts.flatMap(Reads).map(([key, text]) => [key.name, text]),
+    );
     for (const key of plan.keyColumns) {
-      expect(Generated(key), key.definition).to.equal(Read(key));
+      expect(Generated(key), key.definition).to.equal(read.get(key.name));
     }
   });
 });

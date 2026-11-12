@@ -6,7 +6,13 @@ import type {
 
 import type { SessionSyntax } from "../../dialect";
 import { IsArray, type SqlType } from "./types";
-import { type KeyColumn, type KeyPart, KeyParts } from "./paths";
+import {
+  type KeyColumn,
+  KeyColumnsOf,
+  type KeyPart,
+  KeyParts,
+  type ValueKey,
+} from "./paths";
 import { PhysicalOrder, type SchemaModel, type TableModel } from "./fields";
 import { CrossInstanceIndexName, IndexName, TableName } from "./identifier";
 import {
@@ -115,9 +121,16 @@ export function ServesCrossInstance(index: IndexDefinition): boolean {
   return index.crossInstance === true;
 }
 
-/** The physical column a key part reads. */
+/** The physical column a key part leads with. */
 function PartColumn(part: KeyPart): string {
-  return part.kind === "key" ? part.key.name : part.column;
+  switch (part.kind) {
+    case "key":
+      return part.key.name;
+    case "value":
+      return part.key.text.name;
+    default:
+      return part.column;
+  }
 }
 
 /**
@@ -138,7 +151,10 @@ function PartSignature(part: KeyPart): string {
     case "stored":
       return part.column;
     case "key":
-      return part.key.name;
+    case "value":
+      return KeyColumnsOf(part)
+        .map((key) => key.name)
+        .join(",");
     case "elements":
       return `${part.column}[${part.elem.kind}]`;
   }
@@ -236,12 +252,23 @@ function PlanIndex(
 
 function DistinctKeyColumns(indexes: readonly IndexPlan[]): KeyColumn[] {
   const byName = new Map<string, KeyColumn>();
-  for (const part of indexes.flatMap((index) => index.parts)) {
-    if (part.kind === "key") {
-      byName.set(part.key.name, part.key);
-    }
+  for (const key of indexes
+    .flatMap((index) => index.parts)
+    .flatMap(KeyColumnsOf)) {
+    byName.set(key.name, key);
   }
   return [...byName.values()];
+}
+
+/** The value keys a table's indexes key on, through which a typed read of a value of no declared type is served. */
+export function ValueKeys(plan: TablePlan): ValueKey[] {
+  const byText = new Map<string, ValueKey>();
+  for (const part of plan.indexes.flatMap((index) => index.parts)) {
+    if (part.kind === "value") {
+      byText.set(part.key.text.name, part.key);
+    }
+  }
+  return [...byText.values()];
 }
 
 /** The columns a table's multi-valued indexes are built over, where a membership test can be served by one. */

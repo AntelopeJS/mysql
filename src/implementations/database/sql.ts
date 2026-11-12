@@ -1,9 +1,9 @@
 import type { Dialect } from "../../dialect";
 import type { Conversion } from "../../dialect/external";
 import type { ConstantJson } from "../../dialect/sql-types";
-import type { KeyColumn } from "./paths";
+import type { KeyColumn, ValueKey } from "./paths";
 import { BOOL, FLOAT, type SqlType, TEXT, TIMESTAMP } from "./types";
-import { Bind, type Sql, ident, sql } from "../../statement";
+import { Bind, type Sql, ident, join, sql } from "../../statement";
 
 export type { ConstantJson } from "../../dialect/sql-types";
 
@@ -21,16 +21,54 @@ export interface KeyReference {
   readonly column: Sql;
   readonly key: KeyColumn;
   readonly rows: "every" | "set";
+  /**
+   * The equalities that pin the columns an index holds ahead of `column` to the one kind of value
+   * the column orders: for a value key's number column, the tag of numbers or of booleans.
+   */
+  readonly pins: readonly Equality[];
+  /**
+   * The rank whose tag every value `column` holds of the kind compared leads with, for a value key's
+   * text column: the compared operand is tagged the same way, and an ordering stays within the rank.
+   */
+  readonly tag?: number;
+  /** Where the value is absent, which a key `set` only on some rows keeps. */
+  readonly absent: Sql;
+}
+
+/** A column equal to a value, one part of the bound a key column narrows rows by. */
+export interface Equality {
+  readonly column: Sql;
+  readonly value: Sql;
+}
+
+/** Equalities as one conjunction, which a list of keys and a pinned bound both spell. */
+export function Equal(equalities: readonly Equality[]): Sql {
+  return join(
+    equalities.map(({ column, value }) => sql`${column} = ${value}`),
+    sql` AND `,
+  );
+}
+
+/**
+ * The columns of a value key at the alias of the row it belongs to, which a selection by the value
+ * of no declared type it keys is narrowed through, and which order it.
+ */
+export interface ValueReference {
+  readonly text: Sql;
+  readonly number: Sql;
+  readonly key: ValueKey;
 }
 
 /**
  * The physical column of a table's own row a JSON read starts from, as the key columns see it.
  * `keys` are the table's key columns at the row's alias, which only the table itself has, not a
- * subselect that left them out. `elements` are the columns a multi-valued index is built over.
+ * subselect that left them out, and `values` its value keys among them. `elements` are the columns
+ * a multi-valued index is built over.
  */
 export interface RowColumn {
   readonly alias: string;
   readonly keys: readonly KeyColumn[];
+  readonly values: readonly ValueKey[];
   readonly elements: readonly string[];
   readonly source: string;
 }
