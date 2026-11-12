@@ -17,11 +17,8 @@ import {
  */
 const DDL_LOCK_WAIT_SECONDS = 5;
 
-/** How long one wait for the tables lock lasts before the waiter asks again, and says it waits. */
-const TABLES_LOCK_WAIT_SECONDS = 10;
-
-/** How long an index phase pauses between two attempts at the indexes lock another session holds. */
-const INDEXES_LOCK_RETRY_MS = 1000;
+/** How long a phase pauses between two attempts at a convergence lock another session holds. */
+const LOCK_RETRY_MS = 1000;
 
 /** How many times a step that timed out on a lock is tried before convergence gives up on it. */
 export const LOCK_ATTEMPTS = 6;
@@ -138,20 +135,6 @@ async function TakeLock(
   return Number(acquired) === 1;
 }
 
-async function WaitForLock(
-  session: ConvergenceSession,
-  name: string,
-  message: string,
-): Promise<void> {
-  let waited = false;
-  while (!(await TakeLock(session, name, TABLES_LOCK_WAIT_SECONDS))) {
-    if (!waited) {
-      Logger.Info(message);
-      waited = true;
-    }
-  }
-}
-
 /** Holds `name` on the session for `work`, with DDL waits bounded, then gives both back. */
 async function Holding<T>(
   session: ConvergenceSession,
@@ -166,69 +149,55 @@ async function Holding<T>(
   return result;
 }
 
-/**
- * Runs the tables phase of a schema under its tables lock, which every process converging that
- * schema takes in turn: the one that goes second reads the catalog the first left, and finds
- * nothing left to do. Waits as long as the holder works; a holder that dies releases the lock with
- * its session.
- */
-export function WithTablesLock<T>(
-  schemaKey: string,
-  work: (session: ConvergenceSession) => Promise<T>,
-): Promise<T> {
-  return Serialized(`tables:${schemaKey}`, () =>
-    OnDedicatedSession(async (session) => {
-      const name = await LockName(session, "tables", schemaKey);
-      await WaitForLock(
-        session,
-        name,
-        `waiting for another process converging the tables of schema '${schemaKey}'`,
-      );
-      return Holding(session, name, work);
-    }),
-  );
-}
+/** A convergence phase, which runs under a named lock of its own per schema. */
+type Phase = "tables" | "indexes";
 
-/** What an index phase tells the lock it runs under. */
-export interface IndexPhaseHooks {
+/** What a waiting phase says the other process is doing. */
+const HOLDER_WORK: Record<Phase, string> = {
+  tables: "converging the tables",
+  indexes: "building the indexes",
+};
+
+/** What a phase tells the lock it runs under. */
+export interface PhaseHooks {
   /** Runs on the session of each attempt at the lock, before the attempt tries it. */
-  readonly opened: (session: ConvergenceSession) => Promise<void>;
+  readonly opened?: (session: ConvergenceSession) => Promise<void>;
   /** Ends the phase before its next attempt, and cuts short the pause before it. */
-  readonly stop: AbortSignal;
+  readonly stop?: AbortSignal;
 }
 
-/** One attempt at the indexes lock: what the work answered, or nothing while another session holds the lock. */
+/** One attempt at a lock: what the work answered, or nothing while another session holds the lock. */
 type Attempt<T> = { readonly result: T } | undefined;
 
-async function PauseUnlessStopped(ms: number, stop: AbortSignal) {
+async function PauseUnlessStopped(ms: number, stop: AbortSignal | undefined) {
   await delay(ms, undefined, { signal: stop }).catch(() => undefined);
 }
 
 /**
- * Runs the index phase of a schema under its indexes lock. While another session holds it, the
- * phase asks again every second, each time on a pooled connection it gives back at once: the holder
- * may build for minutes, and a phase that kept a connection while it waited would take it from
- * every query of the process. The holder builds the schema's indexes from its own plan, which may
- * lack some of this one's, so this phase runs once it is done and finds left only what that plan
- * did not build. A write that waits for the phase therefore waits for the other build too.
+ * Runs a phase of a schema under the phase's named lock, which every process converging that
+ * schema takes in turn. While another session holds it, the phase asks again every second, each
+ * time on a pooled connection it gives back at once: the holder may work for minutes, and a phase
+ * that kept a connection while it waited would take it from every query of the process. A holder
+ * that dies releases the lock with its session.
  */
-export function WithIndexesLock<T>(
+function WithPhaseLock<T>(
+  phase: Phase,
   schemaKey: string,
-  hooks: IndexPhaseHooks,
+  hooks: PhaseHooks,
   work: (session: ConvergenceSession) => Promise<T>,
 ): Promise<T> {
-  return Serialized(`indexes:${schemaKey}`, async () => {
+  return Serialized(`${phase}:${schemaKey}`, async () => {
     let waited = false;
     for (;;) {
-      if (hooks.stop.aborted) {
+      if (hooks.stop?.aborted) {
         throw new Error(
-          `Stopped before the index phase of '${schemaKey}' began`,
+          `Stopped before the ${phase} phase of '${schemaKey}' began`,
         );
       }
       const attempt = await OnDedicatedSession(
         async (session): Promise<Attempt<T>> => {
-          await hooks.opened(session);
-          const name = await LockName(session, "indexes", schemaKey);
+          await hooks.opened?.(session);
+          const name = await LockName(session, phase, schemaKey);
           return (await TakeLock(session, name, 0))
             ? { result: await Holding(session, name, work) }
             : undefined;
@@ -239,13 +208,38 @@ export function WithIndexesLock<T>(
       }
       if (!waited) {
         Logger.Info(
-          `waiting for another process building the indexes of schema '${schemaKey}'`,
+          `waiting for another process ${HOLDER_WORK[phase]} of schema '${schemaKey}'`,
         );
         waited = true;
       }
-      await PauseUnlessStopped(INDEXES_LOCK_RETRY_MS, hooks.stop);
+      await PauseUnlessStopped(LOCK_RETRY_MS, hooks.stop);
     }
   });
+}
+
+/**
+ * Runs the tables phase of a schema under its tables lock: the process that goes second reads the
+ * catalog the first left, and finds nothing left to do.
+ */
+export function WithTablesLock<T>(
+  schemaKey: string,
+  work: (session: ConvergenceSession) => Promise<T>,
+): Promise<T> {
+  return WithPhaseLock("tables", schemaKey, {}, work);
+}
+
+/**
+ * Runs the index phase of a schema under its indexes lock. The holder builds the schema's indexes
+ * from its own plan, which may lack some of this one's, so this phase runs once it is done and finds
+ * left only what that plan did not build. A write that waits for the phase therefore waits for the
+ * other build too.
+ */
+export function WithIndexesLock<T>(
+  schemaKey: string,
+  hooks: PhaseHooks,
+  work: (session: ConvergenceSession) => Promise<T>,
+): Promise<T> {
+  return WithPhaseLock("indexes", schemaKey, hooks, work);
 }
 
 /** Stops whatever statement `session` is running, from a pooled connection. */
