@@ -149,6 +149,19 @@ describe("The array stages that read each element", () => {
     );
   });
 
+  it("find in a value that is not a list only that value itself, as MySQL's MEMBER OF does", async () => {
+    assert.deepEqual(
+      await First(
+        table.rows().map((row) => ({
+          scalar: row.key("meta").key("a").cast<unknown[]>().includes(1),
+          other: row.key("meta").key("a").cast<unknown[]>().includes(2),
+          object: row.key("meta").key("b").cast<unknown[]>().includes({ x: 1 }),
+        })),
+      ),
+      { scalar: true, other: false, object: true },
+    );
+  });
+
   it("concatenate two lists in order, and answer NULL for a null operand", async () => {
     assert.deepEqual(
       await First(

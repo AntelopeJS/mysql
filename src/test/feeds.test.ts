@@ -104,6 +104,23 @@ describe("the order a change feed delivers in", function () {
       .that.does.not.have.property("meta");
     expect(change).to.have.nested.property("newValue.meta", null);
   });
+
+  it("delivers nothing for a write that only reorders an object's keys", async () => {
+    const json = GetDialect().sql.json;
+    const Meta = (text: string) =>
+      sql`UPDATE ${table} SET meta = ${json.parse(param(text))} WHERE _instance = '' AND _id = 'later'`;
+    await Run(Meta('{"a": 1, "b": [2]}'));
+    expect(await Delivered(feed.next())).to.have.nested.property(
+      "newValue.meta.a",
+      1,
+    );
+    await Run(Meta('{"b": [2], "a": 1}'));
+    await Run(Relabel("later", "after-reorder"));
+    expect(await Delivered(feed.next())).to.have.nested.property(
+      "newValue.label",
+      "after-reorder",
+    );
+  });
 });
 
 /** A value nested `levels` objects deep. */

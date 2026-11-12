@@ -38,6 +38,24 @@ describe("DetectDialect", () => {
   });
 });
 
+describe("MariaDB's external catalog", () => {
+  it("reads as JSON only a column whose own definition checks it, not one a generated column reads", () => {
+    const definition = [
+      "CREATE TABLE `notes` (",
+      "  `id` int(11) NOT NULL,",
+      "  `body` text DEFAULT NULL,",
+      "  `body_is_json` tinyint(4) GENERATED ALWAYS AS (json_valid(`body`)) VIRTUAL,",
+      "  `doc` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL CHECK (json_valid(`doc`)),",
+      "  `we``ird` longtext DEFAULT NULL CHECK (json_valid(`we``ird`)),",
+      "  PRIMARY KEY (`id`)",
+      ")",
+    ].join("\n");
+    const json = DIALECTS.mariadb.external.catalog.jsonColumns;
+    const named = json?.parse([new Map([["Create Table", definition]])]);
+    expect([...(named ?? [])]).to.deep.equal(["doc", "we`ird"]);
+  });
+});
+
 describe("IsDialectId", () => {
   it("accepts a listed engine and refuses an inherited member", () => {
     expect(IsDialectId("mysql")).to.equal(true);
