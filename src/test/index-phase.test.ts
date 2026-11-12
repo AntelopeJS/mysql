@@ -1,13 +1,19 @@
 import { expect } from "chai";
 import { setTimeout as delay } from "node:timers/promises";
-import type { PoolConnection } from "mysql2/promise";
+import {
+  type Connection,
+  type PoolConnection,
+  type RowDataPacket,
+  createConnection,
+} from "mysql2/promise";
 import { IsDuplicateKeyError } from "@antelopejs/interface-database";
 import {
   Schema,
   type SchemaDefinition,
 } from "@antelopejs/interface-database/schema";
 
-import { ident, param, sql } from "../statement";
+import { Bind, type Sql, ident, param, sql } from "../statement";
+import { GetOptions, type ResolvedOptions } from "../config";
 import { AcquireConnection, GetDialect, Read } from "../connection";
 import {
   FailureOf,
@@ -22,7 +28,7 @@ import {
   WaitForIndexes,
   WaitForUniqueIndexes,
 } from "../implementations/database/schema";
-import { Numbers, PhysicalTable, Run } from "./tables";
+import { Numbers, PhysicalTable, Reconnect, Run } from "./tables";
 import { SettlesWithin } from "./watch";
 
 interface Settling {
@@ -124,21 +130,43 @@ async function Release(connection: PoolConnection): Promise<void> {
   connection.release();
 }
 
-/**
- * A connection holding the schema's index-phase lock, as another process's index phase holds it
- * while it builds.
- */
-async function HoldIndexPhase(schemaId: string): Promise<PoolConnection> {
+/** The statement that takes the schema's index-phase lock at once, as another process's phase does. */
+async function TakeIndexPhaseLock(schemaId: string): Promise<Sql> {
   const dialect = GetDialect();
   const [database] = await Read(dialect.catalog.readDatabase());
   const name = dialect.session.lockName(
     "indexes",
     `${String(database?.get("name"))}/${SchemaKey(schemaId)}`,
   );
+  return dialect.session.acquireLock(name, 0);
+}
+
+/**
+ * A connection holding the schema's index-phase lock, as another process's index phase holds it
+ * while it builds.
+ */
+async function HoldIndexPhase(schemaId: string): Promise<PoolConnection> {
+  const take = await TakeIndexPhaseLock(schemaId);
   const connection = await AcquireConnection();
-  const [held] = await Read(dialect.session.acquireLock(name, 0), connection);
+  const [held] = await Read(take, connection);
   expect(Number(held?.get("acquired")), "the lock is free to take").to.equal(1);
   return connection;
+}
+
+/** A connection of another process, outside this one's pool, holding the index-phase lock of each schema. */
+async function HoldIndexPhasesElsewhere(
+  url: string,
+  schemaIds: readonly string[],
+): Promise<Connection> {
+  const elsewhere = await createConnection(url);
+  for (const schemaId of schemaIds) {
+    const take = Bind(await TakeIndexPhaseLock(schemaId));
+    const [rows] = await elsewhere.query<RowDataPacket[]>(take.sql, [
+      ...take.args,
+    ]);
+    expect(Number(rows[0]?.acquired), "the lock is free to take").to.equal(1);
+  }
+  return elsewhere;
 }
 
 async function ReleaseIndexPhase(connection: PoolConnection): Promise<void> {
@@ -282,5 +310,56 @@ describe("the unique-index write gate", function () {
     expect(IsDuplicateKeyError(await duplicate)).to.equal(true);
     await WaitForIndexes(schemaId);
     expect(await IndexNames(schemaId)).to.deep.equal(["price", "sku"]);
+  });
+});
+
+describe("index phases waiting for another process's builds", function () {
+  this.timeout(60_000);
+  const reader = "index_phase_reader";
+  const waiting = ["index_phase_waiting_a", "index_phase_waiting_b"];
+  let restore: ResolvedOptions;
+
+  before(async () => {
+    for (const schemaId of [reader, ...waiting]) {
+      await Fresh(schemaId, 1);
+    }
+    restore = GetOptions();
+    await Reconnect({
+      ...restore,
+      pool: { ...restore.pool, connectionLimit: waiting.length },
+    });
+  });
+
+  after(async () => {
+    for (const schemaId of [reader, ...waiting]) {
+      Schemas.unregister(schemaId);
+    }
+    await Reconnect(restore);
+  });
+
+  it("hold no pooled connection while they wait, so a read of another schema runs", async () => {
+    const items = new Schema<{ items: Item }>(reader, BARE)
+      .instance()
+      .table("items");
+    await WaitForIndexes(reader);
+    const elsewhere = await HoldIndexPhasesElsewhere(restore.url, waiting);
+    try {
+      for (const schemaId of waiting) {
+        await Schemas.register(schemaId, PRICED);
+      }
+      await delay(BLOCKED_MS);
+      const read = items.get("0000000").run();
+      expect(
+        await SettlesWithin(read, BLOCKED_MS * 10),
+        "the read is not queued behind the waiting index phases",
+      ).to.equal(true);
+      expect((await read)?.sku).to.equal("sku-0");
+    } finally {
+      await elsewhere.end();
+    }
+    for (const schemaId of waiting) {
+      await WaitForIndexes(schemaId);
+      expect(await IndexNames(schemaId), schemaId).to.deep.equal(["price"]);
+    }
   });
 });
