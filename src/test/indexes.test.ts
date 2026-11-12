@@ -1,5 +1,8 @@
 import { expect } from "chai";
-import type { SchemaDefinition } from "@antelopejs/interface-database/schema";
+import {
+  Schema,
+  type SchemaDefinition,
+} from "@antelopejs/interface-database/schema";
 
 import { Logger } from "../logger";
 import { GetDialect, Read, type Row } from "../connection";
@@ -289,5 +292,62 @@ describe("indexes whose declaration changes", function () {
     expect((await Catalog(schemaId)).map((index) => index.name)).to.deep.equal([
       "sku",
     ]);
+  });
+});
+
+/** Fields no declaration types, each keyed by a value key of two columns. */
+function Undeclared(count: number): string[] {
+  return Array.from({ length: count }, (_, position) => `u${position}`);
+}
+
+/** Seven fields of no declared type take 15 key columns with the instance, eight take 17, past MySQL's 16. */
+const WIDE: SchemaDefinition = {
+  items: {
+    fields: FIELDS,
+    indexes: {
+      fits: { fields: Undeclared(7) },
+      wide: { fields: Undeclared(8) },
+      wideUnique: { fields: Undeclared(8), unique: true },
+    },
+  },
+};
+
+describe("an index over more key columns than MySQL allows in one index", function () {
+  this.timeout(60_000);
+  const schemaId = "indexes_wide";
+
+  after(() => {
+    Schemas.unregister(schemaId);
+  });
+
+  it("is left out with a warning that names it, while its table and the indexes that fit are built", async () => {
+    await Reset(schemaId);
+    const warnings = await CaptureWarnings(() => Register(schemaId, WIDE));
+    expect(warnings).to.have.length(2);
+    expect(warnings[0]).to.match(
+      /^Index 'wide' on 'indexes_wide.items' is not built: it needs 17 key columns/,
+    );
+    expect(warnings[1]).to.match(
+      /^Index 'wideUnique' on 'indexes_wide.items' is not built: .*nothing refuses a duplicate/,
+    );
+    expect((await Catalog(schemaId)).map((index) => index.name)).to.deep.equal([
+      "fits",
+    ]);
+  });
+
+  it("answers a getAll on the index left out from the rows themselves", async () => {
+    const values = Undeclared(8).map((_, position) => position);
+    const row = Object.fromEntries(
+      Undeclared(8).map((field, position) => [field, values[position]]),
+    );
+    const items = new Schema<{ items: { _id: string } }>(schemaId, WIDE)
+      .instance()
+      .table("items");
+    await items.insert([
+      { _id: "match", ...row },
+      { _id: "other", ...row, u7: "7" },
+    ]);
+    const found = await items.getAll([values], "wide").run();
+    expect(found.map((item) => item._id)).to.deep.equal(["match"]);
   });
 });
