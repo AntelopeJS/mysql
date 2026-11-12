@@ -1,10 +1,7 @@
 import { expect } from "chai";
-import path from "node:path";
-import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { Logger } from "../logger";
-import { GetOptions } from "../config";
 import {
   AcquireConnection,
   GetDialect,
@@ -22,25 +19,14 @@ import {
   SessionOf,
 } from "../implementations/database/locks";
 import { Schemas, WaitForIndexes } from "../implementations/database/schema";
-import {
-  BEFORE,
-  CONTENDED,
-  SCHEMA_VARIABLE,
-  URL_VARIABLE,
-} from "./contention-schema";
+import { BEFORE, CONTENDED } from "./contention-schema";
+import { type Exit, RegisterElsewhere } from "./elsewhere";
 import { Numbers, PhysicalTable, Run, Snapshot } from "./tables";
-
-interface Exit {
-  readonly code: number | null;
-  readonly stderr: string;
-  readonly logged: readonly string[];
-}
 
 const OTHER_PROCESSES = 2;
 /** Longer than the five seconds a DDL statement waits for a metadata lock. */
 const HELD_MS = 6000;
 const IN_THIS_PROCESS = 2;
-const REGISTERING_PROCESS = path.join(__dirname, "register-process.js");
 
 /** The table as {@link BEFORE} declares it, with 3000 rows over two instances holding `b` in `_extra`. */
 async function Prepare(schemaId: string): Promise<void> {
@@ -51,32 +37,6 @@ async function Prepare(schemaId: string): Promise<void> {
   await Run(
     sql`INSERT INTO ${table} (_id, _instance, a, _extra) SELECT LPAD(n, 4, '0'), IF(n % 2 = 0, '', 'tenant'), CONCAT('a-', n), JSON_OBJECT('b', CONCAT('b-', n % 100), 'note', JSON_OBJECT('text', CONCAT('note ', n))) FROM ${Numbers(4)} AS numbers WHERE n < 3000`,
   );
-}
-
-/** Registers {@link CONTENDED} from another process with a module instance of its own. */
-function RegisterElsewhere(schemaId: string): Promise<Exit> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [REGISTERING_PROCESS], {
-      env: {
-        ...process.env,
-        [URL_VARIABLE]: GetOptions().url,
-        [SCHEMA_VARIABLE]: schemaId,
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString("utf8");
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString("utf8");
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      resolve({ code, stderr, logged: stdout.split("\n").filter(Boolean) });
-    });
-  });
 }
 
 async function RegisterHere(schemaId: string): Promise<void> {

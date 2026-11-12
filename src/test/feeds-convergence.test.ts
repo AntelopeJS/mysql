@@ -5,6 +5,7 @@ import type { Changes } from "@antelopejs/interface-database/common";
 import { param, sql } from "../statement";
 import { Read } from "../connection";
 import { IsReaperRunning } from "../implementations/database/reaper";
+import { RegisterElsewhere } from "./elsewhere";
 import { PhysicalTable } from "./tables";
 import { DeliveredRow, Opened, type Row } from "./watch";
 
@@ -63,5 +64,35 @@ describe("a watched table across convergence", function () {
     expect(after).to.have.length(3);
     expect(after.filter((name) => before.includes(name))).to.deep.equal([]);
     expect(await Triggers("others")).to.deep.equal([]);
+  });
+});
+
+describe("a watched table an older process converges", function () {
+  this.timeout(60_000);
+  const schemaId = "feeds-rolling";
+
+  /**
+   * An older replica restarting in a rolling deploy registers the schema without `size`. Triggers
+   * planned from its declaration would log the table without the column, and the newer process's
+   * feed would deliver rows without the value it reads back.
+   */
+  it("keeps logging the column a newer process declared", async () => {
+    const wide = new Schema<{ rows: Row }>(schemaId, {
+      rows: { fields: { label: "string", size: "number" }, indexes: {} },
+    });
+    const rows = wide.instance().table("rows");
+    const feed = await Opened(rows, "probe");
+    try {
+      const older = await RegisterElsewhere(schemaId, "narrow");
+      expect({ code: older.code, stderr: older.stderr }).to.deep.equal({
+        code: 0,
+        stderr: "",
+      });
+      await rows.insert({ _id: "sized", label: "x", size: 42 });
+      const change = await DeliveredRow(feed, "sized");
+      expect(change).to.have.nested.property("newValue.size", 42);
+    } finally {
+      await feed.return?.();
+    }
   });
 });
