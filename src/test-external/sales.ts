@@ -117,6 +117,33 @@ const SALES_DEFINITION: SchemaDefinition = {
     },
     indexes: {},
   },
+  w_pairs: {
+    fields: { _id: "string", a: "string", b: "number", v: "number" },
+    indexes: {},
+  },
+  w_bin_pairs: {
+    fields: { _id: "string", a: "string", b: "number", v: "number" },
+    indexes: {},
+  },
+  w_names: {
+    fields: {
+      _id: "string",
+      id: "number",
+      name: "string",
+      padded: "string",
+      legacy: "string",
+      narrow: "string",
+    },
+    indexes: {},
+  },
+  w_codes: {
+    fields: { _id: "string", code: "string", label: "string" },
+    indexes: {},
+  },
+  zero_days: {
+    fields: { _id: "string", id: "number", d: "date", dt: "date" },
+    indexes: {},
+  },
 };
 
 type SalesScalar = string | number | boolean | Date | null;

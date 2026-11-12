@@ -153,6 +153,38 @@ const WRITE_TABLES: readonly string[] = [
   `CREATE TABLE sales.w_lines (
     order_id INT NOT NULL, line_no INT NOT NULL, qty INT, PRIMARY KEY (order_id, line_no)
   )`,
+  `CREATE TABLE sales.w_pairs (
+    a VARCHAR(20) NOT NULL, b INT NOT NULL, v INT, PRIMARY KEY (a, b)
+  )`,
+  `CREATE TABLE sales.w_bin_pairs (
+    a VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL, b INT NOT NULL, v INT,
+    PRIMARY KEY (a, b)
+  )`,
+  `CREATE TABLE sales.w_names (
+    id INT PRIMARY KEY,
+    name VARCHAR(20) COLLATE utf8mb4_0900_ai_ci,
+    padded VARCHAR(20) COLLATE utf8mb4_bin,
+    legacy VARCHAR(20) CHARACTER SET latin1,
+    narrow VARCHAR(20) CHARACTER SET utf8mb3,
+    INDEX w_names_legacy (legacy),
+    INDEX w_names_narrow (narrow)
+  )`,
+  "CREATE TABLE sales.w_codes (code VARCHAR(10) CHARACTER SET latin1 PRIMARY KEY, label TEXT)",
+];
+
+/**
+ * Dates a server without `NO_ZERO_DATE` stored, which strict sessions refuse to write: a zero date
+ * and one with a zero month, beside a real one and NULL.
+ */
+const ZERO_DATES: readonly string[] = [
+  "CREATE TABLE sales.zero_days (id INT PRIMARY KEY, d DATE, dt DATETIME, INDEX zero_days_d (d))",
+  "SET SESSION sql_mode = ''",
+  `INSERT INTO sales.zero_days VALUES
+    (1, '0000-00-00', '0000-00-00 00:00:00'),
+    (2, '2024-01-01', '2024-01-01 10:00:00'),
+    (3, '2024-00-15', '2024-00-15 00:00:00'),
+    (4, NULL, NULL)`,
+  "SET SESSION sql_mode = DEFAULT",
 ];
 
 /** The relations the reader may read whole; `people` it reads only in part. */
@@ -176,6 +208,11 @@ const READABLE: readonly string[] = [
   "w_events",
   "w_big",
   "w_lines",
+  "w_pairs",
+  "w_bin_pairs",
+  "w_names",
+  "w_codes",
+  "zero_days",
 ];
 
 const VIEWS: readonly string[] = ["big_accounts", "daily_signups"];
@@ -184,6 +221,7 @@ export const FIXTURE: readonly string[] = [
   "SET SESSION cte_max_recursion_depth = 2000000",
   ...READ_TABLES,
   ...WRITE_TABLES,
+  ...ZERO_DATES,
   `ANALYZE TABLE ${READABLE.filter((name) => !VIEWS.includes(name))
     .map((name) => `sales.${name}`)
     .join(", ")}`,
