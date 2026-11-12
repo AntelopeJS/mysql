@@ -6,7 +6,7 @@ import { Cast, WithDefault } from "./coerce";
 import { Defaulted } from "./readings";
 import { DocumentKeys, type TableModel } from "./fields";
 import type { KeyColumn, KeyPart, ValueKey } from "./paths";
-import { KeyAt, TypedKeyReference } from "./json";
+import { KeyAt, SortTerms, TypedKeyReference } from "./json";
 import { ValueReferenceOf } from "./value-key";
 import {
   DEFAULT_INSTANCE_ID,
@@ -306,7 +306,7 @@ export class ColumnRowSource implements RowSource {
       case "stored":
       case "elements": {
         const value = this.field(part.field);
-        return { value, order: [value.sql] };
+        return { value, order: SortTerms(this.dialect, value) };
       }
       case "value":
         return this.valued(part.field, part.key);
@@ -323,7 +323,7 @@ export class ColumnRowSource implements RowSource {
     );
     const value = this.keyRead(key.read, read);
     if (!this.keys) {
-      return { value, order: [value.sql] };
+      return { value, order: SortTerms(this.dialect, value) };
     }
     const reference = TypedKeyReference(this.keys.alias, key);
     return { value: { ...value, key: reference }, order: [reference.column] };
@@ -333,7 +333,7 @@ export class ColumnRowSource implements RowSource {
   private valued(field: string, key: ValueKey): IndexedValue {
     const value = NamedField(this.dialect, this, field);
     if (!this.keys) {
-      return { value, order: [value.sql] };
+      return { value, order: SortTerms(this.dialect, value) };
     }
     const ranked = ValueReferenceOf(this.keys.alias, key);
     return {

@@ -1,5 +1,6 @@
 import type { TimePart, TimeSyntax } from "../sql-types";
 import { type Sql, sql } from "../../statement";
+import type { Flavour } from "./flavour";
 
 /** `DATETIME`'s range in epoch milliseconds: 1000-01-01 to the last millisecond of 9999. */
 const EARLIEST_EPOCH_MS = sql`-30610224000000`;
@@ -19,12 +20,9 @@ export function IsoText(value: Sql): Sql {
   return sql`CONCAT(LEFT(DATE_FORMAT(${value}, '%Y-%m-%dT%H:%i:%s.%f'), 23), 'Z')`;
 }
 
-/**
- * Text read as an instant where it spells one {@link INSTANT_TEXT} accepts, SQL NULL otherwise. The
- * server reads a zone offset but not `Z`, which can only end the text, so it is spelled as one.
- */
-export function ParseInstant(text: Sql): Sql {
-  return sql`(CASE WHEN ${text} REGEXP ${INSTANT_TEXT} THEN CAST(REPLACE(${text}, 'Z', '+00:00') AS DATETIME(6)) END)`;
+/** Text read as an instant where it spells one {@link INSTANT_TEXT} accepts, SQL NULL otherwise. */
+export function ParseInstant(flavour: Flavour, text: Sql): Sql {
+  return sql`(CASE WHEN ${text} REGEXP ${INSTANT_TEXT} THEN ${flavour.instant(text)} END)`;
 }
 
 /** Counted from the epoch in microseconds, which reaches before 1970 where `UNIX_TIMESTAMP` answers 0. */
@@ -53,14 +51,16 @@ const PARTS: Record<TimePart, (moment: Sql) => Sql> = {
   second: (moment) =>
     sql`(EXTRACT(SECOND_MICROSECOND FROM ${moment}) / ${MICROSECONDS_PER_SECOND})`,
   timeOfDay: (moment) =>
-    sql`(TIME_TO_SEC(${moment}) + MICROSECOND(${moment}) / ${MICROSECONDS_PER_SECOND})`,
+    sql`(TIME_TO_SEC(TIME(DATE_FORMAT(${moment}, '%H:%i:%s'))) + MICROSECOND(${moment}) / ${MICROSECONDS_PER_SECOND})`,
 };
 
-export const time: TimeSyntax = {
-  part: (moment, part) => PARTS[part](moment),
-  inZone: (moment, zone) => sql`CONVERT_TZ(${moment}, '+00:00', ${zone})`,
-  isoText: IsoText,
-  toEpochMs: ToEpochMs,
-  fromEpochMs: FromEpochMs,
-  parseText: ParseInstant,
-};
+export function TimeOf(flavour: Flavour): TimeSyntax {
+  return {
+    part: (moment, part) => PARTS[part](moment),
+    inZone: (moment, zone) => sql`CONVERT_TZ(${moment}, '+00:00', ${zone})`,
+    isoText: IsoText,
+    toEpochMs: ToEpochMs,
+    fromEpochMs: FromEpochMs,
+    parseText: (text) => ParseInstant(flavour, text),
+  };
+}

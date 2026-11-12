@@ -32,8 +32,9 @@ describe("DetectDialect", () => {
     expect(DetectDialect("9.7.4")).to.equal("mysql");
   });
 
-  it("refuses MariaDB by name until it has a dialect", () => {
-    expect(() => DetectDialect("11.4.5-MariaDB-ubu2404")).to.throw(/mariadb/);
+  it("reads a version naming MariaDB as mariadb", () => {
+    expect(DetectDialect("11.8.9-MariaDB-ubu2404")).to.equal("mariadb");
+    expect(DetectDialect("12.3.3-MariaDB-log")).to.equal("mariadb");
   });
 });
 

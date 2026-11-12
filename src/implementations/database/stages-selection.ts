@@ -6,7 +6,7 @@ import {
 } from "@antelopejs/interface-database/common";
 
 import { Bind, type Sql, join, sql } from "../../statement";
-import { IsArray } from "./types";
+import { IsArray, IsJsonBacked } from "./types";
 import { StoredAs } from "./readings";
 import { DecodeValue } from "./value";
 import type { DecodingContext } from "./context";
@@ -16,7 +16,13 @@ import {
   QualifiedColumn,
   type ValueReference,
 } from "./sql";
-import { Compare, Contains, EqualityKey, type Ordering } from "./json";
+import {
+  Compare,
+  Compared,
+  Contains,
+  EqualityKey,
+  type Ordering,
+} from "./json";
 import {
   type RankedKey,
   RankedEqualities,
@@ -268,6 +274,31 @@ function EqualitySets(bounds: readonly (readonly Equality[])[]): Sql {
 }
 
 /**
+ * The rows whose parts equal one of the tuples. A list over JSON values is a disjunction of
+ * equalities, each as JSON compares, since `IN` compares them as the engine compares any value.
+ */
+function Matching(
+  selection: KeySelection,
+  tuples: readonly (readonly KeyOperand[])[],
+): Sql {
+  const parts = selection.parts;
+  if (!parts.some((part) => IsJsonBacked(part.value.type))) {
+    return sql`${Row(parts.map((part) => part.value.sql))} IN (${join(
+      tuples.map((tuple) => Row(tuple.map((operand) => operand.compared.sql))),
+      COMMA,
+    )})`;
+  }
+  const dialect = selection.context.dialect;
+  const matches = tuples.map((tuple) => {
+    const equalities = tuple.map((operand, position) =>
+      Compared(dialect, parts[position].value, operand.compared, "="),
+    );
+    return sql`(${join(equalities, sql` AND `)})`;
+  });
+  return sql`(${join(matches, sql` OR `)})`;
+}
+
+/**
  * The parts compared against a list of key tuples, and the tuples: through the key columns where a
  * part has them, so the index narrows the rows, and then through the values themselves, which
  * decide them.
@@ -277,10 +308,7 @@ function InList(
   tuples: readonly (readonly KeyOperand[])[],
 ): Sql {
   const parts = selection.parts;
-  const plain = sql`${Row(parts.map((part) => part.value.sql))} IN (${join(
-    tuples.map((tuple) => Row(tuple.map((operand) => operand.compared.sql))),
-    COMMA,
-  )})`;
+  const plain = Matching(selection, tuples);
   if (!parts.some((part) => part.value.key || part.ranked)) {
     return plain;
   }

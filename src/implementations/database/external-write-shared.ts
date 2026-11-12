@@ -19,6 +19,8 @@ import { ClassifyMember, type Member } from "./member";
  */
 export interface ExternalInsertRow {
   readonly insert: Sql;
+  /** The insert answering the written row's `_id`, where the engine has `RETURNING`. */
+  readonly returning?: Sql;
   readonly readId: Sql;
   readonly upsert?: { readonly lock: Sql; readonly update?: Sql };
 }
@@ -62,8 +64,9 @@ export function WriteColumn(column: string): Sql {
 export function IdOfWrittenRow(
   dialect: Dialect,
   key: readonly ColumnDescriptor[],
+  column: (name: string) => Sql = WriteColumn,
 ): Sql {
-  const parts = key.map((part) => part.value(WriteColumn(part.column)));
+  const parts = key.map((part) => part.value(column(part.column)));
   return parts.length === 1
     ? parts[0]
     : dialect.external.types.compositeId(parts);

@@ -203,15 +203,19 @@ function InsertRow(
   const from = AliasedTable(external);
   const readId = sql`SELECT ${IdOfWrittenRow(context.dialect, key)} AS ${ident(ID_COLUMN)} FROM ${from} WHERE ${match}`;
   const insert = InsertStatement(external, columns);
+  const returning = context.dialect.sql.rows.returning
+    ? sql`${insert} RETURNING ${IdOfWrittenRow(context.dialect, key, ident)} AS ${ident(ID_COLUMN)}`
+    : undefined;
   const supplied = [...values.values()].every(
     (value) => value !== GENERATED_KEY,
   );
   if (!conflict || !supplied) {
-    return { insert, readId };
+    return { insert, returning, readId };
   }
   const sets = UpsertSets(target, key, columns, conflict);
   return {
     insert,
+    returning,
     readId,
     upsert: {
       lock: sql`SELECT 1 AS found FROM ${from} WHERE ${match} FOR UPDATE`,
@@ -225,8 +229,8 @@ function InsertRow(
 
 /**
  * Inserts each document as its own statement, in one transaction, and answers the keys in input
- * order: MySQL has no `RETURNING`, so each row's `_id` is read back right after its insert, by the
- * key the payload gave or the one the server generated. A column a document leaves out takes its
+ * order: the insert answers each row's `_id` where the engine has `RETURNING`, and on MySQL it is
+ * read back right after the insert, by the key the payload gave or the one the server generated. A column a document leaves out takes its
  * `DEFAULT`. An upsert finds the row by its key, locking it, and updates it instead; a clash on
  * any other unique index still fails, as it would without the upsert.
  */

@@ -1,7 +1,7 @@
 import type { QueryStage } from "@antelopejs/interface-database/common";
 
 import type { Dialect } from "../../dialect";
-import { type Sql, ident, join, sql } from "../../statement";
+import { type Sql, join, sql } from "../../statement";
 import { SplitWrite } from "./writes";
 import { AsJson } from "./readings";
 import { CHANGE_LOG } from "./registry";
@@ -27,7 +27,6 @@ export const EVENT_ALIAS = "ev";
  * Each side renders into its own subselect, so the name cannot collide outside it.
  */
 const SIDE_ALIAS = "s";
-const ROW_COLUMN = "r";
 
 const DOC_KEY = "doc";
 const MATCHED_KEY = "matched";
@@ -128,13 +127,15 @@ function CompileSide(
   context: DecodingContext,
   image: string,
 ): Relation {
-  const from = sql`(SELECT ${QualifiedColumn(EVENT_ALIAS, image)} AS ${ident(ROW_COLUMN)})`;
-  const row = QualifiedColumn(SIDE_ALIAS, ROW_COLUMN);
+  const { from, value } = context.dialect.sql.rows.hold(
+    QualifiedColumn(EVENT_ALIAS, image),
+    SIDE_ALIAS,
+  );
   const relation = LoggedRelation(
     context.dialect,
     from,
     SIDE_ALIAS,
-    row,
+    value,
     origin,
   );
   return ApplyStages(relation, stages, context);

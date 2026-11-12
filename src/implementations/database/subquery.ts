@@ -10,7 +10,13 @@ import { FIRST_OPERAND } from "./stage";
 import { ParameterKey } from "./value";
 import { type DecodingContext, IsSubqueryProvider } from "./context";
 import { CurrentValue, type Relation, SetProjection } from "./relation";
-import { Numbered, Prepare, type RelationFlag, Render } from "./render";
+import {
+  Numbered,
+  OrderTerms,
+  Prepare,
+  type RelationFlag,
+  Render,
+} from "./render";
 
 /**
  * What has already decided *which* rows there are blocks the aggregate from absorbing. Shorter
@@ -29,6 +35,18 @@ const SUBQUERY_BLOCKERS: readonly RelationFlag[] = [
  */
 function Aggregated(relation: Relation, context: DecodingContext): Compiled {
   const prepared = Prepare(relation, SUBQUERY_BLOCKERS, context);
+  const terms = OrderTerms(prepared);
+  const inOrder = context.dialect.sql.json.collectInOrder;
+  if (terms !== undefined && inOrder) {
+    prepared.orderBy = [];
+    const value = CurrentValue(prepared);
+    const type = ArrayOf(value.type);
+    const collected = inOrder(AsJson(context.dialect, value).sql, terms);
+    return {
+      sql: sql`(${Render(SetProjection(prepared, { sql: collected, type }))})`,
+      type,
+    };
+  }
   const numbered =
     prepared.orderBy.length > 0 ? Numbered(prepared, context) : undefined;
   const rows = numbered?.relation ?? prepared;

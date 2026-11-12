@@ -7,6 +7,7 @@ import type {
   ScalarSyntax,
 } from "../sql-types";
 import { type Sql, int, join, lit, param, sql } from "../../statement";
+import type { Flavour } from "./flavour";
 import {
   IsBoolean,
   IsNumber,
@@ -18,8 +19,6 @@ const NUMERIC_TEXT = lit(
   "^\\s*[+-]?([0-9]+(\\.[0-9]*)?|\\.[0-9]+)([eE][+-]?[0-9]+)?\\s*$",
 );
 
-const UTC_DESIGNATOR = /Z$/;
-const UTC_OFFSET = "+00:00";
 const COMMA = sql`, `;
 
 const CASTS: Record<ScalarKind, (value: Sql) => Sql> = {
@@ -30,20 +29,13 @@ const CASTS: Record<ScalarKind, (value: Sql) => Sql> = {
 };
 
 /**
- * Whether JSON text keeps a number on every server version. MySQL 8.4's JSON parser reads some
- * doubles of 17 significant digits as a neighbour, and JSON text spells a negative zero `0`, so of
- * the finite numbers only a safe integer other than -0 survives the text. A number JSON cannot
- * spell is written `null` either way, as `JSON.stringify` writes it.
+ * Whether a constant's JSON text keeps every number in it. A number JSON cannot spell is written
+ * `null` either way, as `JSON.stringify` writes it.
  */
-function IsTextExactNumber(value: number): boolean {
-  return (
-    !Number.isFinite(value) ||
-    (Number.isSafeInteger(value) && !Object.is(value, -0))
-  );
-}
-
-/** Whether a constant's JSON text keeps every number in it. */
-function IsTextExact(value: ConstantJson | undefined): boolean {
+function IsTextExact(
+  flavour: Flavour,
+  value: ConstantJson | undefined,
+): boolean {
   if (
     value === undefined ||
     value === null ||
@@ -53,10 +45,10 @@ function IsTextExact(value: ConstantJson | undefined): boolean {
     return true;
   }
   if (IsNumber(value)) {
-    return IsTextExactNumber(value);
+    return !Number.isFinite(value) || flavour.keepsInText(value);
   }
   const members = Array.isArray(value) ? value : Object.values(value);
-  return members.every(IsTextExact);
+  return members.every((member) => IsTextExact(flavour, member));
 }
 
 /**
@@ -64,23 +56,26 @@ function IsTextExact(value: ConstantJson | undefined): boolean {
  * argument. Any other constant is assembled around each number it holds, bound as a `DOUBLE`, which
  * the server turns into JSON without reading text.
  */
-function JsonConstant(value: ConstantJson): Sql {
+function JsonConstant(flavour: Flavour, value: ConstantJson): Sql {
   if (
     value === null ||
     IsString(value) ||
     IsBoolean(value) ||
-    IsTextExact(value)
+    IsTextExact(flavour, value)
   ) {
-    return sql`CAST(${param(JSON.stringify(value))} AS JSON)`;
+    return flavour.json(param(JSON.stringify(value)));
   }
   if (IsNumber(value)) {
-    return sql`CAST(CAST(${param(value)} AS DOUBLE) AS JSON)`;
+    return flavour.number(sql`CAST(${param(value)} AS DOUBLE)`);
   }
   if (Array.isArray(value)) {
-    return sql`JSON_ARRAY(${join(value.map(JsonConstant), COMMA)})`;
+    const items = value.map((item) => JsonConstant(flavour, item));
+    return sql`JSON_ARRAY(${join(items, COMMA)})`;
   }
   const members = Object.entries(value).flatMap(([key, member]) =>
-    member === undefined ? [] : [sql`${param(key)}, ${JsonConstant(member)}`],
+    member === undefined
+      ? []
+      : [sql`${param(key)}, ${JsonConstant(flavour, member)}`],
   );
   return sql`JSON_OBJECT(${join(members, COMMA)})`;
 }
@@ -88,19 +83,20 @@ function JsonConstant(value: ConstantJson): Sql {
 /**
  * A number is cast to `DOUBLE`, since the driver sends an integer as a `BIGINT`. A boolean goes as
  * 1 or 0 and is compared with 0, which also marks it a boolean wherever the server turns it into
- * JSON. An instant goes as its ISO text with an explicit `+00:00`: the server reads an offset but
- * not `Z`, which a statement that writes refuses.
+ * JSON. An instant goes as the text the flavour casts to it.
  */
-const bind: BindSyntax = {
-  text: (value) => param(value),
-  float: (value) => sql`CAST(${param(value)} AS DOUBLE)`,
-  bool: (value) => sql`(${param(value ? 1 : 0)} <> 0)`,
-  timestamp: (value) =>
-    Number.isNaN(value.getTime())
-      ? sql`CAST(NULL AS DATETIME(6))`
-      : sql`CAST(${param(value.toISOString().replace(UTC_DESIGNATOR, UTC_OFFSET))} AS DATETIME(6))`,
-  json: JsonConstant,
-};
+function BindOf(flavour: Flavour): BindSyntax {
+  return {
+    text: (value) => param(value),
+    float: (value) => sql`CAST(${param(value)} AS DOUBLE)`,
+    bool: (value) => sql`(${param(value ? 1 : 0)} <> 0)`,
+    timestamp: (value) =>
+      Number.isNaN(value.getTime())
+        ? sql`CAST(NULL AS DATETIME(6))`
+        : sql`CAST(${param(flavour.instantText(value))} AS DATETIME(6))`,
+    json: (value) => JsonConstant(flavour, value),
+  };
+}
 
 const TWO_POW_32 = sql`4294967296`;
 const TWO_POW_31 = sql`2147483648`;
@@ -149,7 +145,7 @@ const CLASS_CLOSE = "]";
  * What JavaScript's `.` matches, which is everything but its four line terminators. ICU's own `.`
  * also stops at a vertical tab and at U+0085, where JavaScript's does not.
  */
-const JS_DOT = "[^\\n\\r\\u2028\\u2029]";
+const JS_DOT = "[^\\n\\r\\x{2028}\\x{2029}]";
 
 /** JavaScript's `$` is the end of the input alone; ICU's also matches before a final line terminator. */
 const END_OF_INPUT = "\\z";
@@ -190,17 +186,60 @@ const OUTSIDE_CLASS_ESCAPES = new Map([
   ["v", VERTICAL_TAB],
 ]);
 
+/** Inclusive code point ranges, lowest first and apart from one another. */
+type CodeRanges = readonly (readonly [number, number])[];
+
+const LAST_CODE_POINT = 0x10ffff;
+
+const DIGIT_RANGES: CodeRanges = [[0x30, 0x39]];
+const WORD_RANGES: CodeRanges = [
+  [0x30, 0x39],
+  [0x41, 0x5a],
+  [0x5f, 0x5f],
+  [0x61, 0x7a],
+];
+const SPACE_RANGES: CodeRanges = [
+  [0x09, 0x0d],
+  [0x20, 0x20],
+  [0xa0, 0xa0],
+  [0x1680, 0x1680],
+  [0x2000, 0x200a],
+  [0x2028, 0x2029],
+  [0x202f, 0x202f],
+  [0x205f, 0x205f],
+  [0x3000, 0x3000],
+  [0xfeff, 0xfeff],
+];
+
+function CodePoint(code: number): string {
+  return `\\x{${code.toString(16).toUpperCase().padStart(2, "0")}}`;
+}
+
 /**
- * The same escapes inside a class, as members of it: a negated one as a nested set, which ICU
- * unites with the rest of the class. JavaScript's `[\b]` is a backspace.
+ * Every code point outside the ranges, as class members. ICU would take a nested negated set, but
+ * MariaDB's PCRE2 has no nested set, and both read the ranges alike.
  */
+function Outside(ranges: CodeRanges): string {
+  const members: string[] = [];
+  let next = 0;
+  for (const [low, high] of ranges) {
+    if (low > next) {
+      members.push(`${CodePoint(next)}-${CodePoint(low - 1)}`);
+    }
+    next = high + 1;
+  }
+  members.push(`${CodePoint(next)}-${CodePoint(LAST_CODE_POINT)}`);
+  return members.join("");
+}
+
+/** The same escapes inside a class, as members of it. JavaScript's `[\b]` is a backspace. */
 const INSIDE_CLASS_ESCAPES = new Map([
   ["d", JS_DIGIT],
-  ["D", `[^${JS_DIGIT}]`],
+  ["D", Outside(DIGIT_RANGES)],
   ["w", JS_WORD],
-  ["W", `[^${JS_WORD}]`],
+  ["W", Outside(WORD_RANGES)],
   ["s", JS_SPACE],
-  ["S", `[^${JS_SPACE}]`],
+  ["S", Outside(SPACE_RANGES)],
   ["b", "\\x{08}"],
   ["v", VERTICAL_TAB],
 ]);
@@ -212,11 +251,11 @@ const INSIDE_CLASS_ESCAPES = new Map([
 const SET_ESCAPES = new Set(["d", "D", "w", "W", "s", "S"]);
 
 /**
- * The characters ICU reads otherwise than JavaScript inside a class, each escaped where it stands
- * for itself: a nested set, an intersection, and the hyphen, which ICU reads doubled as a set
- * difference.
+ * The characters an engine reads otherwise than JavaScript inside a class, each escaped where it
+ * stands for itself: ICU's nested set, intersection and hyphen, which it reads doubled as a set
+ * difference, and the dot, equals sign and colon, which open a POSIX element in PCRE2.
  */
-const CLASS_SYNTAX = new Set(["[", "&", "-"]);
+const CLASS_SYNTAX = new Set(["[", "&", "-", ".", "=", ":"]);
 
 const HYPHEN = "-";
 const NEGATION = "^";
@@ -336,19 +375,20 @@ function TranslatePattern(pattern: string): string {
   return out;
 }
 
-const regex: RegexSyntax = {
-  translate: TranslatePattern,
-  matches: (text, pattern) => sql`REGEXP_LIKE(${text}, ${pattern}, 'c')`,
-};
-
-export const scalar: ScalarSyntax = {
-  cast: (value, kind) => CASTS[kind](value),
-  bind,
-  parseNumber: (text) =>
-    sql`(CASE WHEN ${text} REGEXP ${NUMERIC_TEXT} THEN CAST(${text} AS DOUBLE) END)`,
-  truncate: (value) => sql`TRUNCATE(${value}, 0)`,
-  concat: (parts) => sql`CONCAT(${join(parts, sql`, `)})`,
-  left: (text, width) => sql`LEFT(${text}, ${int(width)})`,
-  int32,
-  regex,
-};
+export function ScalarOf(flavour: Flavour): ScalarSyntax {
+  const regex: RegexSyntax = {
+    translate: TranslatePattern,
+    matches: (text, pattern) => flavour.matches(text, pattern),
+  };
+  return {
+    cast: (value, kind) => CASTS[kind](value),
+    bind: BindOf(flavour),
+    parseNumber: (text) =>
+      sql`(CASE WHEN ${text} REGEXP ${NUMERIC_TEXT} THEN CAST(${text} AS DOUBLE) END)`,
+    truncate: (value) => sql`TRUNCATE(${value}, 0)`,
+    concat: (parts) => sql`CONCAT(${join(parts, sql`, `)})`,
+    left: (text, width) => sql`LEFT(${text}, ${int(width)})`,
+    int32,
+    regex,
+  };
+}

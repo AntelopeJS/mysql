@@ -37,7 +37,7 @@ describe("The string stages", () => {
   it("match a literal pattern after translating it for the engine, and bind it", () => {
     const bound = Compile(Root().map((doc) => doc.key("name").match("^a.b$")));
     expect(Projected(bound)).to.equal(`REGEXP_LIKE(${NAME}, ?, 'c')`);
-    expect(bound.args[0]).to.equal("^a[^\\n\\r\\u2028\\u2029]b\\z");
+    expect(bound.args[0]).to.equal("^a[^\\n\\r\\x{2028}\\x{2029}]b\\z");
   });
 
   it("bind a pattern the statement computes as it is, without translating it", () => {

@@ -3,7 +3,7 @@ import assert from "node:assert";
 import type { Dialect } from "../../dialect";
 import { type Sql, join, sql } from "../../statement";
 import type { KeyColumn } from "./paths";
-import type { SqlType } from "./types";
+import { IsJsonBacked, type SqlType } from "./types";
 import { ValueKeyAt, ValueKeyRead } from "./value-key";
 import {
   type Compiled,
@@ -231,13 +231,32 @@ function KeyedBound(
  * the rows the index already chose. So an index never changes which rows match, only how fast they
  * are found.
  */
+/** The terms a value sorts by: a JSON value in the order JSON values compare in. */
+export function SortTerms(dialect: Dialect, value: Compiled): readonly Sql[] {
+  return IsJsonBacked(value.type)
+    ? dialect.sql.json.order(value.sql)
+    : [value.sql];
+}
+
+/** Two operands of one type compared, as JSON where both are JSON values. */
+export function Compared(
+  dialect: Dialect,
+  left: Compiled,
+  right: Compiled,
+  operator: Ordering,
+): Sql {
+  return IsJsonBacked(left.type) && IsJsonBacked(right.type)
+    ? dialect.sql.json.compare(left.sql, right.sql, operator)
+    : sql`${left.sql} ${OPERATORS[operator]} ${right.sql}`;
+}
+
 export function Compare(
   dialect: Dialect,
   left: Compiled,
   right: Compiled,
   operator: Ordering,
 ): Sql {
-  const plain = sql`${left.sql} ${OPERATORS[operator]} ${right.sql}`;
+  const plain = Compared(dialect, left, right, operator);
   if (left.key) {
     return sql`(${KeyedBound(dialect, left.key, right, operator)} AND ${plain})`;
   }

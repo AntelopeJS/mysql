@@ -6,6 +6,7 @@ import type { SqlType } from "./types";
 import { ElementColumns, type TablePlan, ValueKeys } from "./plan";
 import type { TableModel } from "./fields";
 import { type Compiled, QualifiedColumn } from "./sql";
+import { SortTerms } from "./json";
 import {
   AliasedColumns,
   ColumnRowSource,
@@ -149,7 +150,7 @@ export function IndexColumns(
   const fields = origin ? origin.index(name) : [name];
   return fields.map((field) => {
     const value = NamedField(relation.dialect, source, field);
-    return { name: field, value, order: [value.sql] };
+    return { name: field, value, order: SortTerms(relation.dialect, value) };
   });
 }
 

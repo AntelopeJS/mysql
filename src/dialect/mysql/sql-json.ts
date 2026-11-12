@@ -7,7 +7,9 @@ import type {
   WalkKind,
 } from "../sql-types";
 import type { KeyColumn } from "../../implementations/database/paths";
+import type { Ordering } from "../../implementations/database/json";
 import { type Sql, ident, int, join, lit, param, sql } from "../../statement";
+import { type Flavour, type Held, HeldRead } from "./flavour";
 import { IsoText, ParseInstant } from "./sql-time";
 
 /** What `JSON_TYPE` answers for each kind; a JSON number has four. */
@@ -21,12 +23,10 @@ const TYPE_NAMES: Record<JsonKind, readonly string[]> = {
 };
 
 const COMMA = sql`, `;
-const JSON_NULL = sql`CAST('null' AS JSON)`;
-const JSON_TRUE = sql`CAST('true' AS JSON)`;
 const EMPTY_OBJECT = sql`JSON_OBJECT()`;
 
 /** The JavaScript falsy values a JSON value can hold; `NaN` and `undefined` have no spelling. */
-const FALSY = sql`CAST('[null, false, 0, ""]' AS JSON)`;
+const FALSY = lit('[null, false, 0, ""]');
 
 /** A path through keys, each quoted so any key text is one member name. */
 function KeyPath(...keys: readonly string[]): Sql {
@@ -66,16 +66,19 @@ function Unquoted(value: Sql): Sql {
   return sql`CAST(JSON_UNQUOTE(${value}) AS CHAR)`;
 }
 
-const READS: Record<ScalarKind, (value: Sql) => Sql> = {
-  text: (value) =>
-    sql`(CASE WHEN ${Is(value, ["string"])} THEN ${Unquoted(value)} END)`,
-  float: (value) =>
-    sql`(CASE WHEN ${Is(value, ["number"])} THEN CAST(${value} AS DOUBLE) END)`,
-  bool: (value) =>
-    sql`(CASE WHEN ${Is(value, ["boolean"])} THEN (${value} = ${JSON_TRUE}) END)`,
-  timestamp: (value) =>
-    sql`(CASE WHEN ${Is(value, ["string"])} THEN ${ParseInstant(Unquoted(value))} END)`,
-};
+function Reads(flavour: Flavour): Record<ScalarKind, (value: Sql) => Sql> {
+  const jsonTrue = flavour.json(lit("true"));
+  return {
+    text: (value) =>
+      sql`(CASE WHEN ${Is(value, ["string"])} THEN ${Unquoted(value)} END)`,
+    float: (value) =>
+      sql`(CASE WHEN ${Is(value, ["number"])} THEN CAST(${value} AS DOUBLE) END)`,
+    bool: (value) =>
+      sql`(CASE WHEN ${Is(value, ["boolean"])} THEN (${value} = ${jsonTrue}) END)`,
+    timestamp: (value) =>
+      sql`(CASE WHEN ${Is(value, ["string"])} THEN ${ParseInstant(flavour, Unquoted(value))} END)`,
+  };
+}
 
 /** MySQL's own order of JSON kinds, lowest first, as `ORDER BY` sorts a JSON column. */
 const RANKS: Readonly<Record<JsonKind, number>> = {
@@ -105,33 +108,94 @@ function RankedText(value: Sql): Sql {
 }
 
 /** A number, 0 or 1 for a boolean, 0 for any other value, and NULL for an absent one. */
-function RankedNumber(value: Sql): Sql {
-  return sql`(CASE WHEN ${value} IS NULL THEN NULL WHEN ${Is(value, ["number"])} THEN CAST(${value} AS DOUBLE) WHEN ${Is(value, ["boolean"])} THEN (${value} = ${JSON_TRUE}) ELSE 0 END)`;
+function RankedNumber(value: Sql, jsonTrue: Sql): Sql {
+  return sql`(CASE WHEN ${value} IS NULL THEN NULL WHEN ${Is(value, ["number"])} THEN CAST(${value} AS DOUBLE) WHEN ${Is(value, ["boolean"])} THEN (${value} = ${jsonTrue}) ELSE 0 END)`;
+}
+
+const ORDERINGS: Record<Ordering, Sql> = {
+  "=": sql`=`,
+  "<": sql`<`,
+  "<=": sql`<=`,
+  ">": sql`>`,
+  ">=": sql`>=`,
+};
+
+/** The tag of a value's kind, then a string's text or a container's: what orders values of two kinds. */
+function KindTagged(value: Sql): Sql {
+  return sql`COALESCE(${RankedText(value)}, ${Tagged(RANKS.null)})`;
+}
+
+/**
+ * Where the server compares JSON as text, equality is the flavour's and an ordering compares the
+ * kind's tag and then the number, which is the order MySQL sorts JSON values in.
+ */
+function Comparison(flavour: Flavour): JsonSyntax["compare"] {
+  const { jsonEquals } = flavour;
+  if (!jsonEquals) {
+    return (left, right, operator) =>
+      sql`${left} ${ORDERINGS[operator]} ${right}`;
+  }
+  const jsonTrue = flavour.json(lit("true"));
+  return (left, right, operator) => {
+    const equal = jsonEquals(left, right);
+    if (operator === "=") {
+      return equal;
+    }
+    const inclusive = operator === "<=" || operator === ">=";
+    const ranked = (value: Sql) =>
+      sql`(${KindTagged(value)}, ${RankedNumber(value, jsonTrue)})`;
+    return sql`(CASE WHEN ${equal} THEN ${inclusive ? sql`TRUE` : sql`FALSE`} ELSE ${ranked(left)} ${ORDERINGS[operator]} ${ranked(right)} END)`;
+  };
+}
+
+function Ordered(flavour: Flavour): JsonSyntax["order"] {
+  if (!flavour.jsonEquals) {
+    return (value) => [value];
+  }
+  const jsonTrue = flavour.json(lit("true"));
+  return (value) => [KindTagged(value), RankedNumber(value, jsonTrue)];
+}
+
+function Sameness(flavour: Flavour): JsonSyntax["same"] {
+  const { jsonEquals } = flavour;
+  if (!jsonEquals) {
+    return (left, right) => sql`(${left} <=> ${right})`;
+  }
+  return (left, right) =>
+    sql`(CASE WHEN ${left} IS NULL OR ${right} IS NULL THEN ${left} IS NULL AND ${right} IS NULL ELSE ${jsonEquals(left, right)} END)`;
 }
 
 /**
  * How a key column's source value reads as what the column holds: a declared string column's own
  * text, a JSON string, number or boolean by kind, and the two columns of a value key.
  */
-const KEY_READS: Record<KeyColumn["read"], (value: Sql) => Sql> = {
-  text: (value) => value,
-  string: READS.text,
-  double: READS.float,
-  bool: READS.bool,
-  "ranked-text": RankedText,
-  "ranked-number": RankedNumber,
-};
+function KeyReads(
+  flavour: Flavour,
+  reads: Record<ScalarKind, (value: Sql) => Sql>,
+): Record<KeyColumn["read"], (value: Sql) => Sql> {
+  const jsonTrue = flavour.json(lit("true"));
+  return {
+    text: (value) => value,
+    string: reads.text,
+    double: reads.float,
+    bool: reads.bool,
+    "ranked-text": RankedText,
+    "ranked-number": (value) => RankedNumber(value, jsonTrue),
+  };
+}
 
 /**
  * A boolean becomes a JSON boolean only when the server knows it is one, which a comparison says
  * and a stored `TINYINT(1)` does not.
  */
-const WRITINGS: Record<ScalarKind, (value: Sql) => Sql> = {
-  text: (value) => sql`CAST(JSON_QUOTE(${value}) AS JSON)`,
-  float: (value) => sql`CAST(${value} AS JSON)`,
-  bool: (value) => sql`CAST((${value}) <> 0 AS JSON)`,
-  timestamp: (value) => sql`CAST(JSON_QUOTE(${IsoText(value)}) AS JSON)`,
-};
+function Writings(flavour: Flavour): Record<ScalarKind, (value: Sql) => Sql> {
+  return {
+    text: (value) => flavour.json(sql`JSON_QUOTE(${value})`),
+    float: (value) => flavour.number(value),
+    bool: (value) => flavour.boolean(sql`(${value}) <> 0`),
+    timestamp: (value) => flavour.json(sql`JSON_QUOTE(${IsoText(value)})`),
+  };
+}
 
 function Entries(entries: readonly (readonly [string, Sql])[]): Sql {
   return join(
@@ -198,31 +262,6 @@ function SetKeys(
   return sql`JSON_SET(${document}, ${join(pairs, COMMA)})`;
 }
 
-/** The digits of the largest row number, to which an ordinal is padded so its text sorts as it does. */
-const ORDINAL_DIGITS = 20;
-
-/**
- * Collects JSON values without reading any back from text, since MySQL 8.4's JSON parser reads some
- * doubles of 17 significant digits as a neighbour. `JSON_ARRAYAGG` takes no order, so an ordered
- * array is first an object keyed by each row's ordinal at a fixed width: the server keeps an
- * object's keys sorted, and `$.*` reads its members in that order. A dedup keys each element by its
- * text instead, which keeps one element per text. An absent element is a JSON null either way.
- */
-function Collect(
-  element: Sql,
-  ordinal: Sql | undefined,
-  distinct: boolean,
-): Sql {
-  if (ordinal === undefined && !distinct) {
-    return sql`COALESCE(JSON_ARRAYAGG(${element}), JSON_ARRAY())`;
-  }
-  const key =
-    ordinal === undefined
-      ? sql`COALESCE(CAST(${element} AS CHAR), 'null')`
-      : sql`LPAD(${ordinal}, ${int(ORDINAL_DIGITS)}, '0')`;
-  return sql`COALESCE(JSON_EXTRACT(JSON_OBJECTAGG(${key}, ${element}), '$.*'), JSON_ARRAY())`;
-}
-
 /** A path to the one key a statement computes, quoted as {@link KeyPath} quotes a static one. */
 function DynamicPath(key: Sql): Sql {
   return sql`CONCAT('$.', CAST(JSON_QUOTE(${key}) AS CHAR))`;
@@ -257,32 +296,51 @@ const WALK_ROWS: Record<WalkKind, (source: Sql) => Sql> = {
   members: (source) => sql`JSON_TABLE(${source}, '$.*' ${WALK_COLUMNS})`,
 };
 
-function WalkRows(kind: WalkKind, source: Sql, alias: string): Walk {
+function WalkRows(
+  flavour: Flavour,
+  kind: WalkKind,
+  source: Sql,
+  alias: string,
+): Walk {
   const rows = ident(alias);
   return {
     ordinal: sql`${rows}.${ORDINAL}`,
-    value: sql`${rows}.${VALUE}`,
+    value: flavour.tabled(sql`${rows}.${VALUE}`),
     aggregate: (select, where) =>
       sql`(SELECT ${select} FROM ${WALK_ROWS[kind](source)} AS ${rows}${where ? sql` WHERE ${where}` : sql``})`,
   };
 }
 
 /**
- * Each side is held once on a derived table, so a merge chained N deep spells its operands once
- * rather than 2^N times. The keys of both go through one walk: a key in both rows reads the right's
- * value for each, and `JSON_OBJECTAGG` keeps the one. The guard is outside the aggregate, which
- * answers a row over no input, so a side that is not an object yields NULL and not `{}`.
+ * Each side is held once, so a merge chained N deep spells its operands once rather than 2^N times.
+ * The keys of both go through one walk, the left's first, and each key is kept once: a left key
+ * only where the right lacks it, since MariaDB's `JSON_OBJECTAGG` keeps a key it is given twice.
+ * The guard is outside the aggregate, which answers a row over no input, so a side that is not an
+ * object yields NULL and not `{}`.
  */
-function ShallowMerge(left: Sql, right: Sql, alias: string): Sql {
-  const held = ident(alias);
+function ShallowMerge(
+  flavour: Flavour,
+  left: Sql,
+  right: Sql,
+  alias: string,
+): Sql {
+  const sides: readonly Held[] = [
+    { name: "l", value: left, kind: "json" },
+    { name: "r", value: right, kind: "json" },
+  ];
+  const [leftSide, rightSide] = sides.map((side) =>
+    HeldRead(flavour, alias, side),
+  );
   const keys = ident(`${alias}_k`);
   const name = sql`${keys}.${ident("name")}`;
-  const leftSide = sql`${held}.${ident("l")}`;
-  const rightSide = sql`${held}.${ident("r")}`;
-  const value = sql`IF(JSON_CONTAINS_PATH(${rightSide}, 'one', ${DynamicPath(name)}), JSON_EXTRACT(${rightSide}, ${DynamicPath(name)}), JSON_EXTRACT(${leftSide}, ${DynamicPath(name)}))`;
-  const merged = sql`(SELECT COALESCE(JSON_OBJECTAGG(${name}, ${value}), ${EMPTY_OBJECT}) FROM JSON_TABLE(JSON_MERGE_PRESERVE(JSON_KEYS(${leftSide}), JSON_KEYS(${rightSide})), '$[*]' COLUMNS (${ident("name")} LONGTEXT PATH '$')) AS ${keys})`;
+  const path = DynamicPath(name);
+  const fromRight = sql`(${keys}.${ORDINAL} > JSON_LENGTH(JSON_KEYS(${leftSide})))`;
+  const value = sql`IF(${fromRight}, JSON_EXTRACT(${rightSide}, ${path}), JSON_EXTRACT(${leftSide}, ${path}))`;
+  const kept = sql`${fromRight} OR NOT JSON_CONTAINS_PATH(${rightSide}, 'one', ${path})`;
+  const names = sql`JSON_TABLE(JSON_MERGE_PRESERVE(JSON_KEYS(${leftSide}), JSON_KEYS(${rightSide})), '$[*]' COLUMNS (${ORDINAL} FOR ORDINALITY, ${ident("name")} LONGTEXT PATH '$')) AS ${keys}`;
+  const merged = sql`(SELECT COALESCE(JSON_OBJECTAGG(${name}, ${value}), ${EMPTY_OBJECT}) FROM ${names} WHERE ${kept})`;
   const bothObjects = sql`${Is(leftSide, ["object"])} AND ${Is(rightSide, ["object"])}`;
-  return sql`(SELECT CASE WHEN ${bothObjects} THEN ${merged} END FROM (SELECT ${left} AS ${ident("l")}, ${right} AS ${ident("r")}) AS ${held})`;
+  return sql`(SELECT CASE WHEN ${bothObjects} THEN ${merged} END FROM ${flavour.hold(sides)} AS ${ident(alias)})`;
 }
 
 /**
@@ -291,14 +349,21 @@ function ShallowMerge(left: Sql, right: Sql, alias: string): Sql {
  * row per piece comes from walking a list as long as the count. An empty separator occurs nowhere,
  * so the whole text is the one piece.
  */
+/** What a split is written with: the flavour, to hold the text, and the members it builds the array with. */
+interface SplitSyntax extends Pick<JsonSyntax, "parse" | "of" | "collect"> {
+  readonly flavour: Flavour;
+}
+
 function Split(
+  json: SplitSyntax,
   text: Sql,
   separator: string,
   limit: number | undefined,
   alias: string,
 ): Sql {
-  const held = ident(alias);
-  const whole = sql`${held}.${ident("t")}`;
+  const held: Held = { name: "t", value: text, kind: "text" };
+  const { flavour } = json;
+  const whole = HeldRead(flavour, alias, held);
   const pieces = ident(`${alias}_p`);
   const ordinal = sql`${pieces}.${ORDINAL}`;
   const bound = param(separator);
@@ -310,44 +375,61 @@ function Split(
     separator === ""
       ? whole
       : sql`SUBSTRING_INDEX(SUBSTRING_INDEX(${whole}, ${bound}, ${ordinal}), ${bound}, -1)`;
-  const rows = sql`JSON_TABLE(CAST(CONCAT('[', REPEAT('0,', ${occurrences}), '0]') AS JSON), '$[*]' COLUMNS (${ORDINAL} FOR ORDINALITY))`;
+  const rows = sql`JSON_TABLE(${json.parse(sql`CONCAT('[', REPEAT('0,', ${occurrences}), '0]')`)}, '$[*]' COLUMNS (${ORDINAL} FOR ORDINALITY))`;
   const kept =
     limit === undefined ? sql`` : sql` WHERE ${ordinal} <= ${int(limit)}`;
-  const array = Collect(WRITINGS.text(piece), ordinal, false);
-  return sql`(SELECT CASE WHEN ${whole} IS NULL THEN NULL ELSE (SELECT ${array} FROM ${rows} AS ${pieces}${kept}) END FROM (SELECT ${text} AS ${ident("t")}) AS ${held})`;
+  const array = json.collect(json.of(piece, "text"), ordinal, false);
+  return sql`(SELECT CASE WHEN ${whole} IS NULL THEN NULL ELSE (SELECT ${array} FROM ${rows} AS ${pieces}${kept}) END FROM ${flavour.hold([held])} AS ${ident(alias)})`;
 }
 
-export const json: JsonSyntax = {
-  member: Member,
-  dynamicMember: (document, key) =>
-    sql`JSON_EXTRACT(${document}, ${DynamicPath(key)})`,
-  is: Is,
-  as: (value, kind) => READS[kind](value),
-  key: (read, value) => KEY_READS[read](value),
-  ranks: RANKS,
-  tagged: Tagged,
-  of: (value, kind) => WRITINGS[kind](value),
-  parse: (text) => sql`CAST(${text} AS JSON)`,
-  text: (value) => sql`CAST(${value} AS CHAR)`,
-  null: JSON_NULL,
-  emptyObject: EMPTY_OBJECT,
-  emptyArray: sql`JSON_ARRAY()`,
-  object: (entries) => sql`JSON_OBJECT(${Entries(entries)})`,
-  objectText: ObjectText,
-  array: (items) => sql`JSON_ARRAY(${join(items, COMMA)})`,
-  document: Document,
-  removeKeys: RemoveKeys,
-  setKeys: SetKeys,
-  hasKey: (document, key) =>
-    sql`JSON_CONTAINS_PATH(${document}, 'one', ${KeyPath(key)})`,
-  includes: (array, element) => sql`(${element} MEMBER OF (${array}))`,
-  indexedElements: (column) => sql`JSON_EXTRACT(${column}, '$')`,
-  truthy: (value) => sql`(NOT (${value} MEMBER OF (${FALSY})))`,
-  collect: Collect,
-  length: (container) => sql`JSON_LENGTH(${container})`,
-  at: At,
-  concatArrays: (left, right) => sql`JSON_MERGE_PRESERVE(${left}, ${right})`,
-  shallowMerge: ShallowMerge,
-  split: Split,
-  walk: WalkRows,
-};
+export function JsonOf(flavour: Flavour): JsonSyntax {
+  const reads = Reads(flavour);
+  const keyReads = KeyReads(flavour, reads);
+  const writings = Writings(flavour);
+  const text = (value: Sql) => sql`CAST(${value} AS CHAR)`;
+  const parse = (value: Sql) => flavour.json(value);
+  const of = (value: Sql, kind: ScalarKind) => writings[kind](value);
+  const collect: JsonSyntax["collect"] = (element, ordinal, distinct) =>
+    flavour.collect(element, ordinal, distinct, text);
+  return {
+    member: Member,
+    dynamicMember: (document, key) =>
+      sql`JSON_EXTRACT(${document}, ${DynamicPath(key)})`,
+    is: Is,
+    as: (value, kind) => reads[kind](value),
+    key: (read, value) => keyReads[read](value),
+    ranks: RANKS,
+    tagged: Tagged,
+    compare: Comparison(flavour),
+    order: Ordered(flavour),
+    same: Sameness(flavour),
+    of,
+    parse,
+    text,
+    null: flavour.json(lit("null")),
+    emptyObject: EMPTY_OBJECT,
+    emptyArray: sql`JSON_ARRAY()`,
+    object: (entries) => sql`JSON_OBJECT(${Entries(entries)})`,
+    objectText: ObjectText,
+    array: (items) => sql`JSON_ARRAY(${join(items, COMMA)})`,
+    document: Document,
+    removeKeys: RemoveKeys,
+    setKeys: SetKeys,
+    hasKey: (document, key) =>
+      sql`JSON_CONTAINS_PATH(${document}, 'one', ${KeyPath(key)})`,
+    includes: (array, element) => flavour.includes(array, element),
+    indexedElements: (column) => sql`JSON_EXTRACT(${column}, '$')`,
+    truthy: (value) =>
+      sql`(NOT ${flavour.includes(flavour.json(FALSY), value)})`,
+    collect,
+    collectInOrder: flavour.collectInOrder,
+    length: (container) => sql`JSON_LENGTH(${container})`,
+    at: At,
+    concatArrays: (left, right) => sql`JSON_MERGE_PRESERVE(${left}, ${right})`,
+    shallowMerge: (left, right, alias) =>
+      ShallowMerge(flavour, left, right, alias),
+    split: (value, separator, limit, alias) =>
+      Split({ flavour, parse, of, collect }, value, separator, limit, alias),
+    walk: (kind, source, alias) => WalkRows(flavour, kind, source, alias),
+  };
+}

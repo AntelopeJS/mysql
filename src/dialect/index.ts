@@ -1,4 +1,5 @@
 import { mysql } from "./mysql";
+import { mariadb } from "./mariadb";
 
 export type { Dialect, SessionSyntax } from "./types";
 export type {
@@ -18,9 +19,10 @@ export type {
 
 /**
  * The one list of engines. A new engine is one entry here and one directory beside `mysql/`; no
- * compiler, planner or runtime file names an engine.
+ * compiler, planner or runtime file names an engine. MariaDB is MySQL's family, so its directory
+ * holds only what it spells its own way.
  */
-export const DIALECTS = { mysql } as const;
+export const DIALECTS = { mysql, mariadb } as const;
 
 export type DialectId = keyof typeof DIALECTS;
 
@@ -33,14 +35,8 @@ export function IsDialectId(id: string): id is DialectId {
 
 /**
  * The dialect for a server, from `SELECT VERSION()`: a version naming MariaDB is MariaDB, anything
- * else is MySQL. An engine with no entry in {@link DIALECTS} is refused by name.
+ * else is MySQL.
  */
 export function DetectDialect(version: string): DialectId {
-  const engine = MARIADB_MARKER.test(version) ? "mariadb" : "mysql";
-  if (!IsDialectId(engine)) {
-    throw new Error(
-      `The server reports version '${version}', which is ${engine}; this module does not support ${engine} yet`,
-    );
-  }
-  return engine;
+  return MARIADB_MARKER.test(version) ? "mariadb" : "mysql";
 }
