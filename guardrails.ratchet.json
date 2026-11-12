@@ -1,0 +1,7 @@
+{
+  "pack": "0.5.3",
+  "rules": {
+    "antelopejs/require-tsconfig-include": 2
+  },
+  "oversizeFiles": {}
+}

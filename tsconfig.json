@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "commonjs",
+    "lib": ["ES2022"],
+    "allowJs": false,
+    "outDir": "dist",
+    "rootDir": "src",
+    "strict": true,
+    "noImplicitAny": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "removeComments": true,
+    "preserveConstEnums": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "declaration": true,
+    "noEmitOnError": true,
+    "sourceMap": true,
+    "useDefineForClassFields": true,
+    "types": ["chai", "mocha", "node"]
+  },
+  "include": ["src/**/*.ts"]
+}
