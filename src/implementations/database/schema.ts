@@ -30,7 +30,7 @@ const schemaPlans = new Map<string, ReadonlyMap<string, TablePlan>>();
 const scanNotices = new Map<string, TableScanNotices>();
 const ready = new Map<string, Promise<void>>();
 const indexing = new Map<string, Promise<void>>();
-const guardedWrites = new Set<string>();
+const uniqueGates = new Map<string, Promise<void>>();
 
 function UnservedScanWarning(
   schemaId: string,
@@ -146,18 +146,9 @@ async function initialize(schemaId: string, schema: SchemaDefinition) {
   );
   scanNotices.set(schemaId, SchemaScanNotices(schemaId, schema));
   await ConvergeTables(schemaId, planned.tables, GetOptions().migrations);
-  const earlier = indexing.get(schemaId);
   const phase = BuildIndexes(schemaId, planned.tables);
-  indexing.set(
-    schemaId,
-    earlier ? Promise.all([earlier, phase]).then(() => undefined) : phase,
-  );
-  guardedWrites.delete(schemaId);
-  if (
-    planned.tables.some((plan) => plan.indexes.some((index) => index.unique))
-  ) {
-    guardedWrites.add(schemaId);
-  }
+  indexing.set(schemaId, phase.done);
+  uniqueGates.set(schemaId, phase.unique);
 }
 
 /**
@@ -187,7 +178,7 @@ export const Schemas = {
           schemaModels.delete(schemaId);
           schemaPlans.delete(schemaId);
           scanNotices.delete(schemaId);
-          guardedWrites.delete(schemaId);
+          uniqueGates.delete(schemaId);
         }
         throw err;
       },
@@ -203,7 +194,7 @@ export const Schemas = {
     scanNotices.delete(schemaId);
     ready.delete(schemaId);
     indexing.delete(schemaId);
-    guardedWrites.delete(schemaId);
+    uniqueGates.delete(schemaId);
   },
 };
 
@@ -294,9 +285,9 @@ export function GetCrossInstanceScanNotice(
 
 /**
  * Settles once the schema is ready and every index phase this process started for it has settled,
- * whatever their outcome. A later registration's phase finds the indexes lock held by an earlier
- * one still building and returns at once, so the earlier phase is waited for too. Nothing in the
- * query path awaits it; it is how a caller observes the phase.
+ * whatever their outcome: a later registration's phase runs after the earlier one, so waiting for
+ * the latest waits for both. Nothing in the query path awaits it; it is how a caller observes the
+ * phase.
  */
 export async function WaitForIndexes(schemaId: string): Promise<void> {
   await WaitForSchemaReady(schemaId);
@@ -304,16 +295,16 @@ export async function WaitForIndexes(schemaId: string): Promise<void> {
 }
 
 /**
- * Settles once a write to the schema can rely on its unique indexes, which is when its background
- * index phase has settled; at once for a schema that declares none.
+ * Settles once a write to the schema can rely on its unique indexes: at once for a schema that
+ * declares none, as soon as the catalog holds every one it declares, and otherwise once its
+ * background index phase has settled.
  *
  * Reads never wait for the index phase, since an index only changes how fast they run. A unique
  * index changes what a write may store, so a write that ran before it is built could store the
- * duplicate it exists to refuse; writes to such a schema wait instead, for the index phases this
- * process started.
+ * duplicate it exists to refuse; writes to such a schema wait instead. The phase waits for any other
+ * process's phase on the schema, so they wait for whichever process builds the index.
  */
 export async function WaitForUniqueIndexes(schemaId: string): Promise<void> {
-  if (guardedWrites.has(schemaId)) {
-    await WaitForIndexes(schemaId);
-  }
+  await WaitForSchemaReady(schemaId);
+  await uniqueGates.get(schemaId);
 }

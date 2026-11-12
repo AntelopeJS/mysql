@@ -19,6 +19,12 @@ const DDL_LOCK_WAIT_SECONDS = 5;
 /** How long one wait for the tables lock lasts before the waiter asks again, and says it waits. */
 const TABLES_LOCK_WAIT_SECONDS = 10;
 
+/**
+ * How long one wait for the indexes lock lasts before the waiter asks again. Short, so a phase told
+ * to stop between two waits stops within it.
+ */
+const INDEXES_LOCK_WAIT_SECONDS = 1;
+
 /** How many times a step that timed out on a lock is tried before convergence gives up on it. */
 export const LOCK_ATTEMPTS = 6;
 
@@ -134,17 +140,27 @@ async function TakeLock(
   return Number(acquired) === 1;
 }
 
+/** How a waiter for a convergence lock waits: each wait's length, what it says once, when it stops. */
+interface LockWait {
+  readonly seconds: number;
+  readonly message: string;
+  readonly isStopping: () => boolean;
+}
+
+const NEVER_STOPS = () => false;
+
 async function WaitForLock(
   session: ConvergenceSession,
   name: string,
-  schemaKey: string,
+  wait: LockWait,
 ): Promise<void> {
   let waited = false;
-  while (!(await TakeLock(session, name, TABLES_LOCK_WAIT_SECONDS))) {
+  while (!(await TakeLock(session, name, wait.seconds))) {
+    if (wait.isStopping()) {
+      throw new Error(`Stopped waiting for the named lock '${name}'`);
+    }
     if (!waited) {
-      Logger.Info(
-        `waiting for another process converging the tables of schema '${schemaKey}'`,
-      );
+      Logger.Info(wait.message);
       waited = true;
     }
   }
@@ -174,29 +190,53 @@ export function WithTablesLock<T>(
   schemaKey: string,
   work: (session: ConvergenceSession) => Promise<T>,
 ): Promise<T> {
-  return Serialized(schemaKey, () =>
+  return Serialized(`tables:${schemaKey}`, () =>
     OnDedicatedSession(async (session) => {
       const name = await LockName(session, "tables", schemaKey);
-      await WaitForLock(session, name, schemaKey);
+      await WaitForLock(session, name, {
+        seconds: TABLES_LOCK_WAIT_SECONDS,
+        message: `waiting for another process converging the tables of schema '${schemaKey}'`,
+        isStopping: NEVER_STOPS,
+      });
       return Holding(session, name, work);
     }),
   );
 }
 
+/** What an index phase tells the lock it runs under. */
+export interface IndexPhaseHooks {
+  /** Runs once the phase has its session, before it waits; a stop interrupts that session. */
+  readonly opened: (session: ConvergenceSession) => Promise<void>;
+  readonly isStopping: () => boolean;
+}
+
 /**
- * Runs the index phase of a schema under its indexes lock, or answers `undefined` without running
- * it when another session holds the lock: that session is building the same indexes.
+ * Runs the index phase of a schema under its indexes lock, waiting while another session holds it.
+ * The holder is building the schema's indexes from its own plan, which may lack some of this one's,
+ * so this phase runs once it is done and finds left only what that plan did not build. A write that
+ * waits for the phase therefore waits for the other build too.
  */
 export function WithIndexesLock<T>(
   schemaKey: string,
+  hooks: IndexPhaseHooks,
   work: (session: ConvergenceSession) => Promise<T>,
-): Promise<T | undefined> {
-  return OnDedicatedSession(async (session) => {
-    const name = await LockName(session, "indexes", schemaKey);
-    if (!(await TakeLock(session, name, 0))) {
-      return undefined;
+): Promise<T> {
+  return Serialized(`indexes:${schemaKey}`, () => {
+    if (hooks.isStopping()) {
+      return Promise.reject(
+        new Error(`Stopped before the index phase of '${schemaKey}' began`),
+      );
     }
-    return Holding(session, name, work);
+    return OnDedicatedSession(async (session) => {
+      await hooks.opened(session);
+      const name = await LockName(session, "indexes", schemaKey);
+      await WaitForLock(session, name, {
+        seconds: INDEXES_LOCK_WAIT_SECONDS,
+        message: `waiting for another process building the indexes of schema '${schemaKey}'`,
+        isStopping: hooks.isStopping,
+      });
+      return Holding(session, name, work);
+    });
   });
 }
 

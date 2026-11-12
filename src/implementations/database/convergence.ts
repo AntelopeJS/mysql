@@ -328,6 +328,23 @@ function DropKeyColumn(view: IndexView): IndexStep | undefined {
   return { kind: "dropKeyColumn", target: column.name, sql };
 }
 
+/**
+ * Pure. Whether the catalog already holds every unique index the plan declares, each as the plan
+ * signs it, so no write to the table can store a duplicate whatever the index phase still has to do.
+ */
+export function HoldsUniqueIndexes(
+  plan: TablePlan,
+  observed: ObservedTable | undefined,
+): boolean {
+  return plan.indexes
+    .filter((index) => index.unique)
+    .every(
+      (index) =>
+        observed !== undefined &&
+        IndexNamed(observed, index.name)?.comment === index.signature,
+    );
+}
+
 /** The declared indexes this phase still tries to build. */
 function Building(view: IndexView): IndexPlan[] {
   return view.plan.indexes.filter(

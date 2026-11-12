@@ -6,7 +6,11 @@ import { GetDialect, RegisterBeforeDisconnect } from "../../connection";
 import { Observe } from "./observe";
 import { SchemaKey } from "./registry";
 import type { TablePlan } from "./plan";
-import { type IndexStep, NextIndexStep } from "./convergence";
+import {
+  HoldsUniqueIndexes,
+  type IndexStep,
+  NextIndexStep,
+} from "./convergence";
 import {
   type ConvergenceSession,
   FailureOf,
@@ -109,20 +113,45 @@ export async function ConvergeIndexes(
   }
 }
 
+function DeclaresUnique(plan: TablePlan): boolean {
+  return plan.indexes.some((index) => index.unique);
+}
+
+/** Whether the catalog already holds every unique index the plans declare. */
+async function HoldsEveryUniqueIndex(
+  session: ConvergenceSession,
+  plans: readonly TablePlan[],
+): Promise<boolean> {
+  for (const plan of plans.filter(DeclaresUnique)) {
+    if (!HoldsUniqueIndexes(plan, await Observe(session, plan.table))) {
+      return false;
+    }
+  }
+  return true;
+}
+
 async function RunIndexPhase(
   schemaId: string,
   plans: readonly TablePlan[],
+  holdsUnique: () => void,
 ): Promise<void> {
   const build: IndexBuild = { isStopping: false };
   builds.add(build);
+  const isStopping = () => build.isStopping;
   try {
+    const opened = async (session: ConvergenceSession) => {
+      build.session = session;
+      if (await HoldsEveryUniqueIndex(session, plans)) {
+        holdsUnique();
+      }
+    };
     const steps = await WithIndexesLock(
       SchemaKey(schemaId),
+      { opened, isStopping },
       async (session) => {
-        build.session = session;
         let total = 0;
         for (const plan of plans) {
-          total += await ConvergeIndexes(session, plan, () => build.isStopping);
+          total += await ConvergeIndexes(session, plan, isStopping);
         }
         return total;
       },
@@ -141,29 +170,49 @@ async function RunIndexPhase(
   }
 }
 
+/** A background index phase, and the gate of the writes its schema's unique indexes guard. */
+export interface IndexPhase {
+  /** Settles once the phase has, whatever its outcome; never rejects. */
+  readonly done: Promise<void>;
+  /**
+   * Settles at once for plans that declare no unique index, as soon as the phase finds the catalog
+   * already holding every one they declare, and otherwise once the phase has settled.
+   */
+  readonly unique: Promise<void>;
+}
+
 /**
  * Converges a schema's secondary indexes and key columns, once its tables converged. Meant to run in
  * the background: queries never wait for it, and their results never depend on whether an index
- * exists yet. The answer never rejects; a failure is logged and repaired by the next registration.
+ * exists yet. `done` never rejects; a failure is logged and repaired by the next registration.
  *
  * A btree index builds with writes flowing, and carries its signature from the statement that
  * builds it, so there is no unsigned window and a failed build leaves no index behind. Processes
- * share the phase through a per-schema lock that is only ever tried: when another session holds it,
- * that session is building the same indexes and this phase does nothing.
+ * take turns at the phase through a per-schema lock: one that finds it held waits for the holder,
+ * then reads the catalog and builds what is left.
  */
 export function BuildIndexes(
   schemaId: string,
   plans: readonly TablePlan[],
-): Promise<void> {
-  const phase = RunIndexPhase(schemaId, plans).catch((err: unknown) => {
-    Logger.Error(
-      `Building the indexes of schema '${schemaId}' failed; the next registration retries it`,
-      err,
-    );
+): IndexPhase {
+  let open = () => {};
+  const unique = new Promise<void>((resolve) => {
+    open = resolve;
   });
-  phases.add(phase);
-  void phase.finally(() => phases.delete(phase));
-  return phase;
+  if (!plans.some(DeclaresUnique)) {
+    open();
+  }
+  const done = RunIndexPhase(schemaId, plans, open)
+    .catch((err: unknown) => {
+      Logger.Error(
+        `Building the indexes of schema '${schemaId}' failed; the next registration retries it`,
+        err,
+      );
+    })
+    .finally(open);
+  phases.add(done);
+  void done.finally(() => phases.delete(done));
+  return { done, unique };
 }
 
 /** Stops every running index build, killing its statement, and waits for each to give its connection back. */
