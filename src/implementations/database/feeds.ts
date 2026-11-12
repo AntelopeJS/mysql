@@ -13,6 +13,7 @@ import {
   Write,
 } from "../../connection";
 import type { TablePlan } from "./plan";
+import type { TableModel } from "./fields";
 import type { RowObject } from "./result";
 import type { TableOrigin } from "./relation";
 import { WaitForSchemaReady } from "./schema";
@@ -102,6 +103,8 @@ interface FeedState {
   chain: Promise<unknown>;
   target?: FeedTarget;
   plan?: FeedPlan;
+  /** The declaration `plan` was compiled from, which a registration of the table replaces. */
+  model?: TableModel;
   watermark: bigint;
   epoch?: string;
   buffer: RowObject[];
@@ -119,10 +122,15 @@ interface FeedState {
 interface OpenFeed extends FeedState {
   target: FeedTarget;
   plan: FeedPlan;
+  model: TableModel;
 }
 
 function IsOpen(state: FeedState): state is OpenFeed {
-  return state.target !== undefined && state.plan !== undefined;
+  return (
+    state.target !== undefined &&
+    state.plan !== undefined &&
+    state.model !== undefined
+  );
 }
 
 /**
@@ -298,6 +306,26 @@ async function Poll(
   }
 }
 
+/**
+ * Polls with the table's declaration as it is registered now. A registration of the table since the
+ * plan was compiled gives it another model, and the stages are compiled again against it, so a field
+ * declared since then is read from its column once values move there.
+ */
+async function Polled(
+  reqId: number,
+  state: OpenFeed,
+  stages: QueryStage[],
+  options: ResolvedOptions,
+): Promise<void> {
+  const { schemaId, tableId } = state.target;
+  const origin = state.env.origin(schemaId, tableId);
+  if (origin.model !== state.model) {
+    state.plan = CompileFeed(Between(stages), origin, state.env.dialect());
+    state.model = origin.model;
+  }
+  return Poll(reqId, state, options);
+}
+
 const ROOT_LENGTH = 3;
 
 function RootId(stages: QueryStage[], index: number): string {
@@ -355,6 +383,7 @@ async function Open(state: FeedState, stages: QueryStage[]): Promise<void> {
   };
   state.target = target;
   state.plan = plan;
+  state.model = origin.model;
   state.epoch = opened.epoch;
   state.watermark = opened.frontier;
   if (!state.end) {
@@ -400,7 +429,7 @@ async function Advance(
     }
     state.woken = false;
     await Promise.race([
-      Poll(reqId, state, options).catch((err: unknown) => {
+      Polled(reqId, state, stages, options).catch((err: unknown) => {
         if (!state.end) {
           Logger.Warn(POLL_FAILED, err);
         }
