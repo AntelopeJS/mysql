@@ -120,16 +120,38 @@ export function AliasedColumns(alias: string): ColumnAddress {
  * Each member is read back with the compiler's own reading of the JSON value the trigger wrote, so
  * it is the type the column holds. A JSON-backed member is unboxed: the image holds it in a
  * one-element array, or as its JSON text where the column nests too deep for that array, which
- * keeps a column holding SQL NULL apart from one holding a JSON null. A key the image lacks, which a
- * row logged before its column was added does, is SQL NULL.
+ * keeps a column holding SQL NULL apart from one holding a JSON null.
+ *
+ * A row logged before a field of `model` was declared has no member for the field's column, and
+ * holds the field in its `_extra` member instead, as the table did then. The field is read from
+ * there, as a member of that type, so the event shows what the row held. A member the image has
+ * wins, even one holding SQL NULL.
  */
-export function LoggedColumns(dialect: Dialect, row: Sql): ColumnAddress {
+export function LoggedColumns(
+  dialect: Dialect,
+  row: Sql,
+  model: TableModel,
+): ColumnAddress {
+  const { json } = dialect.sql;
+  const fields = new Map(
+    Object.entries(model.fields).map(([name, spec]) => [spec.column, name]),
+  );
+  const extra = dialect.capture.unbox(json.member(row, EXTRA_COLUMN));
   return (column, type) => {
-    const member = dialect.sql.json.member(row, column);
-    const sql = IsJsonBacked(type)
+    const member = json.member(row, column);
+    const logged = IsJsonBacked(type)
       ? dialect.capture.unbox(member)
-      : dialect.sql.json.as(member, type.kind);
-    return { sql, type };
+      : json.as(member, type.kind);
+    const field = fields.get(column);
+    if (field === undefined) {
+      return { sql: logged, type };
+    }
+    const kept = json.member(extra, field);
+    const moved = IsJsonBacked(type) ? kept : json.as(kept, type.kind);
+    return {
+      sql: sql`(CASE WHEN ${json.hasKey(row, column)} THEN ${logged} ELSE ${moved} END)`,
+      type,
+    };
   };
 }
 

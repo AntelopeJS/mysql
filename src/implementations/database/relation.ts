@@ -237,7 +237,7 @@ export function LoggedRelation(
     alias,
     source: new ColumnRowSource(
       dialect,
-      LoggedColumns(dialect, row),
+      LoggedColumns(dialect, row, origin.model),
       origin.model,
     ),
     origin,
