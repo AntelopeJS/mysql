@@ -343,6 +343,25 @@ describe("BuildTablePlan multi and crossInstance indexes", () => {
     expect(refusals[0]).to.include({ table: "items", index: "tags" });
   });
 
+  it("reports an index past the engine's key columns, counting a value key twice, and plans the rest", () => {
+    const fields = (count: number) =>
+      Array.from({ length: count }, (_, position) => `u${position}`);
+    const { plan, refusals } = Plan({
+      fields: { price: "number" },
+      indexes: {
+        fits: { fields: fields(7) },
+        mixed: { fields: [...fields(7), "price"] },
+        wide: { fields: fields(8) },
+      },
+    });
+    expect(plan.indexes.map((index) => index.id)).to.deep.equal([
+      "fits",
+      "mixed",
+    ]);
+    expect(refusals.map((refusal) => refusal.index)).to.deep.equal(["wide"]);
+    expect(refusals[0]?.reason).to.match(/needs 17 key columns/);
+  });
+
   it("changes the signature whenever the index would be built differently", () => {
     const plain = Index(
       { fields: { slug: "string" }, indexes: { slug: {} } },

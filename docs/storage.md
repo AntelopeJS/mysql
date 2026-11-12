@@ -102,6 +102,8 @@ w = floor((3072 - 512 - fixed bytes) / 4 / text parts)
 
 One text part gets 640 characters, two get 320 each, and a text part beside `_id` gets 128. A value key alone gets 638, the tag included. A third text part makes each narrower instead of being refused. Registration refuses only an index whose fixed parts leave no character for a text part.
 
+**Key columns.** InnoDB keys one index on at most 16 columns. `_instance` takes one, a value key two, and every other part one, so an index can key at most seven fields of no declared type. The module does not build an index that needs more. Registration logs a warning that names the index and the count, the schema still registers, and its table and every other index are built. Queries that name the index read the rows themselves, so they answer the same, only more slowly. A `unique` index left out refuses no duplicate, and the warning says so. Declaring the type of some of its fields brings each of those to one column.
+
 ### Index kinds
 
 - **Every index leads with `_instance`**, because every read that is not `CROSS_INSTANCE` carries `_instance = ?`. An index on `(_instance, price)` serves `_instance = '' AND price > 1000` as one range scan.

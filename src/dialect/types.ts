@@ -46,6 +46,8 @@ export interface SessionSyntax {
   readonly binaryCollation: string;
   /** The most bytes an index key may span, `_instance` included. */
   readonly keyBudgetBytes: number;
+  /** The most columns one index may key on, `_instance` included. */
+  readonly maxKeyColumns: number;
   /** Whether a `multi` index over a JSON array can be built as a multi-valued index. */
   readonly multiValuedIndex: boolean;
   /** A lock name for a purpose and a scope, within the engine's name limit whatever the scope. */

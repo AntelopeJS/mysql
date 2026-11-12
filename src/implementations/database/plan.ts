@@ -213,6 +213,30 @@ interface PlannedIndex {
   readonly refusal?: string;
 }
 
+/** The columns a key part takes in a physical index: two for a value key, one for any other. */
+function KeyColumnCount(part: KeyPart): number {
+  return Math.max(1, KeyColumnsOf(part).length);
+}
+
+/**
+ * Why the engine cannot build an index over `parts`, or nothing when it can: past its limit on the
+ * columns of one index, which a value key reaches twice as fast as any other part.
+ */
+function TooManyKeyColumns(
+  parts: readonly KeyPart[],
+  unique: boolean,
+  session: SessionSyntax,
+): string | undefined {
+  const columns = parts.reduce((sum, part) => sum + KeyColumnCount(part), 0);
+  if (columns <= session.maxKeyColumns) {
+    return undefined;
+  }
+  const reason = `it needs ${columns} key columns with the instance, past the ${session.maxKeyColumns} the engine allows in one index, since a field of no declared type takes two; declare the type of some of its fields, or index fewer`;
+  return unique
+    ? `${reason}. Until then nothing refuses a duplicate of its key`
+    : reason;
+}
+
 function PlanIndex(
   tableId: string,
   indexId: string,
@@ -237,6 +261,10 @@ function PlanIndex(
   const parts = elements
     ? [elements]
     : KeyParts(indexId, fields, unique, model, session);
+  const refusal = TooManyKeyColumns([INSTANCE_PART, ...parts], unique, session);
+  if (refusal !== undefined) {
+    return { indexes: [], refusal };
+  }
   const scoped = PhysicalIndex(
     indexId,
     IndexName(indexId),

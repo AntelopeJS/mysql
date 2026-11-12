@@ -32,6 +32,9 @@ const UTC = "+00:00";
 /** InnoDB's key length limit with the DYNAMIC row format, in bytes. */
 const KEY_BUDGET_BYTES = 3072;
 
+/** InnoDB's limit on the columns of one index, `MAX_REF_PARTS`. */
+const MAX_KEY_COLUMNS = 16;
+
 const LOCK_VENDOR = "ajs";
 const LOCK_SEPARATOR = ":";
 const LOCK_DIGEST_CHARS = 40;
@@ -78,6 +81,7 @@ export const session: SessionSyntax = {
   statementTimeout: (ms) => sql`SET SESSION ${Timeout(ms)}`,
   binaryCollation: BINARY_COLLATION,
   keyBudgetBytes: KEY_BUDGET_BYTES,
+  maxKeyColumns: MAX_KEY_COLUMNS,
   multiValuedIndex: true,
   lockName: LockName,
   acquireLock: (name, waitSeconds) =>
