@@ -7,7 +7,7 @@
 <a href="https://interfaces.antelopejs.com/docs/database"><img data-illustration src="https://img.shields.io/badge/Docs-18181B?style=for-the-badge&color=000000" alt="Documentation"></a>
 </div>
 
-The MySQL backend of AntelopeJS. It runs the queries of the database interface on MySQL with the [`mysql2`](https://github.com/sidorares/node-mysql2) driver, and maps schema definitions onto relational tables with native column types and indexes. It can also serve tables that already exist in a database it does not own.
+The MySQL and MariaDB backend of AntelopeJS. It runs the queries of the database interface on MySQL or MariaDB with the [`mysql2`](https://github.com/sidorares/node-mysql2) driver, and maps schema definitions onto relational tables with native column types and indexes. It can also serve tables that already exist in a database it does not own.
 
 Part of [AntelopeJS](https://github.com/AntelopeJS/antelopejs).
 
@@ -27,7 +27,7 @@ The database interface pages document schemas, tables, queries, change feeds and
 This package requires Node.js `>=22`.
 <!-- antelopejs-docs-node:end -->
 
-The module supports MySQL 8.4 LTS and MySQL 9.7 LTS, and `pnpm test` runs every suite on both. It reads the server's version when it connects and refuses MariaDB by name.
+The module supports MySQL 8.4 LTS, MySQL 9.7 LTS, MariaDB 11.8 LTS and MariaDB 12.3 LTS, and `pnpm test` runs every suite on all four. It reads the server's version when it connects and picks the MySQL or the MariaDB dialect. [MariaDB](./docs/mariadb.md) lists every behaviour that differs between the two.
 
 ## Install
 
@@ -39,7 +39,7 @@ The command writes the module's default configuration, the URL `mysql://root@loc
 
 The account in the URL needs `CREATE`, `ALTER`, `INDEX`, `TRIGGER`, `LOCK TABLES`, `SELECT`, `INSERT`, `UPDATE` and `DELETE` on that one database. The module creates no database of its own.
 
-The first `changes()` on a table creates triggers on it. With binary logging on, which is the server's default, MySQL refuses `CREATE TRIGGER` (errno 1419) unless the account holds `SUPER` or the server runs with `log_bin_trust_function_creators = 1`. Before you open a change feed, either `GRANT SUPER ON *.* TO` the account, or run `SET GLOBAL log_bin_trust_function_creators = 1` and put it in the server's configuration file. `SYSTEM_VARIABLES_ADMIN` and `SET_ANY_DEFINER` do not replace `SUPER` for a trigger, on 8.4 or 9.7. Without either, the feed fails with an error that names both remedies. See [Change feeds](./docs/change-feeds.md#what-the-account-needs).
+The first `changes()` on a table creates triggers on it. With binary logging on, which is MySQL's default, the server refuses `CREATE TRIGGER` (errno 1419) unless the account holds `SUPER` or the server runs with `log_bin_trust_function_creators = 1`. Before you open a change feed, either `GRANT SUPER ON *.* TO` the account, or run `SET GLOBAL log_bin_trust_function_creators = 1` and put it in the server's configuration file. `SYSTEM_VARIABLES_ADMIN` and `SET_ANY_DEFINER` do not replace `SUPER` for a trigger, on 8.4 or 9.7. Without either, the feed fails with an error that names both remedies. See [Change feeds](./docs/change-feeds.md#what-the-account-needs).
 
 ## Configuration
 
@@ -94,7 +94,7 @@ Unlike the document-store backends, this module turns schema field declarations 
 
 - One table per schema table, named `<schemaPrefix><schemaId>__<tableId>`. No MySQL database per schema id.
 - Declared scalar fields become typed columns. Objects, arrays and undeclared fields live in `JSON`.
-- Every text column compares in `utf8mb4_0900_bin`: by code point, case-sensitive, trailing spaces significant.
+- Every text column compares in `utf8mb4_0900_bin`, or `utf8mb4_nopad_bin` on MariaDB: by code point, case-sensitive, trailing spaces significant.
 - An index on text or on a path inside JSON keys on a generated `VIRTUAL` column, and a dotted index field such as `title.fr` reads a nested JSON path.
 - An `_instance` discriminator column keeps schema instances apart.
 - Schema convergence runs one statement per step, so a crash leaves nothing half done, and builds secondary indexes online.
@@ -140,7 +140,7 @@ pnpm lint
 pnpm format:check
 pnpm knip
 pnpm test:unit      # fast loop: this repository's unit specs, no Docker
-pnpm test           # everything, on MySQL 8.4 and 9.7: owned, external and decorators suites
+pnpm test           # everything, on MySQL 8.4 and 9.7 and MariaDB 11.8 and 12.3: owned, external and decorators suites
 ```
 
 `pnpm test` starts one MySQL container per image with Docker, so it needs a Docker daemon. Set `MYSQL_TEST_IMAGES` to a space-separated list of images to test others. Besides this repository's own tests, it runs the shared conformance suites of the interfaces listed in `antelopeJs.implements`, and the `@antelopejs/interface-database-decorators` suite through [`scripts/decorators.sh`](scripts/decorators.sh).
