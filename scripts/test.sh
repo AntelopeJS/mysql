@@ -3,6 +3,7 @@ set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root" || exit 1
 images=${MYSQL_TEST_IMAGES:-mysql:8.4 mysql:9.7 mariadb:11.8 mariadb:12.3}
+parallel=${MYSQL_TEST_PARALLEL:-2}
 prefix=${MYSQL_TEST_CONTAINER_PREFIX:-ajs-mysql-test}
 password=antelopejs-test
 suites=(owned external decorators)
@@ -78,6 +79,9 @@ if [[ -n "${MYSQL_TEST_URL:-}" ]]; then
 fi
 set -m
 for image in $images; do
+  while [[ $(jobs -rp | wc -l) -ge $parallel ]]; do
+    wait -n
+  done
   run_image "$image" &
 done
 set +m

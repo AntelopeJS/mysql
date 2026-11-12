@@ -143,7 +143,7 @@ pnpm test:unit      # fast loop: this repository's unit specs, no Docker
 pnpm test           # everything, on MySQL 8.4 and 9.7 and MariaDB 11.8 and 12.3: owned, external and decorators suites
 ```
 
-`pnpm test` starts one MySQL container per image with Docker, so it needs a Docker daemon. Set `MYSQL_TEST_IMAGES` to a space-separated list of images to test others. Besides this repository's own tests, it runs the shared conformance suites of the interfaces listed in `antelopeJs.implements`, and the `@antelopejs/interface-database-decorators` suite through [`scripts/decorators.sh`](scripts/decorators.sh).
+`pnpm test` starts one server container per image with Docker, so it needs a Docker daemon. Set `MYSQL_TEST_IMAGES` to a space-separated list of images to test others. It tests two images at a time, since the change-feed tests measure how long a server takes; set `MYSQL_TEST_PARALLEL` to change that. Besides this repository's own tests, it runs the shared conformance suites of the interfaces listed in `antelopeJs.implements`, and the `@antelopejs/interface-database-decorators` suite through [`scripts/decorators.sh`](scripts/decorators.sh).
 
 To test against an existing server instead of a container, set `MYSQL_TEST_URL`. It must point to a disposable server, because the suites create and drop databases and the external suite creates and drops an account.
 
