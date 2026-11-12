@@ -46,6 +46,7 @@ const SCHEMA_ID = "directory";
 interface Meta {
   title?: string;
   owner?: string;
+  names?: { fr: string };
 }
 
 /**
@@ -62,7 +63,7 @@ export interface Person {
   nickname: string | null;
   rev: string;
   byName: string;
-  _internal: { owner: string };
+  _internal: { owner: string; data: { title: { fr: string } } };
   "meta.title": string;
 }
 
