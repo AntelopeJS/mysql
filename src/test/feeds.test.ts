@@ -6,6 +6,7 @@ import { type Sql, ident, param, sql } from "../statement";
 import { AcquireConnection, GetDialect } from "../connection";
 import { OnDedicatedSession } from "../implementations/database/locks";
 import { ReapOnce } from "../implementations/database/reaper";
+import { CHANGE_LOG } from "../implementations/database/registry";
 import { PhysicalTable, Run } from "./tables";
 import {
   Delivered,
@@ -21,6 +22,7 @@ import {
 /** A retention every row logged before the pause exceeds. */
 const RETENTION_MS = 1;
 const PAUSE_MS = 20;
+const REAP_DEADLINE_MS = 10_000;
 
 const sequenced = new Schema<{ rows: Row }>("feeds-sequencer", {
   rows: { fields: { label: "string", meta: "object" }, indexes: {} },
@@ -222,17 +224,37 @@ const churned = new Schema<{ quiet: Row; busy: Row }>("feeds-quiet", {
 const Quiet = () => churned.instance().table("quiet");
 const Busy = () => churned.instance().table("busy");
 
-/** Logs `count` rows on the busy table, then reaps everything logged before a short pause. */
+/**
+ * Logs `count` rows on the busy table, then reaps until none of the busy table's rows is left in
+ * the log. One pass may reap nothing: the module's own reaper can hold the pass, and a sequencer
+ * pass already running can number the rows after the pause, too late to be past retention.
+ */
 async function ChurnPastRetention(count: number): Promise<void> {
   const rows = Array.from({ length: count }, (_, index) => ({
     _id: `busy-${Date.now()}-${index}`,
   }));
   await Busy().insert(rows);
-  await Pause(PAUSE_MS);
   const dialect = GetDialect();
-  await OnDedicatedSession((session) =>
-    ReapOnce(session, dialect, RETENTION_MS),
-  );
+  const logged = PhysicalTable("feeds-quiet", "busy");
+  const deadline = Date.now() + REAP_DEADLINE_MS;
+  for (;;) {
+    await Pause(PAUSE_MS);
+    const left = await OnDedicatedSession(async (session) => {
+      await ReapOnce(session, dialect, RETENTION_MS);
+      const [row] = await session.read(
+        sql`SELECT COUNT(*) AS n FROM ${ident(CHANGE_LOG.log)} WHERE tbl = ${param(logged)}`,
+      );
+      return Number(row?.get("n"));
+    });
+    if (left === 0) {
+      return;
+    }
+    if (Date.now() > deadline) {
+      throw new Error(
+        `${String(left)} rows of the busy table are still logged after ${String(REAP_DEADLINE_MS)} ms of reaping`,
+      );
+    }
+  }
 }
 
 describe("a change feed and the reaper", function () {
