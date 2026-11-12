@@ -158,28 +158,27 @@ function TextFits(column: CatalogColumn): ValueCheck | undefined {
     checks.map((check) => check(value)).find((reason) => reason !== undefined);
 }
 
-/** A collation that compares without case, which every `_ci` collation does. */
-const CASE_INSENSITIVE = /_ci$/;
+/**
+ * Text an `ENUM` reads as a number when it names no label: digits after ASCII whitespace and a
+ * sign, before trailing spaces. MySQL stores the label at that position, or the empty error value
+ * for 0, without a word.
+ */
+const ENUM_POSITION = /^[ \t\n\v\f\r]*[+-]?[0-9]+ *$/u;
+
+const TRAILING_SPACES = / +$/u;
 
 /**
- * A value that names one of the labels: the label itself, or under a collation without case the
- * label in another case, which MySQL stores as the label. Any other value is refused, a label's
- * position included, which MySQL would store as that label without a word.
+ * A value an `ENUM` would store as a label's position, which is refused unless it is a label
+ * itself. Whether any other text names a label is the column's collation to decide, so it is left
+ * to the write, which strict mode refuses when it names none.
  */
 function EnumLabel(column: CatalogColumn): ValueCheck {
-  const labels = column.enumLabels ?? [];
-  const isCaseInsensitive = CASE_INSENSITIVE.test(column.collation ?? "");
-  const names = (text: string) =>
-    labels.some(
-      (label) =>
-        label === text ||
-        (isCaseInsensitive &&
-          label.localeCompare(text, undefined, { sensitivity: "accent" }) ===
-            0),
-    );
+  const labels = new Set(column.enumLabels ?? []);
   return (value) =>
-    value.kind === "text" && !names(value.value)
-      ? `it is not one of the labels of ${column.native}`
+    value.kind === "text" &&
+    ENUM_POSITION.test(value.value) &&
+    !labels.has(value.value.replace(TRAILING_SPACES, ""))
+      ? `it is a position among the labels of ${column.native}, not one of them`
       : undefined;
 }
 

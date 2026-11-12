@@ -238,37 +238,23 @@ describe("what a written value is checked against before an external write runs"
     });
   }
 
-  it("refuses an enum label the column does not list", () => {
-    const labels = { enumLabels: ["lead", "active"] };
-    expect(
+  it("refuses text an enum reads as a label's position, unless it is a label, and leaves any other text to the column's collation", () => {
+    const Answer = (labels: string[], value: string) =>
       Refusal(
-        "enum('lead','active')",
+        `enum(${labels.map((label) => `'${label}'`).join(",")})`,
         "string",
-        { kind: "text", value: "x" },
-        labels,
-      ),
-    ).to.contain("labels");
-    expect(
-      Refusal(
-        "enum('lead','active')",
-        "string",
-        { kind: "text", value: "lead" },
-        labels,
-      ),
-    ).to.equal(undefined);
-  });
-
-  it("takes a label in another case only where the column's collation ignores case, as MySQL then stores the label", () => {
-    const labels = { enumLabels: ["Red", "Green"], charset: "utf8mb4" };
-    const red = { kind: "text", value: "red" } as const;
-    const refusals = ["utf8mb4_0900_ai_ci", "utf8mb4_bin"].map((collation) =>
-      Refusal("enum('Red','Green')", "string", red, {
-        ...labels,
-        collation,
-      }),
-    );
-    expect(refusals[0]).to.equal(undefined);
-    expect(refusals[1]).to.contain("labels");
+        { kind: "text", value },
+        { enumLabels: labels },
+      );
+    for (const value of ["1", " +2", "02 ", "\t0", "-0"]) {
+      expect(Answer(["lead", "active"], value), value).to.contain("position");
+    }
+    for (const value of ["x", "Lead", "1.0", "2 3"]) {
+      expect(Answer(["lead", "active"], value), value).to.equal(undefined);
+    }
+    for (const value of ["2", "2  "]) {
+      expect(Answer(["1", "2"], value), value).to.equal(undefined);
+    }
   });
 });
 
