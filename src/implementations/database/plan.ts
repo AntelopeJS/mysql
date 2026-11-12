@@ -115,6 +115,23 @@ export function ServesCrossInstance(index: IndexDefinition): boolean {
   return index.crossInstance === true;
 }
 
+/** The physical column a key part reads. */
+function PartColumn(part: KeyPart): string {
+  return part.kind === "key" ? part.key.name : part.column;
+}
+
+/**
+ * The columns an index can look a row up by within an instance: `_id`, which the primary key holds
+ * after `_instance`, and the first part each declared index has after it.
+ */
+export function InstanceLookupColumns(plan: TablePlan): string[] {
+  const following = plan.indexes.flatMap((index) => {
+    const part = index.parts.find((one) => one.kind !== "instance");
+    return part ? [PartColumn(part)] : [];
+  });
+  return [ID_COLUMN, ...following];
+}
+
 function PartSignature(part: KeyPart): string {
   switch (part.kind) {
     case "instance":

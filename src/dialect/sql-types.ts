@@ -256,6 +256,13 @@ export interface RowSyntax {
    * `alias`; `column` is the one column it selects. A row it answers nothing for reads SQL NULL.
    */
   lookup(subselect: Sql, alias: string, column: string): CorrelatedRead;
+  /**
+   * Restricts a table joined as itself to the rows whose `column`, the one every index of the table
+   * leads with, holds `value`, as part of the join's condition. `lookup` says whether an index can
+   * look each row of the join up by a column the condition names after `column`; where none can,
+   * the restriction leaves the server free to read the rows once and hash join them.
+   */
+  joinScope(column: Sql, value: Sql, lookup: boolean): Sql;
 }
 
 /** The expression members the compiler and the writes reach. */

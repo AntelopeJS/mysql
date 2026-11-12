@@ -153,6 +153,11 @@ function ExternalRoot(
   return TableRelation(context.dialect, from, context.nextAlias(), origin);
 }
 
+/** Whether a table query reads its table whole: the root prefix, and no stage after it. */
+export function IsTableRead(stages: readonly QueryStage[]): boolean {
+  return stages.length === ROOT_STAGES.length;
+}
+
 /**
  * Consumes the `schema` / `instance` / `table` prefix every table query opens with, and returns
  * the base relation alongside the pipeline stages that follow it.

@@ -1,9 +1,10 @@
 import assert from "node:assert";
 import { Query } from "@antelopejs/interface-database";
 import type { QueryStage } from "@antelopejs/interface-database/common";
+import { CROSS_INSTANCE } from "@antelopejs/interface-database/schema";
 
 import type { Dialect } from "../../dialect";
-import { type Sql, ident, sql } from "../../statement";
+import { Bind, type Sql, ident, sql } from "../../statement";
 import { Compare, Collected } from "./json";
 import { UnifyOperands } from "./coerce";
 import { DecodeFunction, RecordedLambda } from "./value";
@@ -26,8 +27,11 @@ import {
   CurrentValue,
   OUTPUT_COLUMN,
   type Relation,
+  RequireOrigin,
   SetProjection,
 } from "./relation";
+import { InstanceLookupColumns } from "./plan";
+import { BuildRoot, IsTableRead, type RootSelection } from "./selection";
 import {
   HasFlag,
   type JoinKind,
@@ -40,7 +44,7 @@ import {
   WHERE_BLOCKERS,
 } from "./render";
 import { IsString } from "./guards";
-import { ID_COLUMN, OptionsOf } from "./utils";
+import { ID_COLUMN, INSTANCE_COLUMN, OptionsOf } from "./utils";
 
 const MAPPER_OPERAND = 2;
 
@@ -69,14 +73,65 @@ function FlavourOf(stage: QueryStage): JoinFlavour {
   return OptionsOf(stage)?.innerOnly === true ? INNER_FLAVOUR : OUTER_FLAVOUR;
 }
 
-/** Compiles the query being joined, from its own root, as a FROM item at a fresh alias. */
-function JoinedRelation(stage: QueryStage, context: DecodingContext): Relation {
+/** The query being joined as a FROM item at a fresh alias, and the condition its rows join on. */
+interface JoinedSide {
+  readonly relation: Relation;
+  readonly on: (condition: Sql) => Sql;
+}
+
+function Unscoped(condition: Sql): Sql {
+  return condition;
+}
+
+/**
+ * A condition on a table joined as itself, restricted to the instance the table is read in. Only an
+ * index keyed by a column the condition names right after `_instance` can look each row up; where
+ * the condition names none, the restriction leaves the server free to hash join the instance.
+ */
+function InstanceScoped(
+  root: RootSelection,
+  condition: Sql,
+  dialect: Dialect,
+): Sql {
+  if (root.instance === CROSS_INSTANCE) {
+    return condition;
+  }
+  const { alias } = root.relation;
+  const text = Bind(condition).sql;
+  const lookup = InstanceLookupColumns(RequireOrigin(root.relation).plan).some(
+    (column) => text.includes(Bind(QualifiedColumn(alias, column)).sql),
+  );
+  const instance = QualifiedColumn(alias, INSTANCE_COLUMN);
+  const scope = dialect.sql.rows.joinScope(instance, root.instance.sql, lookup);
+  return sql`(${scope} AND ${condition})`;
+}
+
+/**
+ * Compiles the query being joined, from its own root. A read of a whole table the adapter owns
+ * joins the table itself, so the condition reads its key columns as a filter does and the instance
+ * it reads is part of the condition; anything else joins its subselect.
+ */
+function JoinedSide(stage: QueryStage, context: DecodingContext): JoinedSide {
   const right: unknown = stage.args[FIRST_OPERAND];
   assert(
     right instanceof Query,
     "The 'join' stage takes another query to join against",
   );
-  return Nested(context.relation(right.build()), context);
+  const stages = right.build();
+  if (!IsTableRead(stages)) {
+    return {
+      relation: Nested(context.relation(stages), context),
+      on: Unscoped,
+    };
+  }
+  const root = BuildRoot(stages, context);
+  if (root.external) {
+    return { relation: Nested(root.relation, context), on: Unscoped };
+  }
+  return {
+    relation: root.relation,
+    on: (condition) => InstanceScoped(root, condition, context.dialect),
+  };
 }
 
 /** Binds both lambda parameters to the two row sources, which leaves the condition two columns. */
@@ -139,9 +194,12 @@ function MapperSource(right: Relation, flavour: JoinFlavour): RowSource {
 const JoinStage: PipelineStage = (relation, stage, context) => {
   const flavour = FlavourOf(stage);
   const prepared = Prepare(relation, JOIN_BLOCKERS, context);
-  const right = JoinedRelation(stage, context);
+  const side = JoinedSide(stage, context);
+  const right = side.relation;
   const on = Condition(stage, [prepared.source, right.source], context);
-  prepared.joins.push(JoinOn(flavour.kind, right.from, right.alias, on));
+  prepared.joins.push(
+    JoinOn(flavour.kind, right.from, right.alias, side.on(on)),
+  );
   const mapped = DecodeFunction(
     RecordedLambda(stage, MAPPER_OPERAND),
     context,

@@ -118,6 +118,7 @@ const MASKED_ROWS: RowSyntax = {
   limit: () => Marked(),
   materialize: () => Marked(),
   lookup: (subselect) => ({ join: Marked(subselect), value: Marked() }),
+  joinScope: (column, value) => Marked(column, value),
 };
 
 const MASKED_SYNTAX: CompilerSyntax = {

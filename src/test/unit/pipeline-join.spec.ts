@@ -8,8 +8,7 @@ import {
   Root,
 } from "./pipeline-fixture";
 
-const PRODUCTS_SUBSELECT =
-  "(SELECT `t1`.`_id`, `t1`.`_instance`, `t1`.`name`, `t1`.`price`, `t1`.`_extra` FROM `directory__products` AS `t1` WHERE (`t1`.`_instance` = ?)) AS `t2`";
+const PRODUCTS = "`directory__products` AS `t1`";
 
 function InnerJoined() {
   return Root().joinInner(
@@ -28,19 +27,44 @@ function LeftJoined() {
 }
 
 describe("the join stages", () => {
-  it("joins the other query, compiled from its own root, on the condition", () => {
+  it("joins a table read whole as itself, its instance bounded as a range where no index looks a row up", () => {
     const sql = Compile(InnerJoined()).sql;
     expect(sql).to.include(
-      ` FROM \`directory__people\` AS \`t0\` JOIN ${PRODUCTS_SUBSELECT} ON ((\`t0\`.\`__k_name_`,
+      ` FROM \`directory__people\` AS \`t0\` JOIN ${PRODUCTS} ON ((\`t1\`.\`_instance\` >= ? AND \`t1\`.\`_instance\` <= ?) AND ((\`t0\`.\`__k_name_`,
     );
+    expect(sql).to.include("AND `t0`.`name` = `t1`.`name`)))");
+  });
+
+  it("bounds the joined table's instance by an equality where the condition reads its primary key", () => {
+    const sql = Compile(
+      Other().joinInner(
+        Root(),
+        (product, person) => product.key("name").eq(person.key("_id")),
+        (product, person) => ({ person, product }),
+      ),
+    ).sql;
+    expect(sql).to.include(
+      " JOIN `directory__people` AS `t1` ON ((`t1`.`_instance` = ?) AND ",
+    );
+  });
+
+  it("joins the subselect of a query that does more than read a table", () => {
+    const sql = Compile(
+      Root().joinInner(
+        Other().filter((product) => product.key("price").gt(1)),
+        (left, right) => left.key("name").eq(right.key("name")),
+        (left, right) => ({ person: left, product: right }),
+      ),
+    ).sql;
+    expect(sql).to.include(" JOIN (SELECT `t1`.`_id`, ");
     expect(sql).to.include("AND `t0`.`name` = `t2`.`name`))");
   });
 
   it("keeps every left row through a left join, reading a missed right row as null", () => {
     const sql = Compile(LeftJoined()).sql;
-    expect(sql).to.include(` LEFT JOIN ${PRODUCTS_SUBSELECT} ON `);
+    expect(sql).to.include(` LEFT JOIN ${PRODUCTS} ON `);
     expect(sql).to.include(
-      "'product', (CASE WHEN `t2`.`_id` IS NOT NULL THEN JSON_MERGE_PRESERVE(",
+      "'product', (CASE WHEN `t1`.`_id` IS NOT NULL THEN JSON_MERGE_PRESERVE(",
     );
   });
 
