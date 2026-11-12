@@ -207,7 +207,7 @@ const INSIDE_CLASS_ESCAPES = new Map([
 
 /**
  * The escapes that stand for a set of characters. JavaScript never reads one as an end of a range:
- * `\\d-a` inside a class is three members, the hyphen and `a` included.
+ * `\d-a` inside a class is three members, the hyphen and `a` included.
  */
 const SET_ESCAPES = new Set(["d", "D", "w", "W", "s", "S"]);
 
