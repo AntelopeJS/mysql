@@ -51,12 +51,18 @@ const STATEMENTS: readonly (readonly [RegExp, Parser])[] = [
   ],
   [
     new RegExp(
-      `^UPDATE ${LOG} AS c JOIN JSON_TABLE\\(\\?, '\\$\\[\\*\\]' COLUMNS \\(n FOR ORDINALITY, id BIGINT UNSIGNED PATH '\\$'\\)\\) AS v ON c\\.\`id\` = v\\.id SET c\\.\`seq\` = ${BIGINT_ARG} \\+ v\\.n - 1, c\\.\`sequenced_at\` = UTC_TIMESTAMP\\(6\\)$`,
+      `^UPDATE ${LOG} AS c JOIN JSON_TABLE\\(\\?, '\\$\\[\\*\\]' COLUMNS \\(n FOR ORDINALITY, id BIGINT UNSIGNED PATH '\\$'\\)\\) AS v ON c\\.\`id\` = v\\.id SET c\\.\`seq\` = ${BIGINT_ARG} \\+ v\\.n - 1, c\\.\`sequenced_at\` = UTC_TIMESTAMP\\(6\\) WHERE c\\.\`id\` IN \\(${BIGINT_ARG}(?:, ${BIGINT_ARG})*\\)$`,
     ),
     (_, bound, db) => {
       const list: unknown = JSON.parse(text(bound.args[0], "the numbered ids"));
       if (!Array.isArray(list) || !list.every((id) => IsString(id))) {
         throw new ModelError("the numbered ids are not a JSON array of text");
+      }
+      const named = bound.args
+        .slice(2)
+        .map((id) => text(id, "an id the update names"));
+      if (named.length !== list.length || named.some((id, at) => id !== list[at])) {
+        throw new ModelError("the update names other rows than it numbers");
       }
       return stamp(db, list, BigInt(text(bound.args[1], "the first seq")));
     },
