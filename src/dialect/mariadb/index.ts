@@ -20,9 +20,9 @@ const MS_PER_SECOND = 1000;
  */
 const MAX_JSON_NESTING = 31;
 
-/** A statement that writes or changes a table, which MySQL's read timeout never bounds. */
+/** A statement that writes, changes or locks a table, which MySQL's read timeout never bounds. */
 const WRITES =
-  /^\s*(INSERT|UPDATE|DELETE|REPLACE|CREATE|ALTER|DROP|TRUNCATE|RENAME)\b/i;
+  /^\s*(INSERT|UPDATE|DELETE|REPLACE|CREATE|ALTER|DROP|TRUNCATE|RENAME|LOCK)\b/i;
 
 /**
  * `max_statement_time` bounds every statement, so a write lifts it for itself and stays as unbounded
@@ -104,8 +104,12 @@ function Collect(
   return sql`COALESCE(JSON_ARRAYAGG(${element}${order}), JSON_ARRAY())`;
 }
 
-/** The offsets MySQL's cast takes, in minutes east of UTC; it reads any other as no instant. */
-const EARLIEST_OFFSET_MINUTES = -839;
+/**
+ * The offsets MySQL's cast takes, in minutes east of UTC, `-00:00` excepted; it reads any other as no
+ * instant.
+ */
+const EARLIEST_OFFSET_MINUTES = -840;
+const NEGATIVE_ZERO_OFFSET = lit("-00:00");
 const LATEST_OFFSET_MINUTES = 840;
 const MINUTES_PER_HOUR = 60;
 
@@ -141,7 +145,7 @@ function Instant(text: Sql): Sql {
   const hours = sql`CAST(SUBSTRING(${offset}, 2, 2) AS SIGNED)`;
   const minutes = sql`CAST(SUBSTRING(${offset}, 5, 2) AS SIGNED)`;
   const east = sql`(IF(LEFT(${offset}, 1) = '-', -1, 1) * (${hours} * ${int(MINUTES_PER_HOUR)} + ${minutes}))`;
-  const valid = sql`${minutes} < ${int(MINUTES_PER_HOUR)} AND ${east} BETWEEN ${int(EARLIEST_OFFSET_MINUTES)} AND ${int(LATEST_OFFSET_MINUTES)}`;
+  const valid = sql`${minutes} < ${int(MINUTES_PER_HOUR)} AND ${east} BETWEEN ${int(EARLIEST_OFFSET_MINUTES)} AND ${int(LATEST_OFFSET_MINUTES)} AND ${offset} <> ${NEGATIVE_ZERO_OFFSET}`;
   const shifted = sql`(CASE WHEN ${valid} THEN TIMESTAMPADD(MINUTE, -${east}, ${local}) END)`;
   return sql`(CASE WHEN ${text} REGEXP ${ZONE_OFFSET} THEN ${shifted} ELSE CAST(REPLACE(${text}, 'Z', '') AS DATETIME(6)) END)`;
 }

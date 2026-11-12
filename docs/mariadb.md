@@ -53,6 +53,12 @@ The module compiles the same queries to SQL that MariaDB accepts. Where MariaDB 
 
 `distinct()` and the dedup of a `group` compare documents by their text on both engines. MySQL stores an object's keys sorted, so two equal objects share one text there. MariaDB keeps the keys in the order they were written, so two objects that differ only in that order are both kept, and so are `0` and `-0`, which MySQL takes as one number. A change feed compares a JSON column as JSON, so a write that only reorders an object's keys delivers no change on either engine.
 
+### Nested queries that read their outer row
+
+MariaDB cannot read the outer row inside a derived table. A nested query that reads it is aggregated in the subquery itself, with `JSON_ARRAYAGG`'s `DISTINCT`, `ORDER BY` and `LIMIT` standing for the query's `distinct()`, `orderBy()` and `slice()`. A nested `distinct()` collected that way comes back in the order of the values' text, where MySQL keeps the order the rows arrived in. Neither engine promises an order for `distinct()`.
+
+A nested query that reads its outer row and needs a derived table still fails on MariaDB with `Unknown column` naming the outer column. Five shapes do: an `orderBy()` ahead of the `filter()` that reads the outer row, then a `distinct()`; a `distinct(field)` after an `orderBy()`; a `count()` of a `distinct()`; a `slice()` of a `distinct()` bounded by the outer row; and a `group()`. Each answers on MySQL. Read the outer value in a `filter()` on the stream itself, or run the nested query on its own.
+
 ## Change feeds
 
 Feeds capture changes with row triggers on both engines and never read the binary log, so MariaDB's binary log format and its GTIDs do not matter to them. With binary logging on, MariaDB refuses `CREATE TRIGGER` with the same errno 1419 as MySQL, and the same two remedies apply: `GRANT SUPER ON *.* TO` the account, or `SET GLOBAL log_bin_trust_function_creators = 1`. See [Change feeds](./change-feeds.md#what-the-account-needs). The test servers run MariaDB with `--log-bin`, so binary logging in the `MIXED` format and GTIDs are on in every test run.
