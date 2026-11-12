@@ -32,11 +32,10 @@ type ItemsTable = ReturnType<ReturnType<Schema<Tables>["instance"]>["table"]>;
 const MEGABYTE = 1024 * 1024;
 const BATCH = 100;
 /**
- * The idle reclaim of the DDL tests, well past \`BLOCKED_MS\` and the wait for the \`ALTER\` to block:
- * a cursor reclaimed while a test still holds it open would release its lock early.
+ * The idle reclaim of the DDL tests, well past the wait for the \`ALTER\` to block: a cursor reclaimed
+ * before the server shows the \`ALTER\` waiting would release its lock early.
  */
 const IDLE_MS = 4000;
-const BLOCKED_MS = 1200;
 const COMPLETES_WITHIN_MS = 15_000;
 const SAMPLE_EVERY = 2000;
 const STALL_MS = 1000;
@@ -64,6 +63,18 @@ async function Seeded(
     sql`INSERT INTO ${ident(PhysicalTable(schemaId, "items"))} (_id, _instance, n, pad, _extra) SELECT LPAD(n, ${param(places)}, '0'), '', n, REPEAT('x', ${param(padding)}), JSON_OBJECT() FROM ${Numbers(places)} AS numbers WHERE n < ${param(rows)}`,
   );
   return schema;
+}
+
+/**
+ * One schema over a table whose cursor keeps its statement running on the server while it waits.
+ *
+ * A paused statement still sends until the socket buffers between the server and the client are
+ * full, then ends and gives up its metadata lock once the rest of its result fits in them. Over
+ * the two loopback hops of a published Docker port, stock Linux buffers take up to about 20 MB;
+ * this table holds about 48 MB.
+ */
+function SeededPastSocketBuffers(schemaId: string): Promise<Schema<Tables>> {
+  return Seeded(schemaId, 16_000, 3000);
 }
 
 /** The options the live adapter runs with now, with `overrides` on top, connected again. */
@@ -203,8 +214,6 @@ describe("a cursor over a large result", function () {
 
 describe("a DDL statement on a table with an open cursor", function () {
   this.timeout(180_000);
-  const ROWS = 20_000;
-  const PADDING = 1000;
   let restore: Options;
 
   before(async () => {
@@ -221,23 +230,20 @@ describe("a DDL statement on a table with an open cursor", function () {
   it("waits while the cursor is open, and completes once the cursor is closed", async () => {
     const schemaId = "cursors_ddl_closed";
     const physical = PhysicalTable(schemaId, "items");
-    const items = (await Seeded(schemaId, ROWS, PADDING))
+    const items = (await SeededPastSocketBuffers(schemaId))
       .instance()
       .table("items");
     const cursor = items[Symbol.asyncIterator]();
     expect((await cursor.next()).done).to.equal(false);
     const connection = await AcquireConnection();
-    let isAltered = false;
-    const altering = SessionOf(connection)
-      .apply(sql`ALTER TABLE ${ident(physical)} ADD COLUMN added INT`)
-      .then(() => {
-        isAltered = true;
-      });
-    await UntilWaitingOnLock(physical);
-    await delay(BLOCKED_MS);
-    expect(isAltered, "the ALTER finished under an open cursor").to.equal(
-      false,
+    const altering = SessionOf(connection).apply(
+      sql`ALTER TABLE ${ident(physical)} ADD COLUMN added INT`,
     );
+    await UntilWaitingOnLock(physical);
+    expect(
+      await StreamingStatements(physical),
+      "the cursor's statement holds the table",
+    ).to.equal(1);
     await cursor.return?.();
     await altering;
     connection.release();
@@ -248,7 +254,7 @@ describe("a DDL statement on a table with an open cursor", function () {
   it("waits while the cursor is open, and completes once the idle reclaim ends it", async () => {
     const schemaId = "cursors_ddl_reclaimed";
     const physical = PhysicalTable(schemaId, "items");
-    const items = (await Seeded(schemaId, ROWS, PADDING))
+    const items = (await SeededPastSocketBuffers(schemaId))
       .instance()
       .table("items");
     const cursor = items[Symbol.asyncIterator]();
@@ -259,9 +265,13 @@ describe("a DDL statement on a table with an open cursor", function () {
         indexes: {},
       },
     };
-    const started = Date.now();
-    await Schemas.register(schemaId, altered);
-    expect(Date.now() - started).to.be.greaterThan(IDLE_MS / 2);
+    const registering = Schemas.register(schemaId, altered);
+    await UntilWaitingOnLock(physical);
+    expect(
+      await StreamingStatements(physical),
+      "the cursor's statement holds the table",
+    ).to.equal(1);
+    await registering;
     expect(await Columns(physical)).to.include("added");
     let failure = "";
     try {
@@ -282,7 +292,7 @@ describe("the cap on open cursors", function () {
 
   before(async () => {
     restore = await Reconnected({ maxOpenCursors: 2, cursorBatchSize: BATCH });
-    items = (await Seeded(schemaId, 20_000, 1000)).instance().table("items");
+    items = (await SeededPastSocketBuffers(schemaId)).instance().table("items");
   });
 
   after(async () => {
@@ -345,7 +355,7 @@ describe("leaving a for-await early", function () {
       maxOpenCursors: 1,
       pool: { connectionLimit: 2 },
     });
-    items = (await Seeded(schemaId, 20_000, 1000)).instance().table("items");
+    items = (await SeededPastSocketBuffers(schemaId)).instance().table("items");
   });
 
   after(async () => {
@@ -396,7 +406,7 @@ describe("a cursor whose connection the server ends", function () {
 
   before(async () => {
     restore = await Reconnected({ maxOpenCursors: 1, cursorBatchSize: BATCH });
-    items = (await Seeded(schemaId, 20_000, 1000)).instance().table("items");
+    items = (await SeededPastSocketBuffers(schemaId)).instance().table("items");
   });
 
   after(async () => {
