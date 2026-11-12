@@ -1,24 +1,39 @@
-import type { Dialect } from "../types";
-import { session } from "./session";
-import { sqlCore } from "./sql-core";
-import { json } from "./sql-json";
-import { scalar } from "./sql-scalar";
-import { time } from "./sql-time";
-import { rows } from "./sql-rows";
+import type { Dialect, SqlSyntax } from "../types";
+import { type Flavour, MYSQL } from "./flavour";
+import { SessionOf } from "./session";
+import { SqlCoreOf } from "./sql-core";
+import { JsonOf } from "./sql-json";
+import { ScalarOf } from "./sql-scalar";
+import { TimeOf } from "./sql-time";
+import { RowsOf } from "./sql-rows";
 import { errors } from "./errors";
-import { ddl } from "./ddl";
-import { catalog } from "./catalog";
-import { external } from "./external";
-import { capture } from "./capture";
+import { DdlOf } from "./ddl";
+import { CatalogOf } from "./catalog";
+import { ExternalOf } from "./external";
+import { CaptureOf } from "./capture";
+
+export type { Flavour, Held } from "./flavour";
+
+/** The dialect of an engine of the MySQL family, from what it spells its own way. */
+export function FamilyDialect(flavour: Flavour): Dialect {
+  const sql: SqlSyntax = {
+    ...SqlCoreOf(flavour),
+    json: JsonOf(flavour),
+    scalar: ScalarOf(flavour),
+    time: TimeOf(flavour),
+    rows: RowsOf(flavour),
+  };
+  return {
+    id: flavour.id,
+    session: SessionOf(flavour),
+    sql,
+    errors,
+    ddl: DdlOf(flavour, sql),
+    catalog: CatalogOf(flavour),
+    external: ExternalOf(flavour),
+    capture: CaptureOf(flavour, sql),
+  };
+}
 
 /** MySQL 8.4 LTS and 9.7 LTS. */
-export const mysql: Dialect = {
-  id: "mysql",
-  session,
-  sql: { ...sqlCore, json, scalar, time, rows },
-  errors,
-  ddl,
-  catalog,
-  external,
-  capture,
-};
+export const mysql = FamilyDialect(MYSQL);

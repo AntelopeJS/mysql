@@ -15,7 +15,7 @@ import {
   TIMESTAMP,
 } from "../../implementations/database/types";
 import { CheckFor } from "./external-checks";
-import { session } from "./session";
+import type { Flavour } from "./flavour";
 
 const FAMILY_BY_TYPE = new Map<string, NativeFamily>([
   ["char", "text"],
@@ -440,24 +440,26 @@ const JSON_STRING = ` *"(${JSON_STRING_BODY})" *`;
  * NULL. Each part is text in the session's collation, which a key column's conversion takes into the
  * column's own.
  */
-function IdParts(id: Sql, width: number): Sql[] {
+function IdParts(flavour: Flavour, id: Sql, width: number): Sql[] {
   const strings = Array.from({ length: width }, () => JSON_STRING).join(",");
   const pattern = lit(`^\\[${strings}\\]$`);
   const valid = sql`(${id} REGEXP ${pattern})`;
   return Array.from({ length: width }, (_, position) => {
-    const body = sql`IF(${valid}, REGEXP_REPLACE(${id}, ${pattern}, ${lit(`$${position + 1}`)}), '')`;
-    const unescaped = sql`JSON_UNQUOTE(CONCAT('"', ${body}, '"')) COLLATE ${ident(session.binaryCollation)}`;
+    const body = sql`IF(${valid}, REGEXP_REPLACE(${id}, ${pattern}, ${lit(flavour.captured(position + 1))}), '')`;
+    const unescaped = sql`JSON_UNQUOTE(CONCAT('"', ${body}, '"')) COLLATE ${ident(flavour.binaryCollation)}`;
     return sql`IF(${valid}, ${unescaped}, NULL)`;
   });
 }
 
-export const types: ExternalTypeSyntax = {
-  family: Family,
-  reading: ReadingOf,
-  keyReading: KeyReading,
-  proposed: (family) => PROPOSED[family],
-  asRead: AsRead,
-  compositeId: (parts) =>
-    sql`CAST(JSON_ARRAY(${join(parts, sql`, `)}) AS CHAR)`,
-  idParts: IdParts,
-};
+export function TypesOf(flavour: Flavour): ExternalTypeSyntax {
+  return {
+    family: Family,
+    reading: ReadingOf,
+    keyReading: KeyReading,
+    proposed: (family) => PROPOSED[family],
+    asRead: AsRead,
+    compositeId: (parts) =>
+      sql`CAST(JSON_ARRAY(${join(parts, sql`, `)}) AS CHAR)`,
+    idParts: (id, width) => IdParts(flavour, id, width),
+  };
+}

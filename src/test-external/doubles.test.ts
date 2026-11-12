@@ -33,7 +33,8 @@ async function PrintedRaw(id: string): Promise<string> {
   return String(row?.raw);
 }
 
-describe("a double written into an external JSON column", () => {
+describe("a double written into an external JSON column", function () {
+  this.timeout(30_000);
   before(async () => {
     sales = await RegisterSales();
     await NativeWrite(

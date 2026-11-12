@@ -1,6 +1,7 @@
 import type { Row } from "../../connection";
-import { param, sql } from "../../statement";
+import { ident, param, sql } from "../../statement";
 import type { CatalogSyntax, ObservedColumn, ObservedIndex } from "../ddl";
+import type { Flavour } from "./flavour";
 
 const BASE_TABLE = "BASE TABLE";
 /** A column the server computes; `DEFAULT_GENERATED` only marks a default that is an expression. */
@@ -49,26 +50,30 @@ function ParseIndexes(rows: readonly Row[]): ObservedIndex[] {
   return [...byName.values()];
 }
 
-export const catalog: CatalogSyntax = {
-  readDatabase: () => sql`SELECT DATABASE() AS name`,
-  readTable: (table) =>
-    sql`SELECT TABLE_TYPE AS kind, TABLE_COMMENT AS comment FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${param(table)}`,
-  readColumns: (table) =>
-    sql`SELECT COLUMN_NAME AS name, COLUMN_TYPE AS type, EXTRA AS extra, COLUMN_COMMENT AS comment FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${param(table)} ORDER BY ORDINAL_POSITION`,
-  readIndexes: (table) =>
-    sql`SELECT INDEX_NAME AS name, NON_UNIQUE AS non_unique, INDEX_COMMENT AS comment, COLUMN_NAME AS column_name FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${param(table)} AND INDEX_NAME <> 'PRIMARY' ORDER BY INDEX_NAME, SEQ_IN_INDEX`,
-  readTriggers: (table) =>
-    sql`SELECT TRIGGER_NAME AS name FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = DATABASE() AND EVENT_OBJECT_TABLE = ${param(table)} ORDER BY TRIGGER_NAME`,
-  parseTable: ([table], columns, indexes, triggers) => {
-    if (!table) {
-      return undefined;
-    }
-    return {
-      kind: Text(table, "kind") === BASE_TABLE ? "table" : "other",
-      comment: Text(table, "comment"),
-      columns: columns.map(ParseColumn),
-      indexes: ParseIndexes(indexes),
-      triggers: triggers.map((row) => Text(row, "name")),
-    };
-  },
-};
+const COLUMN = ident("c");
+
+export function CatalogOf(flavour: Flavour): CatalogSyntax {
+  return {
+    readDatabase: () => sql`SELECT DATABASE() AS name`,
+    readTable: (table) =>
+      sql`SELECT TABLE_TYPE AS kind, TABLE_COMMENT AS comment FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${param(table)}`,
+    readColumns: (table) =>
+      sql`SELECT ${COLUMN}.COLUMN_NAME AS name, ${flavour.catalogType(COLUMN, table)} AS type, ${COLUMN}.EXTRA AS extra, ${COLUMN}.COLUMN_COMMENT AS comment FROM information_schema.COLUMNS AS ${COLUMN} WHERE ${COLUMN}.TABLE_SCHEMA = DATABASE() AND ${COLUMN}.TABLE_NAME = ${param(table)} ORDER BY ${COLUMN}.ORDINAL_POSITION`,
+    readIndexes: (table) =>
+      sql`SELECT INDEX_NAME AS name, NON_UNIQUE AS non_unique, INDEX_COMMENT AS comment, COLUMN_NAME AS column_name FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${param(table)} AND INDEX_NAME <> 'PRIMARY' ORDER BY INDEX_NAME, SEQ_IN_INDEX`,
+    readTriggers: (table) =>
+      sql`SELECT TRIGGER_NAME AS name FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = DATABASE() AND EVENT_OBJECT_TABLE = ${param(table)} ORDER BY TRIGGER_NAME`,
+    parseTable: ([table], columns, indexes, triggers) => {
+      if (!table) {
+        return undefined;
+      }
+      return {
+        kind: Text(table, "kind") === BASE_TABLE ? "table" : "other",
+        comment: Text(table, "comment"),
+        columns: columns.map(ParseColumn),
+        indexes: ParseIndexes(indexes),
+        triggers: triggers.map((row) => Text(row, "name")),
+      };
+    },
+  };
+}

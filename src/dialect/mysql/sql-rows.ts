@@ -1,5 +1,6 @@
 import type { RowSyntax } from "../sql-types";
 import { type Sql, ident, param, sql } from "../../statement";
+import { type Flavour, type Held, HeldRead } from "./flavour";
 
 /** `OFFSET` needs a `LIMIT`, and the largest one the server takes stands for none. */
 const NO_LIMIT = sql`18446744073709551615`;
@@ -10,27 +11,53 @@ const NO_LIMIT = sql`18446744073709551615`;
  * the other side. A closed range names the same rows, since every table compares in a binary
  * collation that pads nothing, and is read once by a range scan and hash joined.
  */
+function Limit(
+  count: number | undefined,
+  offset: number | undefined,
+): Sql | undefined {
+  if (count === undefined && offset === undefined) {
+    return undefined;
+  }
+  const limit = count === undefined ? NO_LIMIT : param(count);
+  return offset === undefined
+    ? sql`LIMIT ${limit}`
+    : sql`LIMIT ${limit} OFFSET ${param(offset)}`;
+}
+
 function JoinScope(column: Sql, value: Sql, lookup: boolean): Sql {
   return lookup
     ? sql`(${column} = ${value})`
     : sql`(${column} >= ${value} AND ${column} <= ${value})`;
 }
 
-export const rows: RowSyntax = {
-  nullSafeEqual: (left, right) => sql`(${left} <=> ${right})`,
-  limit: (count, offset) => {
-    if (count === undefined && offset === undefined) {
-      return undefined;
-    }
-    const limit = count === undefined ? NO_LIMIT : param(count);
-    return offset === undefined
-      ? sql`LIMIT ${limit}`
-      : sql`LIMIT ${limit} OFFSET ${param(offset)}`;
-  },
-  materialize: (alias) => sql`/*+ NO_MERGE(${ident(alias)}) */`,
-  lookup: (subselect, alias, column) => ({
+/**
+ * A lookup is joined laterally where the engine can, which reads it once per row like a scalar
+ * subquery but lets the plan see it; MariaDB has no lateral join and reads it inline.
+ */
+function Lookup(flavour: Flavour): RowSyntax["lookup"] {
+  if (!flavour.lateral) {
+    return (subselect) => ({ value: sql`(${subselect})` });
+  }
+  return (subselect, alias, column) => ({
     join: sql`LEFT JOIN LATERAL (${subselect}) AS ${ident(alias)} ON TRUE`,
     value: sql`${ident(alias)}.${ident(column)}`,
-  }),
-  joinScope: JoinScope,
-};
+  });
+}
+
+export function RowsOf(flavour: Flavour): RowSyntax {
+  return {
+    nullSafeEqual: (left, right) => sql`(${left} <=> ${right})`,
+    limit: Limit,
+    materialize: (alias) => sql`/*+ NO_MERGE(${ident(alias)}) */`,
+    lookup: Lookup(flavour),
+    joinScope: JoinScope,
+    returning: flavour.returning,
+    hold: (value, alias) => {
+      const held: Held = { name: "value", value, kind: "json" };
+      return {
+        from: flavour.hold([held]),
+        value: HeldRead(flavour, alias, held),
+      };
+    },
+  };
+}

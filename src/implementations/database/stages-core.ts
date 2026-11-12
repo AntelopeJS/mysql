@@ -6,7 +6,7 @@ import type { Dialect } from "../../dialect";
 import type { Compiled } from "./sql";
 import { AsJson, Predicate } from "./readings";
 import { IsNullJson, ParameterKey } from "./value";
-import { Compare, type Ordering } from "./json";
+import { Compare, Compared, type Ordering } from "./json";
 import { BOOL, IsJsonBacked, IsOpaque, OPAQUE } from "./types";
 import { type CompiledPair, UnifyOperands, WithDefault } from "./coerce";
 import {
@@ -147,10 +147,12 @@ function Distinguishable(
 const Distinct: Equality = (dialect, value, other) => {
   const pair = Distinguishable(dialect, value, other);
   if (pair.converted) {
-    const same = sql`(${pair.left.sql} = ${pair.right.sql})`;
+    const same = sql`(${Compared(dialect, pair.left, pair.right, "=")})`;
     return { sql: sql`(${WherePresent(pair, same)} IS NOT TRUE)`, type: BOOL };
   }
-  const same = dialect.sql.rows.nullSafeEqual(pair.left.sql, pair.right.sql);
+  const same = IsJsonBacked(pair.type)
+    ? dialect.sql.json.same(pair.left.sql, pair.right.sql)
+    : dialect.sql.rows.nullSafeEqual(pair.left.sql, pair.right.sql);
   return { sql: sql`(NOT ${same})`, type: BOOL };
 };
 

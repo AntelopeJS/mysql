@@ -35,7 +35,7 @@ describe("The date parts", () => {
       `CAST((EXTRACT(SECOND_MICROSECOND FROM ${JOINED}) / 1000000) AS DOUBLE)`,
     );
     expect(Part((doc) => doc.key("joined").timeofday())).to.equal(
-      `CAST((TIME_TO_SEC(${JOINED}) + MICROSECOND(${JOINED}) / 1000000) AS DOUBLE)`,
+      `CAST((TIME_TO_SEC(TIME(DATE_FORMAT(${JOINED}, '%H:%i:%s'))) + MICROSECOND(${JOINED}) / 1000000) AS DOUBLE)`,
     );
   });
 

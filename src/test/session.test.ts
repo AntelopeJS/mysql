@@ -1,7 +1,7 @@
 import { expect } from "chai";
 
 import { type Sql, param, sql } from "../statement";
-import { AcquireConnection, Read, type Row } from "../connection";
+import { AcquireConnection, GetDialect, Read, type Row } from "../connection";
 
 const SESSION = sql`SELECT @@collation_connection AS collation, @@character_set_connection AS charset, @@time_zone AS zone, @@sql_mode AS mode, @@lc_messages AS messages`;
 
@@ -11,7 +11,7 @@ function Only(rows: readonly Row[]): Row {
 }
 
 function expectPinned(row: Row) {
-  expect(row.get("collation")).to.equal("utf8mb4_0900_bin");
+  expect(row.get("collation")).to.equal(GetDialect().session.binaryCollation);
   expect(row.get("charset")).to.equal("utf8mb4");
   expect(row.get("zone")).to.equal("+00:00");
   expect(row.get("messages")).to.equal("en_US");
@@ -35,7 +35,7 @@ describe("a pooled connection", () => {
 
   it("compares bound text in the binary NO PAD collation", async () => {
     expect(await Value(sql`SELECT COLLATION(${param("a")}) AS value`)).to.equal(
-      "utf8mb4_0900_bin",
+      GetDialect().session.binaryCollation,
     );
     const equal = async (left: string, right: string) =>
       Number(

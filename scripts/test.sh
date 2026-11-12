@@ -2,7 +2,8 @@
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root" || exit 1
-images=${MYSQL_TEST_IMAGES:-mysql:8.4 mysql:9.7}
+images=${MYSQL_TEST_IMAGES:-mysql:8.4 mysql:9.7 mariadb:11.8 mariadb:12.3}
+parallel=${MYSQL_TEST_PARALLEL:-2}
 prefix=${MYSQL_TEST_CONTAINER_PREFIX:-ajs-mysql-test}
 password=antelopejs-test
 suites=(owned external decorators)
@@ -25,9 +26,10 @@ run_suites() {
 }
 
 start_server() {
-  local image=$1 name=$2 tries=0 port
-  docker run -d --rm --name "$name" -e MYSQL_ROOT_PASSWORD="$password" -p 127.0.0.1::3306 "$image" >/dev/null || return 1
-  until docker exec "$name" mysql -uroot -p"$password" -h127.0.0.1 -e 'SELECT 1' >/dev/null 2>&1; do
+  local image=$1 name=$2 tries=0 port client=mysql args=()
+  [[ $image == *mariadb* ]] && client=mariadb args=(--log-bin=mariadb-bin --server-id=1)
+  docker run -d --rm --name "$name" --tmpfs /var/lib/mysql -e MYSQL_ROOT_PASSWORD="$password" -p 127.0.0.1::3306 "$image" "${args[@]}" >/dev/null || return 1
+  until docker exec "$name" "$client" -uroot -p"$password" -h127.0.0.1 -e 'SELECT 1' >/dev/null 2>&1; do
     tries=$((tries + 1))
     [[ $tries -gt 180 ]] && return 1
     sleep 1
@@ -77,6 +79,9 @@ if [[ -n "${MYSQL_TEST_URL:-}" ]]; then
 fi
 set -m
 for image in $images; do
+  while [[ $(jobs -rp | wc -l) -ge $parallel ]]; do
+    wait -n
+  done
   run_image "$image" &
 done
 set +m

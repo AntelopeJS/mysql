@@ -41,6 +41,9 @@ const MASKED_JSON: JsonSyntax = {
   is: (value) => Marked(value),
   as: (value) => Marked(value),
   key: (_read, value) => Marked(value),
+  compare: (left, right) => Marked(left, right),
+  same: (left, right) => Marked(left, right),
+  order: (value) => [Marked(value)],
   ranks: { null: 0, number: 1, string: 2, object: 3, array: 4, boolean: 5 },
   tagged: (_rank, text) => Marked(...Present(text)),
   of: (value) => Marked(value),
@@ -122,6 +125,8 @@ const MASKED_ROWS: RowSyntax = {
   materialize: () => Marked(),
   lookup: (subselect) => ({ join: Marked(subselect), value: Marked() }),
   joinScope: (column, value) => Marked(column, value),
+  hold: (value) => ({ from: Marked(value), value: Marked() }),
+  returning: false,
 };
 
 const MASKED_SYNTAX: CompilerSyntax = {

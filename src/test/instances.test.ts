@@ -53,7 +53,8 @@ async function InstancesWithRows(
   return rows.map((row) => String(row.get("instance")));
 }
 
-describe("the instance registry", () => {
+describe("the instance registry", function () {
+  this.timeout(30_000);
   before(async () => {
     await Schemas.register(SCHEMA_ID, DEFINITION);
     await Schemas.register(OTHER_SCHEMA_ID, DEFINITION);

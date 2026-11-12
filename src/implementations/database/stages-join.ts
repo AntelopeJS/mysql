@@ -251,8 +251,24 @@ function OneRow(right: Relation): Sql {
   return Render(right);
 }
 
-/** Collects every matching row into one JSON array, empty rather than NULL over none of them. */
+/**
+ * Collects every matching row into one JSON array, empty rather than NULL over none of them. A
+ * relation that bounds or folds its rows is collected from a subselect; any other is collected in
+ * place, so a correlation pushed onto it stays in the subquery the row reads rather than in a
+ * derived table, which MariaDB cannot correlate.
+ */
 function CollectedRows(right: Relation, context: DecodingContext): Sql {
+  if (!HasFlag(right, PUSHDOWN_BLOCKERS)) {
+    const element = AsJson(context.dialect, CurrentValue(right));
+    right.orderBy = [];
+    right.aggregated = true;
+    return Render(
+      SetProjection(right, {
+        sql: Collected(context.dialect, undefined, element.sql),
+        type: ArrayOf(element.type),
+      }),
+    );
+  }
   const alias = context.nextAlias();
   const element = AsJson(context.dialect, {
     sql: QualifiedColumn(alias, OUTPUT_COLUMN),
@@ -362,7 +378,7 @@ const LookupStage: PipelineStage = (relation, stage, context) => {
   if (under) {
     Correlate(other, under, keys, local, form);
   }
-  const right = Prepare(other, WHERE_BLOCKERS, context);
+  const right = under ? other : Prepare(other, WHERE_BLOCKERS, context);
   if (!under) {
     Correlate(right, right.source, keys, local, form);
   }

@@ -60,8 +60,21 @@ export async function ReadRelationRows(
 export async function ReadColumns(row: RelationRow): Promise<CatalogColumn[]> {
   const catalog = GetDialect().external.catalog;
   const rows = await Read(catalog.columns(row.schema, row.name));
-  return rows.map((column) => catalog.parseColumn(column));
+  const columns = rows.map((column) => catalog.parseColumn(column));
+  const json = catalog.jsonColumns;
+  if (!json || row.kind === "view" || !row.readable) {
+    return columns;
+  }
+  const named = json.parse(await Read(json.read(row.schema, row.name)));
+  return columns.map((column) =>
+    named.has(column.name)
+      ? { ...column, native: JSON_TYPE, dataType: JSON_TYPE }
+      : column,
+  );
 }
+
+/** The type a JSON column has in the catalog of an engine that keeps one. */
+const JSON_TYPE = "json";
 
 export async function ReadIndexes(row: RelationRow): Promise<CatalogIndex[]> {
   const catalog = GetDialect().external.catalog;

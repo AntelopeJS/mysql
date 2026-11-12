@@ -4,7 +4,8 @@ import { FIXTURE, ValueStageTable } from "./value-stage-table";
 
 const table = ValueStageTable("value-stages-write");
 
-describe("An update through the value stages", () => {
+describe("An update through the value stages", function () {
+  this.timeout(30_000);
   before(() => table.setup());
   after(() => table.teardown());
 

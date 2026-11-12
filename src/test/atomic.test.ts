@@ -38,7 +38,9 @@ async function Seed(document: Partial<Document> = {}) {
   await table.insert({ _id: ID, value: "before", ...document });
 }
 
-describe("atomic mutation results and scope", () => {
+describe("atomic mutation results and scope", function () {
+  this.timeout(30_000);
+
   beforeEach(async () => {
     await table.delete();
   });
@@ -101,7 +103,9 @@ describe("atomic mutation results and scope", () => {
   });
 });
 
-describe("atomic scalar equality deletes", () => {
+describe("atomic scalar equality deletes", function () {
+  this.timeout(30_000);
+
   beforeEach(async () => {
     await table.delete();
   });

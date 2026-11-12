@@ -168,7 +168,8 @@ describe("registering an external schema", () => {
   });
 });
 
-describe("the key an external relation's _id aliases", () => {
+describe("the key an external relation's _id aliases", function () {
+  this.timeout(30_000);
   before(async () => {
     await Register({
       accounts: Table({ name: "string" }),

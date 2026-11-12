@@ -287,6 +287,10 @@ async function InsertOne(
   const upsert = row.upsert;
   const found =
     upsert !== undefined && (await Read(upsert.lock, connection)).length > 0;
+  if (!found && row.returning) {
+    const [inserted] = await Read(row.returning, connection);
+    return String(inserted?.get(ID_COLUMN));
+  }
   if (!found) {
     await Write(row.insert, connection);
   } else if (upsert.update) {

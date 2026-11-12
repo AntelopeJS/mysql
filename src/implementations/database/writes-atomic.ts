@@ -14,6 +14,7 @@ import { type Sql, join, sql } from "../../statement";
 import { DecodeValue } from "./value";
 import { OPAQUE } from "./types";
 import { UnifyOperands } from "./coerce";
+import { Compared } from "./json";
 import type { DecodingContext } from "./context";
 import { JsonParam, QualifiedColumn, TextParam } from "./sql";
 import { ID_AS_ASSERTION, SplitPayload } from "./payload";
@@ -74,7 +75,7 @@ function RevisionPredicate(
     return sql`NOT ${json.hasKey(extra, revisionField)}`;
   }
   const expected = JsonParam(dialect, expectedRevision, OPAQUE);
-  return sql`${json.member(extra, revisionField)} = ${expected.sql}`;
+  return json.compare(json.member(extra, revisionField), expected.sql, "=");
 }
 
 function AtomicAssignments(
@@ -119,7 +120,7 @@ function AtomicPredicate(
     WRITE_ALIAS,
   ).field(request.field);
   const pair = UnifyOperands(context.dialect, field, expected);
-  return sql`${pair.left.sql} = ${pair.right.sql}`;
+  return Compared(context.dialect, pair.left, pair.right, "=");
 }
 
 /**

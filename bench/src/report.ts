@@ -18,8 +18,8 @@ import {
   BestPostgres,
   Cell,
   ENGINES,
+  FAMILY,
   Judge,
-  MYSQLS,
   POSTGRES,
   type CellSummary,
 } from "./summary";
@@ -41,7 +41,11 @@ const ENGINE_TITLES: Record<EngineId, string> = {
   "postgres-18": "pg 18",
   "mysql-8.4": "8.4",
   "mysql-9.7": "9.7",
+  "mariadb-11.8": "MariaDB 11.8",
+  "mariadb-12.3": "MariaDB 12.3",
 };
+
+const RATIO_TITLES = FAMILY.map((engine) => `${ENGINE_TITLES[engine]} ÷ pg`);
 
 /** The interface call a case makes, as a consumer writes it. */
 function Call(query: CaseRecord): string {
@@ -91,18 +95,28 @@ function Used(cell: CellSummary): string {
   return cell.indexes.length > 0 ? "yes" : "no";
 }
 
+/** Each reason a server of the family is flagged, with the servers it holds for unless it holds for all. */
 function FlagText(record: BenchRecord, query: CaseRecord): string {
-  const reasons = new Set<string>();
-  for (const engine of MYSQLS) {
+  const reasons = new Map<string, string[]>();
+  const flag = (reason: string, engine: EngineId) =>
+    reasons.set(reason, [
+      ...(reasons.get(reason) ?? []),
+      ENGINE_TITLES[engine],
+    ]);
+  for (const engine of FAMILY) {
     const { flags } = Judge(record, query, engine);
-    if (flags.wrong) reasons.add("wrong answer");
-    if (flags.slower) reasons.add("> 2× pg");
-    if (flags.missesPostgresIndex) reasons.add("misses pg's index");
-    if (flags.missesDeclaredIndex) reasons.add("declared index unused");
+    if (flags.wrong) flag("wrong answer", engine);
+    if (flags.slower) flag("> 2× pg", engine);
+    if (flags.missesPostgresIndex) flag("misses pg's index", engine);
+    if (flags.missesDeclaredIndex) flag("declared index unused", engine);
   }
-  if (!Cell(record, query.id, POSTGRES).correct)
-    reasons.add("pg answers wrong");
-  return [...reasons].join(", ");
+  const text = [...reasons].map(([reason, titles]) =>
+    titles.length === FAMILY.length
+      ? reason
+      : `${reason} (${titles.join(", ")})`,
+  );
+  if (!Cell(record, query.id, POSTGRES).correct) text.push("pg answers wrong");
+  return text.join(", ");
 }
 
 function KindTable(record: BenchRecord, kind: QueryKind): string[] {
@@ -115,7 +129,7 @@ function KindTable(record: BenchRecord, kind: QueryKind): string[] {
         `\`${Call(query)}\``,
         query.indexed ? "declared" : "none",
         ...cells.map(Timing),
-        ...MYSQLS.map((engine) => Ratio(Judge(record, query, engine).ratio)),
+        ...FAMILY.map((engine) => Ratio(Judge(record, query, engine).ratio)),
         best
           ? (record.cases.find((other) => other.id === best.id)?.form ?? "–")
           : "–",
@@ -124,8 +138,8 @@ function KindTable(record: BenchRecord, kind: QueryKind): string[] {
       ];
     });
   return [
-    `| query | indexes | ${ENGINES.map((engine) => ENGINE_TITLES[engine]).join(" | ")} | 8.4 ÷ pg | 9.7 ÷ pg | pg baseline | index used pg / 8.4 / 9.7 | flags |`,
-    "|---|---|---:|---:|---:|---:|---:|---|---|---|",
+    `| query | indexes | ${ENGINES.map((engine) => ENGINE_TITLES[engine]).join(" | ")} | ${RATIO_TITLES.join(" | ")} | pg baseline | index used ${ENGINES.map((engine) => ENGINE_TITLES[engine]).join(" / ")} | flags |`,
+    `|---|---|${ENGINES.map(() => "---:").join("|")}|${RATIO_TITLES.map(() => "---:").join("|")}|---|---|---|`,
     ...rows.map((cells) => `| ${cells.join(" | ")} |`),
   ];
 }
@@ -271,19 +285,19 @@ const METHOD = [
   '- **Data.** Each server holds the books twice, in `books_bare` (no index) and `books_indexed` (indexes `titleFr` on `title.fr` and `internalTitleFr` on `_internal.data.title.fr`), and as many reviews (the row count is in Environment). A book is written by `toDatabase` from a table class with two `@Localized({ fallbackLocale: "en" })` fields, so `_internal` is `{ meta: {}, data: { title: { fr, en }, summary: { fr, en } } }` as the decorators store it; the book also has a declared `title: { fr, en }` object of its own. Titles are a permutation of the ids, so the title order is not the id order. Every row is inserted through the module, never by SQL.',
   '- **Queries.** Each question is asked in each form the interface offers: `path` hands `orderBy` or `lookup` the dotted path (or the index name on `books_indexed`), `keys` chains `key()` in an expression, `decorators` is the expression `unlockrequest(LocalizedBook, row, "title", [{ modifier: LocalizationModifier, args: ["fr"] }])` builds, which reads `fr` with `.default()` to `en`. `orderBy` and `lookup` take only names, so the expression forms sort after a `map` and look up through `joinInner`.',
   "- **Client time** is the wall time of `await query.run()` in the bench module, in the same `ajs` process as the backend: compiling, the driver round trip and decoding. Median and p95 pool every timed run of every round; each round is a fresh `ajs` process per server, and the order of the servers rotates each round.",
-  "- **Server time and rows read** come from a separate capture pass of 5 runs per query, never from the timed runs. MySQL: the slow log with `long_query_time = 0` (statement time, `rows_examined`). PostgreSQL: `auto_explain` with `log_analyze` and `log_timing = off` (executor time; rows read summed over the scan nodes, filtered rows included).",
-  "- **Plans** are of the statements the module sent, as each server logged them. MySQL: `EXPLAIN FORMAT=TRADITIONAL` and `EXPLAIN ANALYZE` of the logged text, on a session given the module's own session pin. PostgreSQL: the plan `auto_explain` logged for the module's execution, with its parameters. *Index used* means a declared index (`titleFr` or `internalTitleFr`) appears in the plan; postgres builds them on literal `_extra` keys, which no nested read can use.",
-  "- **Correctness.** Every timed run's answer is compared with the ids the generator says it must be; ✗ marks a cell with any wrong run. The ratio divides a MySQL median by the fastest **correct** postgres answer to the same question on the same table, in any form; *pg baseline* names that form.",
-  "- **Tuning.** `innodb_buffer_pool_size = 1G` and `shared_buffers = 1GB`, so the 300k rows sit in memory on both; `ANALYZE` on every table after seeding; every other setting is the image default. Each `ajs` run connects with the module's defaults.",
+  "- **Server time and rows read** come from a separate capture pass of 5 runs per query, never from the timed runs. MySQL and MariaDB: the slow log with `long_query_time = 0` (statement time, `rows_examined`). PostgreSQL: `auto_explain` with `log_analyze` and `log_timing = off` (executor time; rows read summed over the scan nodes, filtered rows included).",
+  "- **Plans** are of the statements the module sent, as each server logged them. MySQL: `EXPLAIN FORMAT=TRADITIONAL` and `EXPLAIN ANALYZE` of the logged text, on a session given the module's own session pin. MariaDB has no `EXPLAIN ANALYZE`: it gets `EXPLAIN EXTENDED` (for the `filtered` column) and `ANALYZE`, whose table adds `r_rows` and `r_filtered`. PostgreSQL: the plan `auto_explain` logged for the module's execution, with its parameters. *Index used* means a declared index (`titleFr` or `internalTitleFr`) appears in the plan; postgres builds them on literal `_extra` keys, which no nested read can use.",
+  "- **Correctness.** Every timed run's answer is compared with the ids the generator says it must be; ✗ marks a cell with any wrong run. The ratio divides a median of the MySQL family by the fastest **correct** postgres answer to the same question on the same table, in any form; *pg baseline* names that form.",
+  "- **Tuning.** `innodb_buffer_pool_size = 1G` and `shared_buffers = 1GB`, so the 300k rows sit in memory on every server; `ANALYZE` on every table after seeding; every other setting is the image default. Each `ajs` run connects with the module's defaults.",
 ];
 
 /** Writes RESULTS.md and the plan files from a run's record, with the authored findings. */
 export function WriteReport(record: BenchRecord, root: string): void {
   const plans = WritePlans(record, root);
   const findingsPath = path.join(root, FINDINGS);
-  const findings = existsSync(findingsPath)
-    ? readFileSync(findingsPath, "utf8").trim()
-    : "";
+  const [summary = ""] = (
+    existsSync(findingsPath) ? readFileSync(findingsPath, "utf8") : ""
+  ).split("\n### ");
   const sections = KINDS.flatMap((kind) => [
     `### ${KIND_TITLES[kind]}`,
     "",
@@ -320,7 +334,7 @@ export function WriteReport(record: BenchRecord, root: string): void {
   const text = [
     "# Nested-field benchmark: @antelopejs/mysql against @antelopejs/postgres",
     "",
-    "Generated by `pnpm run bench`; the findings are authored in [`findings.md`](findings.md) and copied in.",
+    "Generated by `pnpm run bench`; the findings are authored in [`findings.md`](findings.md), and their summary is copied in.",
     "",
     "## Environment",
     "",
@@ -335,7 +349,9 @@ export function WriteReport(record: BenchRecord, root: string): void {
     `Server time, rows read and the spread of the rounds: [${PLANS_FOLDER}/${serverFile}](${PLANS_FOLDER}/${serverFile}).`,
     "",
     ...sections,
-    findings,
+    summary.trim(),
+    "",
+    "The causes, section by section, are in [`findings.md`](findings.md).",
     "",
   ].join("\n");
   writeFileSync(path.join(root, RESULTS), text);

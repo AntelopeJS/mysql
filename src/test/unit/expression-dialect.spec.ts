@@ -8,9 +8,9 @@ const { json, scalar, time } = DIALECTS.mysql.sql;
 describe("The MySQL regular expression translation", () => {
   const translate = (pattern: string) => scalar.regex.translate(pattern);
 
-  it("rewrites . outside a class into JavaScript's four line terminators, and leaves it inside one", () => {
-    expect(translate("a.b")).to.equal("a[^\\n\\r\\u2028\\u2029]b");
-    expect(translate("[.]")).to.equal("[.]");
+  it("rewrites . outside a class into JavaScript's four line terminators, and escapes it inside one", () => {
+    expect(translate("a.b")).to.equal("a[^\\n\\r\\x{2028}\\x{2029}]b");
+    expect(translate("[.]")).to.equal("[\\.]");
     expect(translate("a\\.b")).to.equal("a\\.b");
   });
 
@@ -30,12 +30,12 @@ describe("The MySQL regular expression translation", () => {
   });
 
   it("ends a class at its closing bracket, so what follows is outside it", () => {
-    expect(translate("[a].")).to.equal("[a][^\\n\\r\\u2028\\u2029]");
+    expect(translate("[a].")).to.equal("[a][^\\n\\r\\x{2028}\\x{2029}]");
   });
 
   it("escapes a hyphen beside a set escape in a class, which would otherwise bound a range with the escape's first or last member", () => {
-    expect(translate("[\\d-.]")).to.equal("[0-9\\-.]");
-    expect(translate("[.-\\d]")).to.equal("[.\\-0-9]");
+    expect(translate("[\\d-.]")).to.equal("[0-9\\-\\.]");
+    expect(translate("[.-\\d]")).to.equal("[\\.\\-0-9]");
     expect(translate("[\\d-\\d]")).to.equal("[0-9\\-0-9]");
     expect(translate("[a-z]")).to.equal("[a-z]");
     expect(translate("[\\b-z]")).to.equal("[\\x{08}-z]");
@@ -43,7 +43,7 @@ describe("The MySQL regular expression translation", () => {
 
   it("leaves the member after a set escape's hyphen free of the next hyphen, and escapes every hyphen that is no range", () => {
     expect(translate("[\\d-a-f]")).to.equal("[0-9\\-a\\-f]");
-    expect(translate("[.-\\w-a-c]")).to.equal("[.\\-A-Za-z0-9_\\-a-c]");
+    expect(translate("[.-\\w-a-c]")).to.equal("[\\.\\-A-Za-z0-9_\\-a-c]");
     expect(translate("[--e]")).to.equal("[\\--e]");
     expect(translate("[a-]")).to.equal("[a\\-]");
     expect(translate("[\\x41-\\x5A-]")).to.equal("[\\x41-\\x5A\\-]");

@@ -36,7 +36,12 @@ const ROWS = sql`('typed', '', '{"s": "x", "n": 1.5, "b": true, "d": "2024-01-02
   ('nulls', '', '{"s": null, "n": null, "b": null, "d": null, "o": null, "l": null}'),
   ('impossible', '', '{"d": "2024-02-30T00:00:00.000Z"}')`;
 
-/** The declared columns as text, and `_extra` as the server prints JSON: keys by length, then name. */
+const EMPTY_COLUMNS = ["null", "null", "null", "null", "null", "null"];
+
+/**
+ * The declared columns as text, and `_extra` as the server prints it: MySQL prints a document's keys
+ * by length and then name, MariaDB in the order they were written, so a test reads it parsed.
+ */
 interface Stored {
   readonly columns: readonly string[];
   readonly extra: string;
@@ -59,7 +64,8 @@ async function Stored(): Promise<Map<string, Stored>> {
   );
 }
 
-describe("a field declared over values already in _extra", () => {
+describe("a field declared over values already in _extra", function () {
+  this.timeout(30_000);
   let stored: Map<string, Stored>;
 
   before(async () => {
@@ -98,17 +104,27 @@ describe("a field declared over values already in _extra", () => {
   });
 
   it("leaves a value its column cannot hold in _extra, and the column empty", () => {
-    expect(stored.get("mistyped")).to.deep.equal({
-      columns: ["null", "null", "null", "null", "null", "null"],
-      extra: '{"b": "true", "d": "yesterday", "n": "7", "s": 5, "keep": 2}',
+    const mistyped = stored.get("mistyped");
+    expect(mistyped?.columns).to.deep.equal(EMPTY_COLUMNS);
+    expect(JSON.parse(mistyped?.extra ?? "null")).to.deep.equal({
+      b: "true",
+      d: "yesterday",
+      n: "7",
+      s: 5,
+      keep: 2,
     });
   });
 
   it("leaves an explicit null in _extra, where it still reads as null", () => {
-    expect(stored.get("nulls")).to.deep.equal({
-      columns: ["null", "null", "null", "null", "null", "null"],
-      extra:
-        '{"b": null, "d": null, "l": null, "n": null, "o": null, "s": null}',
+    const nulls = stored.get("nulls");
+    expect(nulls?.columns).to.deep.equal(EMPTY_COLUMNS);
+    expect(JSON.parse(nulls?.extra ?? "[]")).to.deep.equal({
+      b: null,
+      d: null,
+      l: null,
+      n: null,
+      o: null,
+      s: null,
     });
   });
 

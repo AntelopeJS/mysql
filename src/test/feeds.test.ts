@@ -3,7 +3,7 @@ import type { PoolConnection } from "mysql2/promise";
 import { Schema } from "@antelopejs/interface-database/schema";
 
 import { type Sql, ident, param, sql } from "../statement";
-import { AcquireConnection, GetDialect } from "../connection";
+import { AcquireConnection, GetDialect, Read } from "../connection";
 import { OnDedicatedSession } from "../implementations/database/locks";
 import { ReapOnce } from "../implementations/database/reaper";
 import { CHANGE_LOG } from "../implementations/database/registry";
@@ -95,7 +95,7 @@ describe("the order a change feed delivers in", function () {
 
   it("delivers a JSON column going from SQL NULL to JSON null as the key appearing with null", async () => {
     await Run(
-      sql`UPDATE ${table} SET meta = CAST('null' AS JSON) WHERE _instance = '' AND _id = 'later'`,
+      sql`UPDATE ${table} SET meta = ${GetDialect().sql.json.null} WHERE _instance = '' AND _id = 'later'`,
     );
     const change = await Delivered(feed.next());
     expect(change).to.have.property("changeType", "modified");
@@ -103,6 +103,23 @@ describe("the order a change feed delivers in", function () {
       .to.have.property("oldValue")
       .that.does.not.have.property("meta");
     expect(change).to.have.nested.property("newValue.meta", null);
+  });
+
+  it("delivers nothing for a write that only reorders an object's keys", async () => {
+    const json = GetDialect().sql.json;
+    const Meta = (text: string) =>
+      sql`UPDATE ${table} SET meta = ${json.parse(param(text))} WHERE _instance = '' AND _id = 'later'`;
+    await Run(Meta('{"a": 1, "b": [2]}'));
+    expect(await Delivered(feed.next())).to.have.nested.property(
+      "newValue.meta.a",
+      1,
+    );
+    await Run(Meta('{"b": [2], "a": 1}'));
+    await Run(Relabel("later", "after-reorder"));
+    expect(await Delivered(feed.next())).to.have.nested.property(
+      "newValue.label",
+      "after-reorder",
+    );
   });
 });
 
@@ -115,30 +132,48 @@ function Nested(levels: number): Nest {
   return value;
 }
 
-/**
- * The deepest a stored JSON value nests: MySQL refuses a 101st level. An undeclared field sits one
- * level down in `_extra`, a declared object field holds its value at the top of its own column.
- */
-const IN_EXTRA = 99;
-const IN_COLUMN = 100;
+/** The most levels this suite nests a value to: MySQL refuses a 101st. */
+const MOST_LEVELS = 100;
 
-/** A declared field one level short of the limit, which leaves room for the document around it. */
-const IN_DOCUMENT = IN_COLUMN - 1;
+/**
+ * The deepest a stored JSON value nests on the server: MySQL refuses a 101st level, MariaDB 11.8 a
+ * 32nd. An undeclared field sits one level down in `_extra`, a declared object field holds its
+ * value at the top of its own column, and a declared field one level short of the limit leaves
+ * room for the document around it.
+ */
+async function Depths() {
+  let inColumn = MOST_LEVELS;
+  while (!(await Nests(inColumn))) {
+    inColumn -= 1;
+  }
+  return { inColumn, inExtra: inColumn - 1, inDocument: inColumn - 1 };
+}
+
+async function Nests(levels: number): Promise<boolean> {
+  const text = `${"[".repeat(levels)}${"]".repeat(levels)}`;
+  const [row] = await Read(sql`SELECT JSON_VALID(${param(text)}) AS valid`);
+  return Number(row.get("valid")) === 1;
+}
 
 const deep = new Schema<{ stored: Row; delivered: Row }>("feeds-depth", {
   stored: { fields: { label: "string", tree: "object" }, indexes: {} },
   delivered: { fields: { label: "string", tree: "object" }, indexes: {} },
 });
 
-describe("a watched table holding JSON as deep as MySQL stores it", function () {
+describe("a watched table holding JSON as deep as the server stores it", function () {
   this.timeout(30_000);
+  let depths: Awaited<ReturnType<typeof Depths>>;
+
+  before(async () => {
+    depths = await Depths();
+  });
 
   it("updates and deletes a row stored before it was watched", async () => {
     const rows = deep.instance().table("stored");
     await rows.insert({
       _id: "deep",
-      deep: Nested(IN_EXTRA),
-      tree: Nested(IN_COLUMN),
+      deep: Nested(depths.inExtra),
+      tree: Nested(depths.inColumn),
     });
     const feed = await Opened(rows, "probe");
     await feed.return?.();
@@ -154,10 +189,11 @@ describe("a watched table holding JSON as deep as MySQL stores it", function () 
     const feed = await Opened(rows, "hollow-probe");
     await feed.return?.();
     const table = ident(PhysicalTable("feeds-depth", "stored"));
-    for (const levels of [IN_COLUMN - 2, IN_COLUMN - 1, IN_COLUMN]) {
+    const limit = depths.inColumn;
+    for (const levels of [limit - 2, limit - 1, limit]) {
       const hollow = `${"[".repeat(levels)}${"]".repeat(levels)}`;
       await Run(
-        sql`UPDATE ${table} SET tree = CAST(${param(hollow)} AS JSON) WHERE _instance = '' AND _id = 'hollow'`,
+        sql`UPDATE ${table} SET tree = ${GetDialect().sql.json.parse(param(hollow))} WHERE _instance = '' AND _id = 'hollow'`,
       );
     }
     expect(await rows.get("hollow").delete()).to.equal(1);
@@ -165,7 +201,10 @@ describe("a watched table holding JSON as deep as MySQL stores it", function () 
 
   it("delivers the changes of a row as deep as a document holds", async () => {
     const rows = deep.instance().table("delivered");
-    const stored = { deep: Nested(IN_EXTRA), tree: Nested(IN_DOCUMENT) };
+    const stored = {
+      deep: Nested(depths.inExtra),
+      tree: Nested(depths.inDocument),
+    };
     await rows.insert({ _id: "deep", ...stored });
     const feed = await Opened(rows, "probe");
     try {

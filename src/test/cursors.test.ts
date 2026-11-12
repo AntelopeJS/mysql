@@ -31,7 +31,11 @@ type ItemsTable = ReturnType<ReturnType<Schema<Tables>["instance"]>["table"]>;
 
 const MEGABYTE = 1024 * 1024;
 const BATCH = 100;
-const IDLE_MS = 1500;
+/**
+ * The idle reclaim of the DDL tests, well past \`BLOCKED_MS\` and the wait for the \`ALTER\` to block:
+ * a cursor reclaimed while a test still holds it open would release its lock early.
+ */
+const IDLE_MS = 4000;
 const BLOCKED_MS = 1200;
 const COMPLETES_WITHIN_MS = 15_000;
 const SAMPLE_EVERY = 2000;
@@ -73,7 +77,7 @@ async function UntilWaitingOnLock(table: string): Promise<void> {
   const pattern = `ALTER TABLE \`${table}\`%`;
   for (let attempt = 0; attempt < COMPLETES_WITHIN_MS / POLL_MS; attempt += 1) {
     const rows = await Read(
-      sql`SELECT STATE AS state FROM performance_schema.processlist WHERE INFO LIKE ${param(pattern)}`,
+      sql`SELECT STATE AS state FROM information_schema.PROCESSLIST WHERE INFO LIKE ${param(pattern)}`,
     );
     if (
       rows.some((row) => row.get("state") === "Waiting for table metadata lock")
@@ -88,7 +92,7 @@ async function UntilWaitingOnLock(table: string): Promise<void> {
 async function StreamingStatements(table: string): Promise<number> {
   const pattern = `SELECT %${table}%`;
   const rows = await Read(
-    sql`SELECT ID FROM performance_schema.processlist WHERE INFO LIKE ${param(pattern)} AND INFO NOT LIKE '%processlist%'`,
+    sql`SELECT ID FROM information_schema.PROCESSLIST WHERE INFO LIKE ${param(pattern)} AND INFO NOT LIKE '%PROCESSLIST%'`,
   );
   return rows.length;
 }
@@ -108,7 +112,7 @@ async function UntilNoneStreaming(table: string): Promise<void> {
 async function KillStreaming(table: string): Promise<void> {
   const pattern = `SELECT %${table}%`;
   const rows = await Read(
-    sql`SELECT ID AS id FROM performance_schema.processlist WHERE INFO LIKE ${param(pattern)} AND INFO NOT LIKE '%processlist%'`,
+    sql`SELECT ID AS id FROM information_schema.PROCESSLIST WHERE INFO LIKE ${param(pattern)} AND INFO NOT LIKE '%PROCESSLIST%'`,
   );
   expect(rows, "one connection streams the table").to.have.length(1);
   await Run(sql`KILL ${int(Number(rows[0].get("id")))}`);

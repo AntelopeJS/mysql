@@ -18,8 +18,13 @@ export interface CellSummary {
 }
 
 export const POSTGRES: EngineId = "postgres-18";
-export const MYSQLS: readonly EngineId[] = ["mysql-8.4", "mysql-9.7"];
-export const ENGINES: readonly EngineId[] = [POSTGRES, ...MYSQLS];
+export const FAMILY: readonly EngineId[] = [
+  "mysql-8.4",
+  "mysql-9.7",
+  "mariadb-11.8",
+  "mariadb-12.3",
+];
+export const ENGINES: readonly EngineId[] = [POSTGRES, ...FAMILY];
 
 /** The summary of one query on one engine. */
 export function Cell(
@@ -87,7 +92,7 @@ export function BestPostgres(
     .sort((left, right) => left.median - right.median)[0];
 }
 
-/** Why a MySQL row needs a cause in the report, if it does. */
+/** Why a row of the MySQL family needs a cause in the report, if it does. */
 export interface Flags {
   readonly slower: boolean;
   readonly missesPostgresIndex: boolean;
@@ -95,7 +100,7 @@ export interface Flags {
   readonly wrong: boolean;
 }
 
-/** A MySQL cell measured against postgres: its ratio to the best correct postgres answer, and why it is flagged. */
+/** A cell of the MySQL family measured against postgres: its ratio to the best correct postgres answer, and why it is flagged. */
 export interface Judgement {
   readonly ratio: number;
   readonly flags: Flags;

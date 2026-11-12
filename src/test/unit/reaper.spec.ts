@@ -112,7 +112,7 @@ describe("a sequencer pass", () => {
     });
     expect(await SequenceOnce(session, MYSQL, "skip")).to.equal(3);
     const stamp = asked.find((one) => one.kind === "stamp");
-    expect(stamp?.args).to.deep.equal(['["7","9","12"]', "41"]);
+    expect(stamp?.args).to.deep.equal(['["7","9","12"]', "41", "7", "9", "12"]);
     const advance = asked.find((one) => one.kind === "advance");
     expect(advance?.text).to.contain("+ 3 ");
     expect(asked.map((one) => one.kind)).to.deep.equal([

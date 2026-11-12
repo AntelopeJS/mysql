@@ -16,13 +16,13 @@ id | select_type | table | type | possible_keys | key | key_len | rows | filtere
 2 | DEPENDENT DERIVED | t1 | ref | PRIMARY,titleFr,internalTitleFr | internalTitleFr | 3069 | 1 | 100 | Using where
 
 EXPLAIN ANALYZE
--> Limit: 20 row(s)  (cost=140630 rows=20) (actual time=0.0444..0.269 rows=20 loops=1)
-    -> Nested loop left join  (cost=140630 rows=99550) (actual time=0.0438..0.267 rows=20 loops=1)
-        -> Invalidate materialized tables (row from t0)  (cost=4992 rows=49775) (actual time=0.00657..0.016 rows=20 loops=1)
-            -> Index lookup on t0 using PRIMARY (_instance = 'bench')  (cost=4992 rows=49775) (actual time=0.00635..0.015 rows=20 loops=1)
-        -> Table scan on t2  (cost=2.53 rows=1) (actual time=0.0122..0.0123 rows=1 loops=20)
-            -> Materialize (invalidate on row from t0)  (cost=-1e+12 rows=1) (actual time=0.012..0.012 rows=1 loops=20)
-                -> Limit: 1 row(s)  (cost=0.35 rows=1) (actual time=0.00782..0.00785 rows=1 loops=20)
+-> Limit: 20 row(s)  (cost=140630 rows=20) (actual time=0.0868..0.335 rows=20 loops=1)
+    -> Nested loop left join  (cost=140630 rows=99550) (actual time=0.0863..0.333 rows=20 loops=1)
+        -> Invalidate materialized tables (row from t0)  (cost=4992 rows=49775) (actual time=0.00834..0.0194 rows=20 loops=1)
+            -> Index lookup on t0 using PRIMARY (_instance = 'bench')  (cost=4992 rows=49775) (actual time=0.00803..0.0182 rows=20 loops=1)
+        -> Table scan on t2  (cost=2.53 rows=1) (actual time=0.0153..0.0154 rows=1 loops=20)
+            -> Materialize (invalidate on row from t0)  (cost=-1e+12 rows=1) (actual time=0.0151..0.0151 rows=1 loops=20)
+                -> Limit: 1 row(s)  (cost=0.352 rows=1) (actual time=0.0106..0.0106 rows=1 loops=20)
                     -> Filter: ((t1.__k__internal_data_title_fr_eccf6ec9 = left(concat('2',t0.bookHeading),638)) and ((case when (json_type(json_extract(t1._ext…
                         -> Index lookup on t1 using internalTitleFr (_instance = 'bench', __k__internal_data_title_fr_eccf6ec9 = left(concat('2',t0.bookHeading)…
 
@@ -45,13 +45,13 @@ id | select_type | table | type | possible_keys | key | key_len | rows | filtere
 EXPLAIN ANALYZE
 -> Filter: ((case when (json_type(json_extract(t2._extra,'$."_internal"."data"."title"."fr"')) = <cache>(('STRING' collate utf8mb4_bin))) then cast(json_unquote…
     -> Inner hash join (<hash>((case when (json_type(json_extract(t2._extra,'$."_internal"."data"."title"."fr"')) = <cache>(('STRING' collate utf8mb4_bin))) the…
-        -> Filter: ((t2._instance >= 'bench') and (t2._instance <= 'bench'))  (cost=5067 rows=48165) (actual time=0.0129..42.7 rows=100000 loops=1)
-            -> Index range scan on t2 using PRIMARY over (_instance = 'bench')  (cost=5067 rows=48165) (actual time=0.0119..35.8 rows=100000 loops=1)
+        -> Filter: ((t2._instance >= 'bench') and (t2._instance <= 'bench'))  (cost=5067 rows=48165) (actual time=0.0258..49.4 rows=100000 loops=1)
+            -> Index range scan on t2 using PRIMARY over (_instance = 'bench')  (cost=5067 rows=48165) (actual time=0.0249..42.5 rows=100000 loops=1)
         -> Hash
-            -> Table scan on t1  (cost=4997..4999 rows=20) (actual time=0.0351..0.0369 rows=20 loops=1)
-                -> Materialize  (cost=4997..4997 rows=20) (actual time=0.0345..0.0345 rows=20 loops=1)
-                    -> Limit: 20 row(s)  (cost=4992 rows=20) (actual time=0.00442..0.0117 rows=20 loops=1)
-                        -> Index lookup on t0 using PRIMARY (_instance = 'bench')  (cost=4992 rows=49775) (actual time=0.00416..0.0106 rows=20 loops=1)
+            -> Table scan on t1  (cost=4997..4999 rows=20) (actual time=0.0234..0.0252 rows=20 loops=1)
+                -> Materialize  (cost=4997..4997 rows=20) (actual time=0.0227..0.0227 rows=20 loops=1)
+                    -> Limit: 20 row(s)  (cost=4992 rows=20) (actual time=0.00408..0.0112 rows=20 loops=1)
+                        -> Index lookup on t0 using PRIMARY (_instance = 'bench')  (cost=4992 rows=49775) (actual time=0.00389..0.0101 rows=20 loops=1)
 
 ```
 
@@ -70,11 +70,11 @@ id | select_type | table | type | possible_keys | key | key_len | rows | filtere
 2 | DERIVED | t0 | ref | PRIMARY | PRIMARY | 514 | 49775 | 100 | NULL
 
 EXPLAIN ANALYZE
--> Nested loop inner join  (cost=5006 rows=20) (actual time=0.0473..0.198 rows=20 loops=1)
-    -> Table scan on t1  (cost=4997..4999 rows=20) (actual time=0.0296..0.0326 rows=20 loops=1)
-        -> Materialize  (cost=4997..4997 rows=20) (actual time=0.0281..0.0281 rows=20 loops=1)
-            -> Limit: 20 row(s)  (cost=4992 rows=20) (actual time=0.00693..0.0139 rows=20 loops=1)
-                -> Index lookup on t0 using PRIMARY (_instance = 'bench')  (cost=4992 rows=49775) (actual time=0.00623..0.0122 rows=20 loops=1)
+-> Nested loop inner join  (cost=5006 rows=20.1) (actual time=0.0858..0.329 rows=20 loops=1)
+    -> Table scan on t1  (cost=4997..4999 rows=20) (actual time=0.0525..0.0566 rows=20 loops=1)
+        -> Materialize  (cost=4997..4997 rows=20) (actual time=0.0505..0.0505 rows=20 loops=1)
+            -> Limit: 20 row(s)  (cost=4992 rows=20) (actual time=0.0121..0.0238 rows=20 loops=1)
+                -> Index lookup on t0 using PRIMARY (_instance = 'bench')  (cost=4992 rows=49775) (actual time=0.0106..0.0213 rows=20 loops=1)
     -> Filter: ((t2.__k__internal_data_title_fr_eccf6ec9 = left(concat('2',t1.bookHeading),638)) and ((case when (json_type(json_extract(t2._extra,'$."_internal…
         -> Index lookup on t2 using internalTitleFr (_instance = 'bench', __k__internal_data_title_fr_eccf6ec9 = left(concat('2',t1.bookHeading),638))  (cost=0.…
 
@@ -97,13 +97,13 @@ id | select_type | table | type | possible_keys | key | key_len | rows | filtere
 EXPLAIN ANALYZE
 -> Filter: ((case when (json_type(coalesce(nullif(json_extract(t2._extra,'$."_internal"."data"."title"."fr"'),<cache>(cast('null' as json))),json_extract(t2._ex…
     -> Inner hash join (<hash>((case when (json_type(coalesce(nullif(json_extract(t2._extra,'$."_internal"."data"."title"."fr"'),<cache>(cast('null' as json))),…
-        -> Filter: ((t2._instance >= 'bench') and (t2._instance <= 'bench'))  (cost=5067 rows=48165) (actual time=0.00456..43.5 rows=100000 loops=1)
-            -> Index range scan on t2 using PRIMARY over (_instance = 'bench')  (cost=5067 rows=48165) (actual time=0.00393..35.9 rows=100000 loops=1)
+        -> Filter: ((t2._instance >= 'bench') and (t2._instance <= 'bench'))  (cost=5067 rows=48165) (actual time=0.00482..47.7 rows=100000 loops=1)
+            -> Index range scan on t2 using PRIMARY over (_instance = 'bench')  (cost=5067 rows=48165) (actual time=0.00406..40.5 rows=100000 loops=1)
         -> Hash
-            -> Table scan on t1  (cost=4997..4999 rows=20) (actual time=0.0217..0.0235 rows=20 loops=1)
-                -> Materialize  (cost=4997..4997 rows=20) (actual time=0.0211..0.0211 rows=20 loops=1)
-                    -> Limit: 20 row(s)  (cost=4992 rows=20) (actual time=0.00373..0.0107 rows=20 loops=1)
-                        -> Index lookup on t0 using PRIMARY (_instance = 'bench')  (cost=4992 rows=49775) (actual time=0.00354..0.00968 rows=20 loops=1)
+            -> Table scan on t1  (cost=4997..4999 rows=20) (actual time=0.0243..0.0261 rows=20 loops=1)
+                -> Materialize  (cost=4997..4997 rows=20) (actual time=0.0233..0.0233 rows=20 loops=1)
+                    -> Limit: 20 row(s)  (cost=4992 rows=20) (actual time=0.00497..0.0122 rows=20 loops=1)
+                        -> Index lookup on t0 using PRIMARY (_instance = 'bench')  (cost=4992 rows=49775) (actual time=0.00469..0.0109 rows=20 loops=1)
 
 ```
 
@@ -122,11 +122,11 @@ id | select_type | table | type | possible_keys | key | key_len | rows | filtere
 2 | DERIVED | t0 | ref | PRIMARY | PRIMARY | 514 | 49775 | 100 | NULL
 
 EXPLAIN ANALYZE
--> Nested loop inner join  (cost=5013 rows=40) (actual time=0.0491..0.219 rows=20 loops=1)
-    -> Table scan on t1  (cost=4997..4999 rows=20) (actual time=0.0284..0.0309 rows=20 loops=1)
-        -> Materialize  (cost=4997..4997 rows=20) (actual time=0.027..0.027 rows=20 loops=1)
-            -> Limit: 20 row(s)  (cost=4992 rows=20) (actual time=0.00654..0.0135 rows=20 loops=1)
-                -> Index lookup on t0 using PRIMARY (_instance = 'bench')  (cost=4992 rows=49775) (actual time=0.00613..0.0122 rows=20 loops=1)
+-> Nested loop inner join  (cost=5014 rows=40.2) (actual time=0.0876..0.438 rows=20 loops=1)
+    -> Table scan on t1  (cost=4997..4999 rows=20) (actual time=0.0545..0.06 rows=20 loops=1)
+        -> Materialize  (cost=4997..4997 rows=20) (actual time=0.0526..0.0526 rows=20 loops=1)
+            -> Limit: 20 row(s)  (cost=4992 rows=20) (actual time=0.00998..0.0255 rows=20 loops=1)
+                -> Index lookup on t0 using PRIMARY (_instance = 'bench')  (cost=4992 rows=49775) (actual time=0.00906..0.0234 rows=20 loops=1)
     -> Filter: ((t2._instance = 'bench') and ((t2.__k__internal_data_title_fr_eccf6ec9 = left(concat('2',t1.bookHeading),638)) or (t2.__k__internal_data_title_f…
         -> Index lookup on t2 using internalTitleFr (_instance = 'bench', __k__internal_data_title_fr_eccf6ec9 = left(concat('2',t1.bookHeading),638) or NULL)  …
 

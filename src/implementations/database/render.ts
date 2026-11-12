@@ -104,7 +104,8 @@ function GroupByClause(relation: Relation): Sql | undefined {
   )}`;
 }
 
-function OrderTerms(relation: Relation): Sql | undefined {
+/** The relation's sort terms as an `ORDER BY` lists them, or nothing for an unordered relation. */
+export function OrderTerms(relation: Relation): Sql | undefined {
   if (relation.orderBy.length === 0) {
     return undefined;
   }

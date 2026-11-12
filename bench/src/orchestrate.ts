@@ -5,7 +5,7 @@ import path from "node:path";
 
 import { Exec, ImageDigest, RunningContainers } from "./docker";
 import type { Engine } from "./engine";
-import { MySqlEngine } from "./mysql-engine";
+import { MARIADB, MySqlEngine } from "./mysql-engine";
 import { PostgresEngine } from "./postgres-engine";
 import { QueryCases } from "./queries";
 import {
@@ -73,6 +73,18 @@ function Engines(): Engine[] {
     ),
     new MySqlEngine("mysql-8.4", "mysql:8.4", `${prefix}-mysql-84`),
     new MySqlEngine("mysql-9.7", "mysql:9.7", `${prefix}-mysql-97`),
+    new MySqlEngine(
+      "mariadb-11.8",
+      "mariadb:11.8",
+      `${prefix}-mariadb-118`,
+      MARIADB,
+    ),
+    new MySqlEngine(
+      "mariadb-12.3",
+      "mariadb:12.3",
+      `${prefix}-mariadb-123`,
+      MARIADB,
+    ),
   ];
 }
 

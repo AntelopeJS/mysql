@@ -114,7 +114,7 @@ describe("a key column an earlier release generated with one member read per key
     await schema.createInstance(INSTANCE).run();
     for (const row of ROWS) {
       await Run(
-        sql`INSERT INTO ${Table()} (_id, _instance, title, _extra) VALUES (${param(row.id)}, ${param(INSTANCE)}, CAST(${param(row.title)} AS JSON), CAST(${param(row.extra)} AS JSON))`,
+        sql`INSERT INTO ${Table()} (_id, _instance, title, _extra) VALUES (${param(row.id)}, ${param(INSTANCE)}, ${GetDialect().sql.json.parse(param(row.title))}, ${GetDialect().sql.json.parse(param(row.extra))})`,
       );
     }
     for (const key of KeyColumns()) {
@@ -130,7 +130,7 @@ describe("a key column an earlier release generated with one member read per key
     for (const key of KeyColumns()) {
       const whole = json.member(ident(key.source), ...key.path);
       const differing = await Read(
-        sql`SELECT _id FROM ${Table()} WHERE NOT (${ChainedRead(key)} <=> ${whole})`,
+        sql`SELECT _id FROM ${Table()} WHERE NOT ${json.same(ChainedRead(key), whole)}`,
       );
       expect(differing, key.definition).to.deep.equal([]);
     }

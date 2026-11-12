@@ -1,6 +1,6 @@
 import path from "node:path";
 import { randomBytes } from "node:crypto";
-import { createConnection } from "mysql2/promise";
+import { type RowDataPacket, createConnection } from "mysql2/promise";
 import { defineConfig } from "@antelopejs/interface-core/config";
 import {
   MySqlContainer,
@@ -10,11 +10,12 @@ import {
 import {
   CLIENT_DATABASE,
   CLIENT_USER,
-  FIXTURE,
+  Fixture,
   READER_PASSWORD,
   ReaderGrants,
   WriterGrants,
 } from "../test-external/fixture";
+import { DetectDialect } from "../dialect";
 
 const DEFAULT_IMAGE = "mysql:8.4";
 const EXTERNAL_MODE = "external";
@@ -74,6 +75,19 @@ async function AdminUrl(): Promise<string> {
   return container.getConnectionUri(true);
 }
 
+/** The engine the server under test runs, as the module's dialect detection names it. */
+async function EngineOf(url: string) {
+  const connection = await createConnection(url);
+  try {
+    const [rows] = await connection.query<RowDataPacket[]>(
+      "SELECT VERSION() AS version",
+    );
+    return DetectDialect(String(rows[0]?.version));
+  } finally {
+    await connection.end();
+  }
+}
+
 async function Run(url: string, statements: readonly string[]) {
   const connection = await createConnection(url);
   try {
@@ -112,7 +126,7 @@ async function ClientDatabase(url: string): Promise<string> {
     `DROP USER IF EXISTS '${CLIENT_USER}'@'%'`,
     `CREATE DATABASE ${CLIENT_DATABASE}`,
     `CREATE USER '${CLIENT_USER}'@'%' IDENTIFIED BY '${READER_PASSWORD}'`,
-    ...FIXTURE,
+    ...Fixture(await EngineOf(url)),
     ...ReaderGrants(CLIENT_USER),
     ...WriterGrants(CLIENT_USER),
   ]);

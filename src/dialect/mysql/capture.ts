@@ -30,13 +30,11 @@ import {
   INSTANCE_COLUMN,
   MAX_INSTANCE_ID_CHARS,
 } from "../../implementations/database/utils";
-import { session } from "./session";
-import { json } from "./sql-json";
-import { sqlCore } from "./sql-core";
+import type { JsonSyntax } from "../sql-types";
+import type { SqlSyntax } from "../types";
+import type { Flavour } from "./flavour";
 
 const COMMA = sql`, `;
-
-const TABLE_OPTIONS = sql`ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=${lit(session.binaryCollation)}`;
 
 /** The one row of the clock. */
 const CLOCK_ROW = sql`1`;
@@ -87,7 +85,12 @@ function CurrentLogId(tables: ChangeLogTables): Sql {
  * created again has another, and the first bootstrap that sees it renews the epoch, once: the
  * update matches only while the two differ.
  */
-function Bootstrap(tables: ChangeLogTables, logId: string): readonly Sql[] {
+function Bootstrap(
+  flavour: Flavour,
+  tables: ChangeLogTables,
+  logId: string,
+): readonly Sql[] {
+  const options = sql`ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=${lit(flavour.binaryCollation)}`;
   const log = [
     sql`${ID} BIGINT UNSIGNED NOT NULL AUTO_INCREMENT`,
     sql`${SEQ} BIGINT UNSIGNED NULL`,
@@ -95,8 +98,8 @@ function Bootstrap(tables: ChangeLogTables, logId: string): readonly Sql[] {
     sql`${TABLE} VARCHAR(${int(MAX_IDENTIFIER_CHARS)}) NOT NULL`,
     sql`${INSTANCE} VARCHAR(${int(MAX_INSTANCE_ID_CHARS)}) NOT NULL`,
     sql`${OPERATION} VARCHAR(${int(OPERATION_CHARS)}) NOT NULL`,
-    sql`${ident(tables.oldImage)} JSON NULL`,
-    sql`${ident(tables.newImage)} JSON NULL`,
+    sql`${ident(tables.oldImage)} ${flavour.jsonType} NULL`,
+    sql`${ident(tables.newImage)} ${flavour.jsonType} NULL`,
     sql`PRIMARY KEY (${ID})`,
     sql`UNIQUE KEY ${SEQ} (${SEQ})`,
     sql`KEY ${ident("tbl_seq")} (${TABLE}, ${SEQ})`,
@@ -116,9 +119,9 @@ function Bootstrap(tables: ChangeLogTables, logId: string): readonly Sql[] {
   ];
   const current = CurrentLogId(tables);
   return [
-    sql`CREATE TABLE IF NOT EXISTS ${ident(tables.log)} (${join(log, COMMA)}) ${TABLE_OPTIONS} COMMENT = ${lit(logId)}`,
-    sql`CREATE TABLE IF NOT EXISTS ${ident(tables.clock)} (${join(clock, COMMA)}) ${TABLE_OPTIONS}`,
-    sql`CREATE TABLE IF NOT EXISTS ${ident(tables.reaped)} (${join(reaped, COMMA)}) ${TABLE_OPTIONS}`,
+    sql`CREATE TABLE IF NOT EXISTS ${ident(tables.log)} (${join(log, COMMA)}) ${options} COMMENT = ${lit(logId)}`,
+    sql`CREATE TABLE IF NOT EXISTS ${ident(tables.clock)} (${join(clock, COMMA)}) ${options}`,
+    sql`CREATE TABLE IF NOT EXISTS ${ident(tables.reaped)} (${join(reaped, COMMA)}) ${options}`,
     sql`INSERT IGNORE INTO ${ident(tables.clock)} (${ID}, ${NEXT_SEQ}, ${EPOCH}, ${LOG_ID}) VALUES (${CLOCK_ROW}, 1, UUID(), ${current})`,
     sql`UPDATE ${ident(tables.clock)} SET ${EPOCH} = UUID(), ${LOG_ID} = ${current} WHERE ${ID} = ${CLOCK_ROW} AND ${LOG_ID} <> ${current}`,
   ];
@@ -126,30 +129,44 @@ function Bootstrap(tables: ChangeLogTables, logId: string): readonly Sql[] {
 
 /**
  * The deepest a JSON-backed column's value is boxed in its image: the image's object and the box
- * take two of the 100 levels MySQL stores, and `JSON_DEPTH` counts a level for the scalar inside the
- * deepest container, so a value of depth 98 nests no more than 98 containers.
+ * take two of the levels the engine stores, and `JSON_DEPTH` counts a level for the scalar inside
+ * the deepest container, so a value of that depth nests no more containers than are left.
  */
-const BOXED_MAX_DEPTH = 98;
+const IMAGE_LEVELS = 2;
 
 /**
  * A column as an image holds it. A scalar goes as the JSON value the compiler's own reading turns
  * back into it. A JSON-backed column is boxed in a one-element array, so a column holding SQL NULL
  * logs `null` and one holding a JSON null logs `[null]`. A value too deep for the box and the image
- * around it goes as its JSON text, a string, since MySQL refuses to store a document past its depth
- * limit and the write that logs it would fail. Only such a value goes as text, because a feed parses
- * text back, and MySQL 8.4's parser reads some doubles of 17 significant digits as a neighbour.
+ * around it goes as its JSON text, a string, since the engine refuses to store a document past its
+ * depth limit and the write that logs it would fail. Only such a value goes as text, because a feed
+ * parses text back, and MySQL 8.4's parser reads some doubles of 17 significant digits as a
+ * neighbour.
  */
-function Imaged(row: Sql, column: CapturedColumn): Sql {
+function Imaged(engine: ImageSyntax, row: Sql, column: CapturedColumn): Sql {
+  const { json } = engine;
   const value = sql`${row}.${ident(column.name)}`;
   if (IsJsonBacked(column.type)) {
-    return sql`IF(JSON_DEPTH(${value}) <= ${int(BOXED_MAX_DEPTH)}, JSON_ARRAY(${value}), ${json.of(json.text(value), "text")})`;
+    return sql`IF(JSON_DEPTH(${value}) <= ${int(engine.boxedDepth)}, JSON_ARRAY(${value}), ${json.of(json.text(value), "text")})`;
   }
   return json.of(value, column.type.kind);
 }
 
-function Image(row: Sql, columns: readonly CapturedColumn[]): Sql {
+/** What an image and its trigger are written with: the JSON syntax, the deepest value boxed, and how JSON compares. */
+interface ImageSyntax {
+  readonly json: JsonSyntax;
+  readonly boxedDepth: number;
+  /** Whether `<=>` compares JSON values as text, as MariaDB's does. */
+  readonly comparesText: boolean;
+}
+
+function Image(
+  engine: ImageSyntax,
+  row: Sql,
+  columns: readonly CapturedColumn[],
+): Sql {
   const members = columns.map(
-    (column) => sql`${lit(column.name)}, ${Imaged(row, column)}`,
+    (column) => sql`${lit(column.name)}, ${Imaged(engine, row, column)}`,
   );
   return sql`JSON_OBJECT(${join(members, COMMA)})`;
 }
@@ -158,16 +175,21 @@ function Image(row: Sql, columns: readonly CapturedColumn[]): Sql {
 const BOUNDED_TEXT = /^varchar\(\d+\)$/;
 
 /** Each type a stored field's column is created with, as the catalog spells it, and how it is logged. */
-const LOGGED_TYPES = new Map(
-  [TEXT, FLOAT, BOOL, TIMESTAMP, OPAQUE].map((type) => [
-    Bind(sqlCore.physical(type)).sql.toLowerCase(),
-    type,
-  ]),
-);
+function LoggedTypes(syntax: SqlSyntax): ReadonlyMap<string, SqlType> {
+  return new Map(
+    [TEXT, FLOAT, BOOL, TIMESTAMP, OPAQUE].map((type) => [
+      Bind(syntax.physical(type)).sql.toLowerCase(),
+      type,
+    ]),
+  );
+}
 
-function LoggedType(columnType: string): SqlType | undefined {
+function LoggedType(
+  logged: ReadonlyMap<string, SqlType>,
+  columnType: string,
+): SqlType | undefined {
   const spelled = columnType.toLowerCase();
-  return BOUNDED_TEXT.test(spelled) ? TEXT : LOGGED_TYPES.get(spelled);
+  return BOUNDED_TEXT.test(spelled) ? TEXT : logged.get(spelled);
 }
 
 /** Set on a session whose updates move stored values without changing any document. */
@@ -176,15 +198,26 @@ const MOVING = sql`@antelopejs_moving`;
 const OLD = sql`OLD`;
 const NEW = sql`NEW`;
 
-function Unchanged(columns: readonly CapturedColumn[]): Sql {
-  const same = columns.map(
-    (column) =>
-      sql`${OLD}.${ident(column.name)} <=> ${NEW}.${ident(column.name)}`,
-  );
+/**
+ * Whether an update left every column as it was. A JSON column compares as JSON where the engine
+ * compares JSON as text, so a write that only reorders an object's keys changes nothing.
+ */
+function Unchanged(
+  image: ImageSyntax,
+  columns: readonly CapturedColumn[],
+): Sql {
+  const same = columns.map((column) => {
+    const before = sql`${OLD}.${ident(column.name)}`;
+    const after = sql`${NEW}.${ident(column.name)}`;
+    return image.comparesText && IsJsonBacked(column.type)
+      ? image.json.same(before, after)
+      : sql`${before} <=> ${after}`;
+  });
   return join(same, sql` AND `);
 }
 
 function Triggers(
+  image: ImageSyntax,
   tables: ChangeLogTables,
   table: string,
   columns: readonly CapturedColumn[],
@@ -199,15 +232,15 @@ function Triggers(
   return [
     {
       operation: "added",
-      body: sql`${head(newImage)} VALUES (${named}, ${instance(NEW)}, 'added', ${Image(NEW, columns)})`,
+      body: sql`${head(newImage)} VALUES (${named}, ${instance(NEW)}, 'added', ${Image(image, NEW, columns)})`,
     },
     {
       operation: "modified",
-      body: sql`IF ${MOVING} IS NULL AND NOT (${Unchanged(columns)}) THEN ${head(sql`${oldImage}, ${newImage}`)} VALUES (${named}, ${instance(NEW)}, 'modified', ${Image(OLD, columns)}, ${Image(NEW, columns)}); END IF`,
+      body: sql`IF ${MOVING} IS NULL AND NOT (${Unchanged(image, columns)}) THEN ${head(sql`${oldImage}, ${newImage}`)} VALUES (${named}, ${instance(NEW)}, 'modified', ${Image(image, OLD, columns)}, ${Image(image, NEW, columns)}); END IF`,
     },
     {
       operation: "removed",
-      body: sql`${head(oldImage)} VALUES (${named}, ${instance(OLD)}, 'removed', ${Image(OLD, columns)})`,
+      body: sql`${head(oldImage)} VALUES (${named}, ${instance(OLD)}, 'removed', ${Image(image, OLD, columns)})`,
     },
   ];
 }
@@ -217,7 +250,15 @@ function Side(alias: Sql, image: string, statement: Sql): Sql {
   return sql`CASE WHEN ${alias}.${ident(image)} IS NOT NULL THEN (${statement}) END`;
 }
 
-function Poll(tables: ChangeLogTables, request: PollRequest): Sql {
+/**
+ * The clock's row, then the events up to its frontier. Where the engine has no lateral join, the
+ * events read the frontier from the clock themselves, which one statement reads at one point.
+ */
+function Poll(
+  flavour: Flavour,
+  tables: ChangeLogTables,
+  request: PollRequest,
+): Sql {
   const ev = ident(request.alias);
   const table = param(request.table);
   const scope =
@@ -225,8 +266,30 @@ function Poll(tables: ChangeLogTables, request: PollRequest): Sql {
       ? sql``
       : sql` AND ${ev}.${INSTANCE} = ${param(request.instance)}`;
   const header = sql`SELECT k.${EPOCH} AS epoch, k.${NEXT_SEQ} - 1 AS frontier, (SELECT r.${HIGH_WATER} FROM ${ident(tables.reaped)} AS r WHERE r.${TABLE} = ${table}) AS high_water FROM ${ident(tables.clock)} AS k WHERE k.${ID} = ${CLOCK_ROW}`;
-  const events = sql`SELECT ${ev}.${SEQ} AS seq, ${ev}.${OPERATION} AS op, ${Side(ev, tables.oldImage, request.old)} AS old_side, ${Side(ev, tables.newImage, request.new)} AS new_side FROM ${ident(tables.log)} AS ${ev} WHERE ${ev}.${TABLE} = ${table}${scope} AND ${ev}.${SEQ} > ${Seq(request.after)} AND ${ev}.${SEQ} <= c.frontier ORDER BY ${ev}.${SEQ} LIMIT ${int(request.limit)}`;
-  return sql`SELECT c.epoch AS epoch, c.frontier AS frontier, c.high_water AS high_water, e.seq AS seq, e.op AS op, e.old_side AS old_side, e.new_side AS new_side FROM (${header}) AS c LEFT JOIN LATERAL (${events}) AS e ON TRUE ORDER BY e.seq`;
+  const frontier = flavour.lateral
+    ? sql`c.frontier`
+    : sql`(SELECT f.${NEXT_SEQ} - 1 FROM ${ident(tables.clock)} AS f WHERE f.${ID} = ${CLOCK_ROW})`;
+  const events = sql`SELECT ${ev}.${SEQ} AS seq, ${ev}.${OPERATION} AS op, ${Side(ev, tables.oldImage, request.old)} AS old_side, ${Side(ev, tables.newImage, request.new)} AS new_side FROM ${ident(tables.log)} AS ${ev} WHERE ${ev}.${TABLE} = ${table}${scope} AND ${ev}.${SEQ} > ${Seq(request.after)} AND ${ev}.${SEQ} <= ${frontier} ORDER BY ${ev}.${SEQ} LIMIT ${int(request.limit)}`;
+  const join = flavour.lateral ? sql`LEFT JOIN LATERAL` : sql`LEFT JOIN`;
+  return sql`SELECT c.epoch AS epoch, c.frontier AS frontier, c.high_water AS high_water, e.seq AS seq, e.op AS op, e.old_side AS old_side, e.new_side AS new_side FROM (${header}) AS c ${join} (${events}) AS e ON TRUE ORDER BY e.seq`;
+}
+
+/**
+ * Numbers the rows in the order of `ids`. The rows are also named in the `WHERE`, so the server
+ * reads them by key: MariaDB otherwise scans the log beside a `JSON_TABLE` of a bound list, and
+ * waits on the row of a transaction still open, which the sequencer skipped.
+ */
+function Stamp(
+  tables: ChangeLogTables,
+  ids: readonly string[],
+  first: bigint,
+): Sql {
+  const numbered = sql`JSON_TABLE(${param(JSON.stringify(ids))}, '$[*]' COLUMNS (n FOR ORDINALITY, id BIGINT UNSIGNED PATH '$')) AS v`;
+  const named = join(
+    ids.map((id) => sql`CAST(${param(id)} AS UNSIGNED)`),
+    COMMA,
+  );
+  return sql`UPDATE ${ident(tables.log)} AS c JOIN ${numbered} ON c.${ID} = v.id SET c.${SEQ} = ${Seq(first)} + v.n - 1, c.${SEQUENCED_AT} = UTC_TIMESTAMP(6) WHERE c.${ID} IN (${named})`;
 }
 
 /** `You do not have the SUPER privilege and binary logging is enabled`, raised by `CREATE TRIGGER`. */
@@ -242,39 +305,48 @@ function TriggerRefusal(error: Error): string | undefined {
 /** Microseconds in a millisecond, which `INTERVAL` takes the retention in. */
 const MICROSECONDS_PER_MS = 1000;
 
-export const capture: CaptureSyntax = {
-  bootstrap: Bootstrap,
-  triggers: Triggers,
-  createTrigger: (name, table, trigger) =>
-    sql`CREATE TRIGGER ${ident(name)} AFTER ${EVENTS[trigger.operation]} ON ${ident(table)} FOR EACH ROW ${trigger.body}`,
-  dropTrigger: (name) => sql`DROP TRIGGER IF EXISTS ${ident(name)}`,
-  triggerRefusal: TriggerRefusal,
-  lockTable: (table) => sql`LOCK TABLES ${ident(table)} WRITE`,
-  unlockTables: sql`UNLOCK TABLES`,
-  markMoves: sql`SET ${MOVING} = 1`,
-  unmarkMoves: sql`SET ${MOVING} = NULL`,
-  loggedType: LoggedType,
-  unbox: (member) =>
-    sql`(CASE WHEN ${json.is(member, ["array"])} THEN JSON_EXTRACT(${member}, '$[0]') WHEN ${json.is(member, ["string"])} THEN ${json.parse(sql`JSON_UNQUOTE(${member})`)} END)`,
-  lockClock: (tables, wait) =>
-    sql`SELECT ${NEXT_SEQ} AS next_seq, ${EPOCH} AS epoch FROM ${ident(tables.clock)} WHERE ${ID} = ${CLOCK_ROW} FOR UPDATE${wait ? sql`` : sql` SKIP LOCKED`}`,
-  unsequenced: (tables, limit) =>
-    sql`SELECT ${ID} AS id FROM ${ident(tables.log)} WHERE ${SEQ} IS NULL ORDER BY ${ID} LIMIT ${int(limit)}`,
-  stamp: (tables, ids, first) =>
-    sql`UPDATE ${ident(tables.log)} AS c JOIN JSON_TABLE(${param(JSON.stringify(ids))}, '$[*]' COLUMNS (n FOR ORDINALITY, id BIGINT UNSIGNED PATH '$')) AS v ON c.${ID} = v.id SET c.${SEQ} = ${Seq(first)} + v.n - 1, c.${SEQUENCED_AT} = UTC_TIMESTAMP(6)`,
-  advance: (tables, count) =>
-    sql`UPDATE ${ident(tables.clock)} SET ${NEXT_SEQ} = ${NEXT_SEQ} + ${int(count)} WHERE ${ID} = ${CLOCK_ROW}`,
-  frontier: (tables) =>
-    sql`SELECT ${EPOCH} AS epoch, ${NEXT_SEQ} - 1 AS frontier, EXISTS (SELECT 1 FROM ${ident(tables.log)} WHERE ${SEQ} IS NULL) AS pending FROM ${ident(tables.clock)} WHERE ${ID} = ${CLOCK_ROW}`,
-  changedTables: (tables, after) =>
-    sql`SELECT DISTINCT ${TABLE} AS tbl FROM ${ident(tables.log)} WHERE ${SEQ} > ${Seq(after)}`,
-  poll: Poll,
-  reapThrough: (tables, retentionMs, limit) =>
-    sql`SELECT MAX(b.${SEQ}) AS through FROM (SELECT ${SEQ} FROM ${ident(tables.log)} WHERE ${SEQUENCED_AT} < UTC_TIMESTAMP(6) - INTERVAL ${int(retentionMs * MICROSECONDS_PER_MS)} MICROSECOND ORDER BY ${SEQUENCED_AT} LIMIT ${int(limit)}) AS b`,
-  raiseReaped: (tables, through) => {
-    const reaped = ident(tables.reaped);
-    return sql`INSERT INTO ${reaped} (${TABLE}, ${HIGH_WATER}) SELECT d.${TABLE}, d.${HIGH_WATER} FROM (SELECT ${TABLE}, MAX(${SEQ}) AS ${HIGH_WATER} FROM ${ident(tables.log)} WHERE ${SEQ} <= ${Seq(through)} GROUP BY ${TABLE}) AS d ON DUPLICATE KEY UPDATE ${HIGH_WATER} = GREATEST(${reaped}.${HIGH_WATER}, d.${HIGH_WATER})`;
-  },
-  reap: (tables, through) =>
-    sql`DELETE FROM ${ident(tables.log)} WHERE ${SEQ} <= ${Seq(through)}`,
-};
+export function CaptureOf(flavour: Flavour, syntax: SqlSyntax): CaptureSyntax {
+  const image: ImageSyntax = {
+    json: syntax.json,
+    boxedDepth: flavour.maxJsonNesting - IMAGE_LEVELS,
+    comparesText: flavour.jsonEquals !== undefined,
+  };
+  const { json } = syntax;
+  const logged = LoggedTypes(syntax);
+  return {
+    bootstrap: (tables, logId) => Bootstrap(flavour, tables, logId),
+    triggers: (tables, table, columns) =>
+      Triggers(image, tables, table, columns),
+    createTrigger: (name, table, trigger) =>
+      sql`CREATE TRIGGER ${ident(name)} AFTER ${EVENTS[trigger.operation]} ON ${ident(table)} FOR EACH ROW ${trigger.body}`,
+    dropTrigger: (name) => sql`DROP TRIGGER IF EXISTS ${ident(name)}`,
+    triggerRefusal: TriggerRefusal,
+    lockTable: (table) => sql`LOCK TABLES ${ident(table)} WRITE`,
+    unlockTables: sql`UNLOCK TABLES`,
+    markMoves: sql`SET ${MOVING} = 1`,
+    unmarkMoves: sql`SET ${MOVING} = NULL`,
+    loggedType: (columnType) => LoggedType(logged, columnType),
+    unbox: (member) =>
+      sql`(CASE WHEN ${json.is(member, ["array"])} THEN JSON_EXTRACT(${member}, '$[0]') WHEN ${json.is(member, ["string"])} THEN ${json.parse(sql`JSON_UNQUOTE(${member})`)} END)`,
+    lockClock: (tables, wait) =>
+      sql`SELECT ${NEXT_SEQ} AS next_seq, ${EPOCH} AS epoch FROM ${ident(tables.clock)} WHERE ${ID} = ${CLOCK_ROW} FOR UPDATE${wait ? sql`` : sql` SKIP LOCKED`}`,
+    unsequenced: (tables, limit) =>
+      sql`SELECT ${ID} AS id FROM ${ident(tables.log)} WHERE ${SEQ} IS NULL ORDER BY ${ID} LIMIT ${int(limit)}`,
+    stamp: Stamp,
+    advance: (tables, count) =>
+      sql`UPDATE ${ident(tables.clock)} SET ${NEXT_SEQ} = ${NEXT_SEQ} + ${int(count)} WHERE ${ID} = ${CLOCK_ROW}`,
+    frontier: (tables) =>
+      sql`SELECT ${EPOCH} AS epoch, ${NEXT_SEQ} - 1 AS frontier, EXISTS (SELECT 1 FROM ${ident(tables.log)} WHERE ${SEQ} IS NULL) AS pending FROM ${ident(tables.clock)} WHERE ${ID} = ${CLOCK_ROW}`,
+    changedTables: (tables, after) =>
+      sql`SELECT DISTINCT ${TABLE} AS tbl FROM ${ident(tables.log)} WHERE ${SEQ} > ${Seq(after)}`,
+    poll: (tables, request) => Poll(flavour, tables, request),
+    reapThrough: (tables, retentionMs, limit) =>
+      sql`SELECT MAX(b.${SEQ}) AS through FROM (SELECT ${SEQ} FROM ${ident(tables.log)} WHERE ${SEQUENCED_AT} < UTC_TIMESTAMP(6) - INTERVAL ${int(retentionMs * MICROSECONDS_PER_MS)} MICROSECOND ORDER BY ${SEQUENCED_AT} LIMIT ${int(limit)}) AS b`,
+    raiseReaped: (tables, through) => {
+      const reaped = ident(tables.reaped);
+      return sql`INSERT INTO ${reaped} (${TABLE}, ${HIGH_WATER}) SELECT d.${TABLE}, d.${HIGH_WATER} FROM (SELECT ${TABLE}, MAX(${SEQ}) AS ${HIGH_WATER} FROM ${ident(tables.log)} WHERE ${SEQ} <= ${Seq(through)} GROUP BY ${TABLE}) AS d ON DUPLICATE KEY UPDATE ${HIGH_WATER} = GREATEST(${reaped}.${HIGH_WATER}, d.${HIGH_WATER})`;
+    },
+    reap: (tables, through) =>
+      sql`DELETE FROM ${ident(tables.log)} WHERE ${SEQ} <= ${Seq(through)}`,
+  };
+}

@@ -9,6 +9,7 @@ import {
   GetDialect,
   Read,
   type Row,
+  Uncapped,
 } from "../../connection";
 
 /**
@@ -52,14 +53,14 @@ export function SessionOf(connection: PoolConnection): ConvergenceSession {
     id: connection.threadId,
     read: (statement) => Read(statement, connection),
     apply: async (statement) => {
-      const bound = Bind(statement);
+      const bound = Bind(Uncapped(statement));
       const [result] = await connection.query<ResultSetHeader>(bound.sql, [
         ...bound.args,
       ]);
       return result.affectedRows;
     },
     write: async (statement) => {
-      const bound = Bind(statement);
+      const bound = Bind(Uncapped(statement));
       const [result] = await connection.execute<ResultSetHeader>(bound.sql, [
         ...bound.args,
       ]);

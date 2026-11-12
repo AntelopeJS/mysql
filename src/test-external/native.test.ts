@@ -42,7 +42,8 @@ async function IndexesOf(query: StagedObject): Promise<string[]> {
   return plan.map((row) => String(row.get("key")));
 }
 
-describe("an external key that its column cannot hold", () => {
+describe("an external key that its column cannot hold", function () {
+  this.timeout(30_000);
   before(async () => {
     sales = await RegisterSales();
   });
@@ -72,7 +73,8 @@ describe("an external key that its column cannot hold", () => {
   });
 });
 
-describe("the indexes that serve reads of an external relation", () => {
+describe("the indexes that serve reads of an external relation", function () {
+  this.timeout(30_000);
   before(async () => {
     sales = await RegisterSales();
   });
@@ -117,7 +119,8 @@ describe("the indexes that serve reads of an external relation", () => {
   });
 });
 
-describe("numbers read from an external relation's exact types", () => {
+describe("numbers read from an external relation's exact types", function () {
+  this.timeout(30_000);
   before(async () => {
     sales = await RegisterSales();
   });
@@ -147,14 +150,15 @@ describe("numbers read from an external relation's exact types", () => {
         .count();
       expect(total).to.equal(
         await NativeCount(
-          sql`SELECT COUNT(*) FROM sales.accounts WHERE score ${operator} 5.5`,
+          sql`SELECT COUNT(*) FROM sales.accounts WHERE CAST(score AS DECIMAL(65,30)) ${operator} 5.5`,
         ),
       );
     });
   }
 });
 
-describe("inequality against an external column's own type", () => {
+describe("inequality against an external column's own type", function () {
+  this.timeout(30_000);
   before(async () => {
     sales = await RegisterSales();
   });

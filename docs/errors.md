@@ -107,20 +107,19 @@ Under `conflict: "update"` or `"replace"`, an existing `_id` is upserted, not re
 
 ## Instances and configuration
 
-| What you did                                                                                                         | Message                                                                                              |
-| -------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| Passed `CROSS_INSTANCE` to `createInstance` or `destroyInstance`                                                     | `{operation} does not accept CROSS_INSTANCE: pass a string id or omit it for the default instance`   |
-| Passed a non-string instance id to `createInstance` or `destroyInstance`                                             | `{operation} expects a string instance id, received {kind}`                                          |
-| Passed an instance id over 128 characters to `createInstance` or `destroyInstance`                                   | `{operation} received an instance id longer than 128 characters, the most an instance id may hold`   |
-| A `cursorBatchSize`, `cursorIdleTimeoutMs`, `maxOpenCursors` or `change*` option that is not a positive safe integer | `{option} must be a positive safe integer, received {value}`                                         |
-| A `statementTimeoutMs` that is not a non-negative safe integer                                                       | `statementTimeoutMs must be a non-negative safe integer, received {value}`                           |
-| A `mode` other than `"owned"` or `"external"`                                                                        | `mode must be one of owned, external, received {mode}`                                               |
-| A `dialect` other than `"auto"` or `"mysql"`                                                                         | `dialect must be "auto" or a supported engine, received {dialect}`                                   |
-| A `pool` option the module sets itself                                                                               | `pool.{options} cannot be set: the module sets it itself`                                            |
-| `mode: "external"` with no `url`, or an empty one                                                                    | `mode "external" needs a non-empty config.url; set it through the project's envOverrides`            |
-| Connected to a MariaDB server                                                                                        | `The server reports version '{version}', which is mariadb; this module does not support mariadb yet` |
-| Queried with no configuration set                                                                                    | `MySQL adapter is not configured: construct() has not run yet`                                       |
-| Queried with no pool open                                                                                            | `MySQL adapter is not connected: construct() has not run yet`                                        |
+| What you did                                                                                                         | Message                                                                                            |
+| -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Passed `CROSS_INSTANCE` to `createInstance` or `destroyInstance`                                                     | `{operation} does not accept CROSS_INSTANCE: pass a string id or omit it for the default instance` |
+| Passed a non-string instance id to `createInstance` or `destroyInstance`                                             | `{operation} expects a string instance id, received {kind}`                                        |
+| Passed an instance id over 128 characters to `createInstance` or `destroyInstance`                                   | `{operation} received an instance id longer than 128 characters, the most an instance id may hold` |
+| A `cursorBatchSize`, `cursorIdleTimeoutMs`, `maxOpenCursors` or `change*` option that is not a positive safe integer | `{option} must be a positive safe integer, received {value}`                                       |
+| A `statementTimeoutMs` that is not a non-negative safe integer                                                       | `statementTimeoutMs must be a non-negative safe integer, received {value}`                         |
+| A `mode` other than `"owned"` or `"external"`                                                                        | `mode must be one of owned, external, received {mode}`                                             |
+| A `dialect` other than `"auto"`, `"mysql"` or `"mariadb"`                                                            | `dialect must be "auto" or a supported engine, received {dialect}`                                 |
+| A `pool` option the module sets itself                                                                               | `pool.{options} cannot be set: the module sets it itself`                                          |
+| `mode: "external"` with no `url`, or an empty one                                                                    | `mode "external" needs a non-empty config.url; set it through the project's envOverrides`          |
+| Queried with no configuration set                                                                                    | `MySQL adapter is not configured: construct() has not run yet`                                     |
+| Queried with no pool open                                                                                            | `MySQL adapter is not connected: construct() has not run yet`                                      |
 
 Both suffixes name the common cause, not the only one. `construct()` clears the configuration and leaves no pool when it fails to reach the server. A query therefore answers these messages after a failed startup too, and after `destroy()`. An external instance that started without a connection answers `MySQL adapter is not connected: {reason}` instead. See [A connection that fails at startup](./external-mode.md#a-connection-that-fails-at-startup).
 

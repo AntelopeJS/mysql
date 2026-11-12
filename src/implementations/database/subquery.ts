@@ -10,7 +10,13 @@ import { FIRST_OPERAND } from "./stage";
 import { ParameterKey } from "./value";
 import { type DecodingContext, IsSubqueryProvider } from "./context";
 import { CurrentValue, type Relation, SetProjection } from "./relation";
-import { Numbered, Prepare, type RelationFlag, Render } from "./render";
+import {
+  Numbered,
+  OrderTerms,
+  Prepare,
+  type RelationFlag,
+  Render,
+} from "./render";
 
 /**
  * What has already decided *which* rows there are blocks the aggregate from absorbing. Shorter
@@ -24,10 +30,46 @@ const SUBQUERY_BLOCKERS: readonly RelationFlag[] = [
 ];
 
 /**
+ * Collects the rows a nested query answers into one JSON array in place, where the engine's
+ * aggregate takes the query's dedup, order and bounds itself. A query that groups is aggregated
+ * from a derived table as on any engine.
+ */
+function AggregatedInPlace(
+  relation: Relation,
+  context: DecodingContext,
+): Compiled | undefined {
+  const inPlace = context.dialect.sql.json.collectInPlace;
+  if (!inPlace || relation.aggregated) {
+    return undefined;
+  }
+  const rows = {
+    distinct: relation.distinct,
+    order: OrderTerms(relation),
+    offset: relation.offset,
+    count: relation.limit,
+  };
+  relation.orderBy = [];
+  relation.distinct = false;
+  relation.offset = undefined;
+  relation.limit = undefined;
+  const value = CurrentValue(relation);
+  const type = ArrayOf(value.type);
+  const collected = inPlace(AsJson(context.dialect, value).sql, rows);
+  return {
+    sql: sql`(${Render(SetProjection(relation, { sql: collected, type }))})`,
+    type,
+  };
+}
+
+/**
  * Collects every row of a nested query into one JSON array, in the order the query asked for. An
  * ordered query's rows are numbered in that order first, and the aggregate orders by the number.
  */
 function Aggregated(relation: Relation, context: DecodingContext): Compiled {
+  const inPlace = AggregatedInPlace(relation, context);
+  if (inPlace) {
+    return inPlace;
+  }
   const prepared = Prepare(relation, SUBQUERY_BLOCKERS, context);
   const numbered =
     prepared.orderBy.length > 0 ? Numbered(prepared, context) : undefined;

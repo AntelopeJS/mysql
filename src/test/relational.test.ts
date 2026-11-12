@@ -220,6 +220,37 @@ async function SliceByOuterRow(): Promise<void> {
   ]);
 }
 
+/** The slugs of the articles whose views equal `take`, in descending binary order. */
+function SlugsViewed(take: number): string[] {
+  return Array.from({ length: ARTICLES }, (_, n) => n)
+    .filter((n) => n % 10 === take)
+    .map((n) => `slug-${n}`)
+    .sort()
+    .reverse();
+}
+
+async function DedupAndBoundByOuterRow(): Promise<void> {
+  const read = await Posts()
+    .map((post) => ({
+      id: post.key("_id"),
+      views: Articles()
+        .filter((article) => article.key("views").eq(post.key("take")))
+        .map((article) => article.key("views"))
+        .distinct(),
+      slugs: Articles()
+        .filter((article) => article.key("views").eq(post.key("take")))
+        .orderBy("slug", "desc")
+        .slice(1, 2)
+        .map((article) => article.key("slug")),
+    }))
+    .run();
+  expect(read).to.have.deep.members([
+    { id: "p1", views: [2], slugs: SlugsViewed(2).slice(1, 3) },
+    { id: "p2", views: [0], slugs: SlugsViewed(0).slice(1, 3) },
+    { id: "p3", views: [], slugs: [] },
+  ]);
+}
+
 describe("relational stages on a real server", function () {
   this.timeout(60_000);
 
@@ -251,5 +282,9 @@ describe("relational stages on a real server", function () {
   it(
     "slices each row's subquery by a count its own row holds",
     SliceByOuterRow,
+  );
+  it(
+    "dedups, orders and slices each row's subquery that its own row filters",
+    DedupAndBoundByOuterRow,
   );
 });

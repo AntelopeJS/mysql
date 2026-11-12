@@ -1,5 +1,6 @@
 import type { Sql } from "../statement";
 import type { KeyColumn } from "../implementations/database/paths";
+import type { Ordering } from "../implementations/database/json";
 import type { SqlType } from "../implementations/database/types";
 
 /** The kinds of JSON value, in one vocabulary whatever names the engine gives them. */
@@ -35,6 +36,14 @@ export interface BindSyntax {
   timestamp(value: Date): Sql;
   /** A JSON document, sent whole as its text wherever the text keeps every number in it exactly. */
   json(value: ConstantJson): Sql;
+}
+
+/** What a select that {@link JsonSyntax.collectInPlace} aggregates in place answers of its rows. */
+export interface CollectedRows {
+  readonly distinct: boolean;
+  readonly order?: Sql;
+  readonly offset?: number;
+  readonly count?: number;
 }
 
 /** One member of a document assembled from columns. `container` marks a JSON-backed member. */
@@ -92,6 +101,15 @@ export interface JsonSyntax {
    * followed by `text` where the kind has one. A value of a higher rank holds a greater one.
    */
   tagged(rank: number, text?: Sql): Sql;
+  /**
+   * Two JSON values compared as JSON: by kind in the order of {@link JsonSyntax.ranks}, then by
+   * value, so a number compares as a number however it is spelled.
+   */
+  compare(left: Sql, right: Sql, operator: Ordering): Sql;
+  /** The sort terms that put JSON values in the order {@link JsonSyntax.compare} compares them in. */
+  order(value: Sql): readonly Sql[];
+  /** Whether two JSON values are equal as JSON, or both SQL NULL. */
+  same(left: Sql, right: Sql): Sql;
   /** A scalar of `kind` as a JSON value. */
   of(value: Sql, kind: ScalarKind): Sql;
   /** JSON text, parsed. */
@@ -135,6 +153,13 @@ export interface JsonSyntax {
    * `ordinal`, a distinct positive integer per row, or deduplicated, never both.
    */
   collect(element: Sql, ordinal: Sql | undefined, distinct: boolean): Sql;
+  /**
+   * Aggregates JSON elements into an array, empty rather than SQL NULL over no row, with the rows
+   * the select it is in would answer: deduplicated, in the order of its sort terms, and bounded by
+   * its offset and count. Absent where the engine's aggregate takes none of these, and the select
+   * is a derived table that {@link JsonSyntax.collect} aggregates instead.
+   */
+  readonly collectInPlace?: (element: Sql, rows: CollectedRows) => Sql;
   /** The number of elements of an array, or of members of an object. */
   length(container: Sql): Sql;
   /**
@@ -279,6 +304,14 @@ export interface RowSyntax {
    * the restriction leaves the server free to read the rows once and hash join them.
    */
   joinScope(column: Sql, value: Sql, lookup: boolean): Sql;
+  /**
+   * A one-row table, without its alias, holding a JSON value the row it is read for computes, and
+   * how that row reads the value back once the table is at `alias`. It stands where a derived table
+   * selecting the value would, which MariaDB cannot correlate.
+   */
+  hold(value: Sql, alias: string): { readonly from: Sql; readonly value: Sql };
+  /** Whether an `INSERT` can answer values of the row it wrote, by a `RETURNING` clause. */
+  readonly returning: boolean;
 }
 
 /** The expression members the compiler and the writes reach. */

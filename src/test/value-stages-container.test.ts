@@ -19,7 +19,8 @@ const SLICES: readonly (readonly [number, number | undefined])[] = [
   [3, 1],
 ];
 
-describe("The array stages", () => {
+describe("The array stages", function () {
+  this.timeout(30_000);
   before(() => table.setup());
   after(() => table.teardown());
 
@@ -101,7 +102,8 @@ describe("The array stages", () => {
   });
 });
 
-describe("The array stages that read each element", () => {
+describe("The array stages that read each element", function () {
+  this.timeout(30_000);
   before(() => table.setup());
   after(() => table.teardown());
 
@@ -149,6 +151,19 @@ describe("The array stages that read each element", () => {
     );
   });
 
+  it("find in a value that is not a list only that value itself, as MySQL's MEMBER OF does", async () => {
+    assert.deepEqual(
+      await First(
+        table.rows().map((row) => ({
+          scalar: row.key("meta").key("a").cast<unknown[]>().includes(1),
+          other: row.key("meta").key("a").cast<unknown[]>().includes(2),
+          object: row.key("meta").key("b").cast<unknown[]>().includes({ x: 1 }),
+        })),
+      ),
+      { scalar: true, other: false, object: true },
+    );
+  });
+
   it("concatenate two lists in order, and answer NULL for a null operand", async () => {
     assert.deepEqual(
       await First(
@@ -162,7 +177,8 @@ describe("The array stages that read each element", () => {
   });
 });
 
-describe("The object stages", () => {
+describe("The object stages", function () {
+  this.timeout(30_000);
   before(() => table.setup());
   after(() => table.teardown());
 

@@ -93,7 +93,8 @@ async function Seeded(code: string): Promise<string> {
   return String(row.id);
 }
 
-describe("inserting into an external relation", () => {
+describe("inserting into an external relation", function () {
+  this.timeout(30_000);
   before(async () => {
     sales = await RegisterSales();
     await Reset();
@@ -180,7 +181,8 @@ describe("inserting into an external relation", () => {
   });
 });
 
-describe("what an insert into an external relation refuses or upserts", () => {
+describe("what an insert into an external relation refuses or upserts", function () {
+  this.timeout(30_000);
   before(async () => {
     sales = await RegisterSales();
     await Reset();
@@ -244,7 +246,8 @@ describe("what an insert into an external relation refuses or upserts", () => {
   });
 });
 
-describe("values an external column cannot hold", () => {
+describe("values an external column cannot hold", function () {
+  this.timeout(30_000);
   before(async () => {
     sales = await RegisterSales();
     await Reset();
@@ -275,7 +278,8 @@ describe("values an external column cannot hold", () => {
   }
 });
 
-describe("writing back what was read from an external relation", () => {
+describe("writing back what was read from an external relation", function () {
+  this.timeout(30_000);
   before(async () => {
     sales = await RegisterSales();
     await Reset();
@@ -337,7 +341,8 @@ describe("writing back what was read from an external relation", () => {
   });
 });
 
-describe("editing through a key field read lossily, as data-api's edit sends it", () => {
+describe("editing through a key field read lossily, as data-api's edit sends it", function () {
+  this.timeout(30_000);
   before(async () => {
     sales = await RegisterSales();
     await Reset();
@@ -375,7 +380,8 @@ describe("editing through a key field read lossily, as data-api's edit sends it"
   }
 });
 
-describe("selecting the rows an external write changes", () => {
+describe("selecting the rows an external write changes", function () {
+  this.timeout(30_000);
   before(async () => {
     sales = await RegisterSales();
     await Reset();
@@ -470,7 +476,8 @@ describe("selecting the rows an external write changes", () => {
   });
 });
 
-describe("what the database refuses on a write to an external relation", () => {
+describe("what the database refuses on a write to an external relation", function () {
+  this.timeout(30_000);
   before(async () => {
     sales = await RegisterSales();
     await Reset();

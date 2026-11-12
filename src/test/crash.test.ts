@@ -64,7 +64,7 @@ const ITEMS: TableDefinition = {
  * take, and as JSON null on others, which stays in `_extra` as an explicit null.
  */
 function SeedExtra(table: Sql): Sql {
-  return sql`INSERT INTO ${table} (_id, _instance, a, _extra) SELECT LPAD(n, 5, '0'), IF(n < 1200, '', 'tenant'), CONCAT('a', n), CASE n % 10 WHEN 0 THEN JSON_OBJECT('b', n) WHEN 1 THEN JSON_OBJECT('b', CAST('null' AS JSON)) ELSE JSON_OBJECT('b', CONCAT('b', n), 'keep', n) END FROM ${NUMBERS} AS numbers WHERE n < 2500`;
+  return sql`INSERT INTO ${table} (_id, _instance, a, _extra) SELECT LPAD(n, 5, '0'), IF(n < 1200, '', 'tenant'), CONCAT('a', n), CASE n % 10 WHEN 0 THEN JSON_OBJECT('b', n) WHEN 1 THEN JSON_OBJECT('b', ${GetDialect().sql.json.null}) ELSE JSON_OBJECT('b', CONCAT('b', n), 'keep', n) END FROM ${NUMBERS} AS numbers WHERE n < 2500`;
 }
 
 function SeedPrices(table: Sql): Sql {

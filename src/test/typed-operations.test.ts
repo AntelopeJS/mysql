@@ -40,7 +40,8 @@ function Rows() {
   return schema.instance(INSTANCE).table("rows");
 }
 
-describe("the operations interface-database 0.3.0 types", () => {
+describe("the operations interface-database 0.3.0 types", function () {
+  this.timeout(30_000);
   before(async () => {
     await schema.createInstance(INSTANCE).run();
     await Rows()

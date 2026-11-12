@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type { SessionSettings, SessionSyntax } from "../types";
+import type { Flavour } from "./flavour";
 import {
   MAX_IDENTIFIER_CHARS,
   type Sql,
@@ -9,8 +10,6 @@ import {
   lit,
   sql,
 } from "../../statement";
-
-const BINARY_COLLATION = "utf8mb4_0900_bin";
 
 /**
  * Strict for every table, so a value a column cannot hold fails its statement; no zero dates. Left
@@ -42,19 +41,16 @@ const LOCK_PURPOSE_MAX_CHARS =
   2 * LOCK_SEPARATOR.length -
   LOCK_DIGEST_CHARS;
 
-function Timeout(ms: number): Sql {
-  return sql`max_execution_time = ${int(ms)}`;
-}
-
-function Pin(settings: SessionSettings): Sql {
+function Pin(flavour: Flavour, settings: SessionSettings): Sql {
   const assignments = [
-    sql`NAMES utf8mb4 COLLATE ${lit(BINARY_COLLATION)}`,
+    sql`NAMES utf8mb4 COLLATE ${lit(flavour.binaryCollation)}`,
     sql`time_zone = ${lit(UTC)}`,
     sql`sql_mode = ${lit(SQL_MODE)}`,
     sql`lc_messages = ${lit(MESSAGES)}`,
+    ...flavour.pinned,
   ];
   if (settings.statementTimeoutMs !== undefined) {
-    assignments.push(Timeout(settings.statementTimeoutMs));
+    assignments.push(flavour.readTimeout(settings.statementTimeoutMs));
   }
   return sql`SET ${join(assignments, sql`, `)}`;
 }
@@ -72,15 +68,18 @@ function LockName(purpose: string, scope: string): string {
   return [LOCK_VENDOR, purpose, digest].join(LOCK_SEPARATOR);
 }
 
-export const session: SessionSyntax = {
-  pin: Pin,
-  statementTimeout: (ms) => sql`SET SESSION ${Timeout(ms)}`,
-  binaryCollation: BINARY_COLLATION,
-  keyBudgetBytes: KEY_BUDGET_BYTES,
-  maxKeyColumns: MAX_KEY_COLUMNS,
-  multiValuedIndex: true,
-  lockName: LockName,
-  acquireLock: (name, waitSeconds) =>
-    sql`SELECT GET_LOCK(${lit(name)}, ${int(waitSeconds)}) AS acquired`,
-  releaseLock: (name) => sql`SELECT RELEASE_LOCK(${lit(name)}) AS released`,
-};
+export function SessionOf(flavour: Flavour): SessionSyntax {
+  return {
+    pin: (settings) => Pin(flavour, settings),
+    statementTimeout: (ms) => sql`SET SESSION ${flavour.readTimeout(ms)}`,
+    uncapped: (statement) => flavour.uncapped(statement),
+    binaryCollation: flavour.binaryCollation,
+    keyBudgetBytes: KEY_BUDGET_BYTES,
+    maxKeyColumns: MAX_KEY_COLUMNS,
+    multiValuedIndex: flavour.multiValuedIndex,
+    lockName: LockName,
+    acquireLock: (name, waitSeconds) =>
+      sql`SELECT GET_LOCK(${lit(name)}, ${int(waitSeconds)}) AS acquired`,
+    releaseLock: (name) => sql`SELECT RELEASE_LOCK(${lit(name)}) AS released`,
+  };
+}

@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { Schema } from "@antelopejs/interface-database/schema";
 
-import { Read } from "../connection";
+import { GetDialect, Read } from "../connection";
 import { type Sql, ident, sql } from "../statement";
 import { WaitForIndexes } from "../implementations/database/schema";
 import { Compiled } from "./compiled";
@@ -41,6 +41,15 @@ async function KeyPartsUsed(statement: Sql): Promise<string[]> {
 
 const ELEMENTS_PART = /as char\(512\) array/;
 
+/**
+ * How many multi-valued key parts the plan for `query` reads: one where the engine builds the index,
+ * none where it has no such index and the rows are tested one by one.
+ */
+async function ElementsRead(query: Parameters<typeof Compiled>[0]) {
+  const parts = await KeyPartsUsed(Compiled(query));
+  return parts.filter((part) => ELEMENTS_PART.test(part)).length;
+}
+
 describe("a membership test on a column with a multi-valued index", function () {
   this.timeout(60_000);
 
@@ -60,16 +69,18 @@ describe("a membership test on a column with a multi-valued index", function () 
 
   it("reads the index's elements for `includes`, and finds the same rows", async () => {
     const query = Items().filter((row) => row.key("tags").includes("tag-7"));
-    const parts = await KeyPartsUsed(Compiled(query));
-    expect(parts.filter((part) => ELEMENTS_PART.test(part))).to.have.length(1);
+    expect(await ElementsRead(query)).to.equal(
+      GetDialect().session.multiValuedIndex ? 1 : 0,
+    );
     const found = await query.run();
     expect(found.map((item) => item._id).sort()).to.deep.equal(["i6", "i7"]);
   });
 
   it("reads the index's elements for a key looked up in a `multi` index", async () => {
     const query = Items().getAll("tag-7", "tags");
-    const parts = await KeyPartsUsed(Compiled(query));
-    expect(parts.filter((part) => ELEMENTS_PART.test(part))).to.have.length(1);
+    expect(await ElementsRead(query)).to.equal(
+      GetDialect().session.multiValuedIndex ? 1 : 0,
+    );
     const found = await query.run();
     expect(found.map((item) => item._id).sort()).to.deep.equal(["i6", "i7"]);
   });

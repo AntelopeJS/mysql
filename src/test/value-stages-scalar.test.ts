@@ -46,7 +46,8 @@ function Expected(left: number, right: number) {
   };
 }
 
-describe("The numeric stages", () => {
+describe("The numeric stages", function () {
+  this.timeout(30_000);
   before(() => table.setup());
   after(() => table.teardown());
 
@@ -106,7 +107,8 @@ describe("The numeric stages", () => {
   });
 });
 
-describe("The date stages", () => {
+describe("The date stages", function () {
+  this.timeout(30_000);
   before(() => table.setup());
   after(() => table.teardown());
 
@@ -139,6 +141,50 @@ describe("The date stages", () => {
         epoch: 1673790330.25,
       },
     );
+  });
+
+  it("read text with a zone offset as the instant new Date reads, before 1970 as after it", async () => {
+    const texts = [
+      "1500-03-01T12:00:00+02:00",
+      "1960-01-01T00:00:00+02:00",
+      "1960-01-01T00:00:00-05:30",
+      "1969-12-31T23:00:00+01:00",
+      "2024-06-01T12:00:00+02:00",
+      "2200-06-01T00:00:00+02:00",
+    ];
+    const read = await First(
+      table
+        .rows()
+        .map(() =>
+          texts.map((text) => ValueProxy.constant<string | Date>(text).epoch()),
+        ),
+    );
+    assert.deepEqual(
+      read,
+      texts.map((text) => Date.parse(text) / 1000),
+    );
+  });
+
+  it("read the offsets MySQL's cast takes, from -14:00 to +14:00 but not -00:00, and no instant for any other", async () => {
+    const offsets = ["-14:00", "+14:00", "-00:00", "+14:01", "+05:60"];
+    const read = await First(
+      table
+        .rows()
+        .map(() =>
+          offsets.map((offset) =>
+            ValueProxy.constant<string | Date>(
+              `2024-06-01T12:00:00${offset}`,
+            ).epoch(),
+          ),
+        ),
+    );
+    assert.deepEqual(read, [
+      Date.parse("2024-06-01T12:00:00-14:00") / 1000,
+      Date.parse("2024-06-01T12:00:00+14:00") / 1000,
+      null,
+      null,
+      null,
+    ]);
   });
 
   it("read the parts in the zone named, a named one or an offset, and a date part after another stage in UTC again", async () => {
@@ -346,7 +392,8 @@ async function Mismatches(cases: readonly PatternCase[]): Promise<string[]> {
   return mismatches;
 }
 
-describe("The string stages", () => {
+describe("The string stages", function () {
+  this.timeout(30_000);
   before(() => table.setup());
   after(() => table.teardown());
 

@@ -26,10 +26,14 @@ import {
   INSTANCE_COLUMN,
   MAX_INSTANCE_ID_CHARS,
 } from "../../implementations/database/utils";
-import { session } from "./session";
-import { sqlCore } from "./sql-core";
-import { json } from "./sql-json";
-import { scalar } from "./sql-scalar";
+import type { SqlSyntax } from "../types";
+import type { Flavour } from "./flavour";
+
+/** What the statements of this module are written with. */
+interface Engine {
+  readonly flavour: Flavour;
+  readonly sql: SqlSyntax;
+}
 
 /**
  * The widest element a multi-valued index holds, in characters: the largest `CHAR(N) ARRAY` the
@@ -77,8 +81,8 @@ function NumberOf(value: Sql): Sql {
 }
 
 /** The JSON boolean at `value` as 1 or 0; NULL for any other JSON type. */
-function BooleanOf(value: Sql): Sql {
-  return sql`IF(${JsonTypeIn(value, sql`'BOOLEAN'`)}, ${value} = CAST('true' AS JSON), NULL)`;
+function BooleanOf(engine: Engine, value: Sql): Sql {
+  return sql`IF(${JsonTypeIn(value, sql`'BOOLEAN'`)}, ${value} = ${engine.flavour.json(lit("true"))}, NULL)`;
 }
 
 /**
@@ -86,8 +90,8 @@ function BooleanOf(value: Sql): Sql {
  * its own `IF`, which evaluates only the branch it takes: a strict-mode `UPDATE` fails outright on a
  * date function given a day its month does not have, such as February 30.
  */
-function InstantOf(value: Sql): Sql {
-  const text = sql`(JSON_UNQUOTE(${value}) COLLATE ${lit(session.binaryCollation)})`;
+function InstantOf(engine: Engine, value: Sql): Sql {
+  const text = sql`(JSON_UNQUOTE(${value}) COLLATE ${lit(engine.flavour.binaryCollation)})`;
   const day = sql`CAST(SUBSTRING(${text}, 9, 2) AS UNSIGNED)`;
   const lastDay = sql`DAYOFMONTH(LAST_DAY(CONCAT(SUBSTRING(${text}, 1, 8), '01')))`;
   const instant = sql`CAST(REPLACE(REPLACE(${text}, 'T', ' '), 'Z', '') AS DATETIME(6))`;
@@ -102,13 +106,16 @@ function DocumentOf(value: Sql): Sql {
 }
 
 /** How a JSON value becomes a value of each declared type, NULL where it cannot. */
-const REPRESENTATIONS: Record<SqlType["kind"], (value: Sql) => Sql> = {
-  text: StringOf,
-  float: NumberOf,
+const REPRESENTATIONS: Record<
+  SqlType["kind"],
+  (engine: Engine, value: Sql) => Sql
+> = {
+  text: (_, value) => StringOf(value),
+  float: (_, value) => NumberOf(value),
   bool: BooleanOf,
   timestamp: InstantOf,
-  json: DocumentOf,
-  array: DocumentOf,
+  json: (_, value) => DocumentOf(value),
+  array: (_, value) => DocumentOf(value),
 };
 
 function KeyType(key: KeyColumn): Sql {
@@ -131,34 +138,42 @@ function KeyType(key: KeyColumn): Sql {
  * a column whose expression reads the same path another way, one key at a time, is kept: it holds
  * the same value on every row.
  */
-function KeyExpression(key: KeyColumn): Sql {
+function KeyExpression(engine: Engine, key: KeyColumn): Sql {
+  const { json, scalar } = engine.sql;
   const value = json.key(key.read, json.member(ident(key.source), ...key.path));
   return "fit" in key && key.fit.kind === "prefix"
     ? scalar.left(value, key.fit.width)
     : value;
 }
 
-function KeyColumnDefinition(key: KeyColumn): Sql {
-  return sql`${ident(key.name)} ${KeyType(key)} GENERATED ALWAYS AS (${KeyExpression(key)}) VIRTUAL COMMENT ${lit(key.definition)}`;
+function KeyColumnDefinition(engine: Engine, key: KeyColumn): Sql {
+  return sql`${ident(key.name)} ${KeyType(key)} GENERATED ALWAYS AS (${KeyExpression(engine, key)}) VIRTUAL COMMENT ${lit(key.definition)}`;
 }
 
-function DeclaredDefinition(column: DeclaredColumn, comment: string): Sql {
-  return sql`${ident(column.name)} ${sqlCore.physical(column.type)} NULL COMMENT ${lit(comment)}`;
+function DeclaredDefinition(
+  engine: Engine,
+  column: DeclaredColumn,
+  comment: string,
+): Sql {
+  return sql`${ident(column.name)} ${engine.sql.physical(column.type)} NULL COMMENT ${lit(comment)}`;
 }
 
-function ColumnDefinition(column: TablePlan["columns"][number]): Sql {
+function ColumnDefinition(
+  engine: Engine,
+  column: TablePlan["columns"][number],
+): Sql {
   switch (column.role) {
     case "id":
     case "instance":
       return sql`${ident(column.name)} VARCHAR(${int(column.chars)}) NOT NULL`;
     case "extra":
-      return sql`${ident(column.name)} JSON NOT NULL DEFAULT (JSON_OBJECT())`;
+      return sql`${ident(column.name)} ${engine.flavour.jsonType} NOT NULL DEFAULT (JSON_OBJECT())`;
     case "declared":
-      return DeclaredDefinition(column, "");
+      return DeclaredDefinition(engine, column, "");
   }
 }
 
-function IndexPart(part: KeyPart): Sql {
+function IndexPart(engine: Engine, part: KeyPart): Sql {
   switch (part.kind) {
     case "instance":
     case "stored":
@@ -170,7 +185,7 @@ function IndexPart(part: KeyPart): Sql {
         sql`, `,
       );
     case "elements":
-      return sql`(CAST(${json.indexedElements(ident(part.column))} AS CHAR(${int(ELEMENT_CHARS)}) ARRAY))`;
+      return sql`(CAST(${engine.sql.json.indexedElements(ident(part.column))} AS CHAR(${int(ELEMENT_CHARS)}) ARRAY))`;
   }
 }
 
@@ -178,9 +193,12 @@ function IsMultiValued(index: IndexPlan): boolean {
   return index.parts.some((part) => part.kind === "elements");
 }
 
-function IndexDefinition(index: IndexPlan): Sql {
+function IndexDefinition(engine: Engine, index: IndexPlan): Sql {
   const kind = index.unique ? sql`UNIQUE INDEX` : sql`INDEX`;
-  const parts = join(index.parts.map(IndexPart), sql`, `);
+  const parts = join(
+    index.parts.map((part) => IndexPart(engine, part)),
+    sql`, `,
+  );
   return sql`${kind} ${ident(index.name)} (${parts}) COMMENT ${lit(index.signature)}`;
 }
 
@@ -194,16 +212,18 @@ function Online(index: IndexPlan): Sql {
     : sql`ALGORITHM=INPLACE, LOCK=NONE`;
 }
 
-const TABLE_OPTIONS = sql`ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4 COLLATE=${lit(session.binaryCollation)}`;
+function TableOptions(engine: Engine): Sql {
+  return sql`ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4 COLLATE=${lit(engine.flavour.binaryCollation)}`;
+}
 
-function CreateTable(plan: TablePlan, comment: string): Sql {
+function CreateTable(engine: Engine, plan: TablePlan, comment: string): Sql {
   const definitions = [
-    ...plan.columns.map(ColumnDefinition),
-    ...plan.keyColumns.map(KeyColumnDefinition),
+    ...plan.columns.map((column) => ColumnDefinition(engine, column)),
+    ...plan.keyColumns.map((key) => KeyColumnDefinition(engine, key)),
     sql`PRIMARY KEY (${ROW_KEY})`,
-    ...plan.indexes.map(IndexDefinition),
+    ...plan.indexes.map((index) => IndexDefinition(engine, index)),
   ];
-  return sql`CREATE TABLE ${ident(plan.table)} (${join(definitions, sql`, `)}) ${TABLE_OPTIONS} COMMENT=${lit(comment)}`;
+  return sql`CREATE TABLE ${ident(plan.table)} (${join(definitions, sql`, `)}) ${TableOptions(engine)} COMMENT=${lit(comment)}`;
 }
 
 /** Rows strictly after `after` in key order; every row when there is none. */
@@ -233,6 +253,7 @@ function BackfillBound(
 }
 
 function BackfillChunk(
+  engine: Engine,
   table: string,
   column: DeclaredColumn,
   after: RowKey | undefined,
@@ -241,6 +262,7 @@ function BackfillChunk(
   const extra = ident(EXTRA_COLUMN);
   const key = JsonPath([column.field]);
   const value = REPRESENTATIONS[column.type.kind](
+    engine,
     sql`JSON_EXTRACT(${extra}, ${key})`,
   );
   const target = ident(column.name);
@@ -259,7 +281,7 @@ function DropColumns(
   return sql`ALTER TABLE ${ident(table)} ${join(drops, sql`, `)}`;
 }
 
-function CreateInstances(registry: InstancesTable): Sql {
+function CreateInstances(engine: Engine, registry: InstancesTable): Sql {
   const schema = ident(registry.schema);
   const instance = ident(registry.instance);
   const columns = [
@@ -268,7 +290,7 @@ function CreateInstances(registry: InstancesTable): Sql {
     sql`${ident(registry.created)} DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)`,
     sql`PRIMARY KEY (${schema}, ${instance})`,
   ];
-  return sql`CREATE TABLE IF NOT EXISTS ${ident(registry.table)} (${join(columns, sql`, `)}) ${TABLE_OPTIONS}`;
+  return sql`CREATE TABLE IF NOT EXISTS ${ident(registry.table)} (${join(columns, sql`, `)}) ${TableOptions(engine)}`;
 }
 
 /** A server error has a positive `errno`; a driver error that ended the connection is `fatal`. */
@@ -281,28 +303,32 @@ function Failure(error: Error): DdlFailure {
   return FAILURES.get(errno) ?? "refused";
 }
 
-export const ddl: DdlSyntax = {
-  createTable: CreateTable,
-  addColumn: (table, column, comment) =>
-    sql`ALTER TABLE ${ident(table)} ADD COLUMN ${DeclaredDefinition(column, comment)}`,
-  modifyColumn: (table, column, comment) =>
-    sql`ALTER TABLE ${ident(table)} MODIFY COLUMN ${DeclaredDefinition(column, comment)}`,
-  addKeyColumn: (table, key) =>
-    sql`ALTER TABLE ${ident(table)} ADD COLUMN ${KeyColumnDefinition(key)}`,
-  dropColumns: DropColumns,
-  addIndex: (table, index) =>
-    sql`ALTER TABLE ${ident(table)} ADD ${IndexDefinition(index)}, ${Online(index)}`,
-  swapIndex: (table, index) =>
-    sql`ALTER TABLE ${ident(table)} DROP INDEX ${ident(index.name)}, ADD ${IndexDefinition(index)}, ${Online(index)}`,
-  dropIndex: (table, name) =>
-    sql`ALTER TABLE ${ident(table)} DROP INDEX ${ident(name)}, ALGORITHM=INPLACE, LOCK=NONE`,
-  backfillBound: BackfillBound,
-  backfillChunk: BackfillChunk,
-  lockWait: (seconds) =>
-    seconds === undefined
-      ? sql`SET SESSION lock_wait_timeout = DEFAULT`
-      : sql`SET SESSION lock_wait_timeout = ${int(seconds)}`,
-  killQuery: (connectionId) => sql`KILL QUERY ${int(connectionId)}`,
-  createInstances: CreateInstances,
-  failure: Failure,
-};
+export function DdlOf(flavour: Flavour, syntax: SqlSyntax): DdlSyntax {
+  const engine: Engine = { flavour, sql: syntax };
+  return {
+    createTable: (plan, comment) => CreateTable(engine, plan, comment),
+    addColumn: (table, column, comment) =>
+      sql`ALTER TABLE ${ident(table)} ADD COLUMN ${DeclaredDefinition(engine, column, comment)}`,
+    modifyColumn: (table, column, comment) =>
+      sql`ALTER TABLE ${ident(table)} MODIFY COLUMN ${DeclaredDefinition(engine, column, comment)}`,
+    addKeyColumn: (table, key) =>
+      sql`ALTER TABLE ${ident(table)} ADD COLUMN ${KeyColumnDefinition(engine, key)}`,
+    dropColumns: DropColumns,
+    addIndex: (table, index) =>
+      sql`ALTER TABLE ${ident(table)} ADD ${IndexDefinition(engine, index)}, ${Online(index)}`,
+    swapIndex: (table, index) =>
+      sql`ALTER TABLE ${ident(table)} DROP INDEX ${ident(index.name)}, ADD ${IndexDefinition(engine, index)}, ${Online(index)}`,
+    dropIndex: (table, name) =>
+      sql`ALTER TABLE ${ident(table)} DROP INDEX ${ident(name)}, ALGORITHM=INPLACE, LOCK=NONE`,
+    backfillBound: BackfillBound,
+    backfillChunk: (table, column, after, through) =>
+      BackfillChunk(engine, table, column, after, through),
+    lockWait: (seconds) =>
+      seconds === undefined
+        ? sql`SET SESSION lock_wait_timeout = DEFAULT`
+        : sql`SET SESSION lock_wait_timeout = ${int(seconds)}`,
+    killQuery: (connectionId) => sql`KILL QUERY ${int(connectionId)}`,
+    createInstances: (registry) => CreateInstances(engine, registry),
+    failure: Failure,
+  };
+}

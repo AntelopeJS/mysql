@@ -8,6 +8,7 @@ import type {
   ReferenceRow,
   RelationRow,
 } from "../external";
+import type { Flavour } from "./flavour";
 
 const BASE_TABLE = "BASE TABLE";
 const PARTITIONED = "partitioned";
@@ -237,41 +238,46 @@ function ParsePlannedRows(rows: readonly Row[]): number | null {
   }, 1);
 }
 
-export const catalog: ExternalCatalogSyntax = {
-  relations: (schemas) =>
-    Relations(schemas ? sql`t.TABLE_SCHEMA IN ${List(schemas)}` : sql`TRUE`),
-  namedRelations: (names) =>
-    Relations(sql`CONCAT(t.TABLE_SCHEMA, '.', t.TABLE_NAME) IN ${List(names)}`),
-  parseRelation: ParseRelation,
-  columns: (schema, table) =>
-    sql`SELECT COLUMN_NAME AS name, COLUMN_TYPE AS native, DATA_TYPE AS data_type, IS_NULLABLE AS nullable,
-      COLUMN_DEFAULT AS default_value, EXTRA AS extra, COLUMN_COMMENT AS comment,
+export function ExternalCatalogOf(flavour: Flavour): ExternalCatalogSyntax {
+  return {
+    relations: (schemas) =>
+      Relations(schemas ? sql`t.TABLE_SCHEMA IN ${List(schemas)}` : sql`TRUE`),
+    namedRelations: (names) =>
+      Relations(
+        sql`CONCAT(t.TABLE_SCHEMA, '.', t.TABLE_NAME) IN ${List(names)}`,
+      ),
+    parseRelation: ParseRelation,
+    columns: (schema, table) =>
+      sql`SELECT COLUMN_NAME AS name, COLUMN_TYPE AS native, DATA_TYPE AS data_type, IS_NULLABLE AS nullable,
+      ${flavour.columnDefault.value} AS default_value, ${flavour.columnDefault.extra} AS extra, COLUMN_COMMENT AS comment,
       CHARACTER_SET_NAME AS charset, COLLATION_NAME AS collation_name
       FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ${param(schema)} AND TABLE_NAME = ${param(table)}
       ORDER BY ORDINAL_POSITION`,
-  parseColumn: ParseColumn,
-  indexes: (schema, table) =>
-    sql`SELECT INDEX_NAME AS name, NON_UNIQUE AS non_unique, COLUMN_NAME AS column_name, SUB_PART AS sub_part,
-      IS_VISIBLE AS visible, NULLABLE AS nullable
+    parseColumn: ParseColumn,
+    jsonColumns: flavour.jsonColumns,
+    indexes: (schema, table) =>
+      sql`SELECT INDEX_NAME AS name, NON_UNIQUE AS non_unique, COLUMN_NAME AS column_name, SUB_PART AS sub_part,
+      ${flavour.indexVisible} AS visible, NULLABLE AS nullable
       FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = ${param(schema)} AND TABLE_NAME = ${param(table)}
       ORDER BY INDEX_NAME, SEQ_IN_INDEX`,
-  parseIndexes: ParseIndexes,
-  references: (schema, table) =>
-    sql`SELECT CONSTRAINT_NAME AS name, TABLE_SCHEMA AS from_schema, TABLE_NAME AS from_table, COLUMN_NAME AS from_column,
+    parseIndexes: ParseIndexes,
+    references: (schema, table) =>
+      sql`SELECT CONSTRAINT_NAME AS name, TABLE_SCHEMA AS from_schema, TABLE_NAME AS from_table, COLUMN_NAME AS from_column,
       REFERENCED_TABLE_SCHEMA AS to_schema, REFERENCED_TABLE_NAME AS to_table, REFERENCED_COLUMN_NAME AS to_column
       FROM information_schema.KEY_COLUMN_USAGE
       WHERE REFERENCED_TABLE_NAME IS NOT NULL AND ((TABLE_SCHEMA = ${param(schema)} AND TABLE_NAME = ${param(table)})
         OR (REFERENCED_TABLE_SCHEMA = ${param(schema)} AND REFERENCED_TABLE_NAME = ${param(table)}))
       ORDER BY CONSTRAINT_NAME, TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION`,
-  parseReferences: ParseReferences,
-  info: () =>
-    sql`SELECT VERSION() AS version, DATABASE() AS current_database, CURRENT_USER() AS account`,
-  parseInfo: (row) => ({
-    version: Text(row, "version"),
-    database: Text(row, "current_database"),
-    role: UserOf(Text(row, "account")),
-  }),
-  plannedRows: (schema, table) =>
-    sql`EXPLAIN FORMAT=TRADITIONAL SELECT * FROM ${ident(schema)}.${ident(table)}`,
-  parsePlannedRows: ParsePlannedRows,
-};
+    parseReferences: ParseReferences,
+    info: () =>
+      sql`SELECT VERSION() AS version, DATABASE() AS current_database, CURRENT_USER() AS account`,
+    parseInfo: (row) => ({
+      version: Text(row, "version"),
+      database: Text(row, "current_database"),
+      role: UserOf(Text(row, "account")),
+    }),
+    plannedRows: (schema, table) =>
+      sql`EXPLAIN FORMAT=TRADITIONAL SELECT * FROM ${ident(schema)}.${ident(table)}`,
+    parsePlannedRows: ParsePlannedRows,
+  };
+}

@@ -94,6 +94,15 @@ export interface ExternalCatalogSyntax {
   readonly parseRelation: (row: Row) => RelationRow;
   columns(schema: string, table: string): Sql;
   readonly parseColumn: (row: Row) => CatalogColumn;
+  /**
+   * Where the catalog's columns cannot tell a JSON column, the statement whose answer names the
+   * relation's JSON columns, and how. MariaDB keeps JSON in a `longtext` column checked by
+   * `json_valid`, which its catalog shows only an account granted the whole schema.
+   */
+  readonly jsonColumns?: {
+    read(schema: string, table: string): Sql;
+    parse(rows: readonly Row[]): ReadonlySet<string>;
+  };
   indexes(schema: string, table: string): Sql;
   parseIndexes(rows: readonly Row[]): CatalogIndex[];
   /** Foreign keys out of and into a relation. */

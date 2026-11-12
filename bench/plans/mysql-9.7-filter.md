@@ -15,7 +15,7 @@ id | select_type | table | type | possible_keys | key | key_len | rows | filtere
 
 EXPLAIN ANALYZE
 -> Filter: ((case when (json_type(json_extract(t0.title,'$."fr"')) = <cache>(('STRING' collate utf8mb4_bin))) then cast(json_unquote(json_extract(t0.title,'$."f…
-    -> Index lookup on t0 using PRIMARY (_instance = 'bench')  (cost=4826 rows=48165) (actual time=0.00771..31.1 rows=100000 loops=1)
+    -> Index lookup on t0 using PRIMARY (_instance = 'bench')  (cost=4826 rows=48165) (actual time=0.013..35.1 rows=100000 loops=1)
 
 ```
 
@@ -33,7 +33,7 @@ id | select_type | table | type | possible_keys | key | key_len | rows | filtere
 
 EXPLAIN ANALYZE
 -> Filter: ((case when (json_type(json_extract(t0.title,'$."fr"')) = <cache>(('STRING' collate utf8mb4_bin))) then cast(json_unquote(json_extract(t0.title,'$."f…
-    -> Index lookup on t0 using titleFr (_instance = 'bench', __k_title_fr_25b64d40 = left('titre 067999',640))  (cost=0.35 rows=1) (actual time=0.0149..0.0157 …
+    -> Index lookup on t0 using titleFr (_instance = 'bench', __k_title_fr_25b64d40 = left('titre 067999',640))  (cost=0.35 rows=1) (actual time=0.0187..0.0197 …
 
 ```
 
@@ -51,7 +51,7 @@ id | select_type | table | type | possible_keys | key | key_len | rows | filtere
 
 EXPLAIN ANALYZE
 -> Filter: ((case when (json_type(json_extract(t0._extra,'$."_internal"."data"."title"."fr"')) = <cache>(('STRING' collate utf8mb4_bin))) then cast(json_unquote…
-    -> Index lookup on t0 using PRIMARY (_instance = 'bench')  (cost=4826 rows=48165) (actual time=0.00373..31.3 rows=100000 loops=1)
+    -> Index lookup on t0 using PRIMARY (_instance = 'bench')  (cost=4826 rows=48165) (actual time=0.00605..42.9 rows=100000 loops=1)
 
 ```
 
@@ -87,7 +87,7 @@ id | select_type | table | type | possible_keys | key | key_len | rows | filtere
 
 EXPLAIN ANALYZE
 -> Filter: ((case when (json_type(coalesce(nullif(json_extract(t0._extra,'$."_internal"."data"."title"."fr"'),<cache>(cast('null' as json))),json_extract(t0._ex…
-    -> Index lookup on t0 using PRIMARY (_instance = 'bench')  (cost=4826 rows=48165) (actual time=0.00379..32.2 rows=100000 loops=1)
+    -> Index lookup on t0 using PRIMARY (_instance = 'bench')  (cost=4826 rows=48165) (actual time=0.00618..45.1 rows=100000 loops=1)
 
 ```
 
