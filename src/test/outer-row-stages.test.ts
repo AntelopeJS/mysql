@@ -191,6 +191,65 @@ async function GroupAfterComputedSlice(): Promise<void> {
   );
 }
 
+/** A filter after the slice walks its rows twice, and `getAll` still reads the index's fields. */
+async function GetAllAfterComputedSlice(): Promise<void> {
+  const read = await Owners()
+    .map((owner) => ({
+      id: owner.key("_id"),
+      value: Sliced(owner)
+        .filter((item) => item.key("views").ge(0))
+        .getAll(
+          [
+            ["a", 2],
+            ["c", 2],
+            ["c", 3],
+          ],
+          "kindViews",
+        )
+        .map((item) => item.key("_id")),
+    }))
+    .run();
+  ExpectEach(
+    read.map((row) => ({ id: row.id, value: [...row.value].sort() })),
+    (take) =>
+      SlicedItems(take)
+        .filter((item) =>
+          ["a/2", "c/2", "c/3"].includes(`${item.kind}/${item.views}`),
+        )
+        .map((item) => item._id)
+        .sort(),
+  );
+}
+
+async function BetweenAfterComputedSlice(): Promise<void> {
+  const read = await Owners()
+    .map((owner) => ({
+      id: owner.key("_id"),
+      value: Sliced(owner)
+        .between("slug", "slug-04", "slug-12")
+        .map((item) => item.key("_id")),
+    }))
+    .run();
+  ExpectEach(
+    read.map((row) => ({ id: row.id, value: [...row.value].sort() })),
+    (take) =>
+      SlicedItems(take)
+        .filter((item) => item.slug >= "slug-04" && item.slug < "slug-12")
+        .map((item) => item._id)
+        .sort(),
+  );
+}
+
+async function GetAfterComputedSlice(): Promise<void> {
+  const read = await Owners()
+    .map((owner) => ({ id: owner.key("_id"), value: Sliced(owner).get("i2") }))
+    .run();
+  ExpectEach(read, (take) => {
+    const found = SlicedItems(take).find((item) => item._id === "i2");
+    return found ? Stored(found) : null;
+  });
+}
+
 /** Only the bound reads the outer row: the first `take` items of all, by slug. */
 async function GroupAfterSliceBoundByOuterRow(): Promise<void> {
   const read = await Owners()
@@ -230,6 +289,15 @@ describe("stages after a nested group, aggregate or computed slice that reads it
   it("dedups the rows a computed slice keeps", DistinctAfterComputedSlice);
   it("counts the rows a computed slice keeps", CountAfterComputedSlice);
   it("groups the rows a computed slice keeps", GroupAfterComputedSlice);
+  it(
+    "selects the rows a computed slice keeps by an index of two fields",
+    GetAllAfterComputedSlice,
+  );
+  it(
+    "selects the rows a computed slice keeps between two slugs",
+    BetweenAfterComputedSlice,
+  );
+  it("gets one row a computed slice keeps", GetAfterComputedSlice);
   it(
     "groups the rows a slice bounded by the outer row alone keeps",
     GroupAfterSliceBoundByOuterRow,
