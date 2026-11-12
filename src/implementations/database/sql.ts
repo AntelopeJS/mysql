@@ -3,7 +3,7 @@ import type { Conversion } from "../../dialect/external";
 import type { ConstantJson } from "../../dialect/sql-types";
 import type { KeyColumn } from "./paths";
 import { BOOL, FLOAT, type SqlType, TEXT, TIMESTAMP } from "./types";
-import { type Sql, ident, sql } from "../../statement";
+import { Bind, type Sql, ident, sql } from "../../statement";
 
 export type { ConstantJson } from "../../dialect/sql-types";
 
@@ -85,6 +85,19 @@ export interface NativeOperand {
 /** References a column of an aliased relation; the single spelling every compiled fragment uses. */
 export function QualifiedColumn(alias: string, column: string): Sql {
   return sql`${ident(alias)}.${ident(column)}`;
+}
+
+/**
+ * Whether a compiled fragment reads a column of an aliased relation. Every fragment spells a column
+ * through {@link QualifiedColumn}, and a quoted identifier never occurs inside another, so the
+ * fragment's text holds that spelling exactly where it reads the column.
+ */
+export function ReadsColumn(
+  fragment: Sql,
+  alias: string,
+  column: string,
+): boolean {
+  return Bind(fragment).sql.includes(Bind(QualifiedColumn(alias, column)).sql);
 }
 
 /** A bound text. */

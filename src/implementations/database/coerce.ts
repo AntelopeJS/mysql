@@ -242,9 +242,9 @@ function DefaultType(value: SqlType, def: SqlType): SqlType {
 /**
  * A value, or `def` where the value is absent.
  *
- * Wherever the value is present the result is the value, so a key column that holds the value
- * holds the result on those rows and is NULL on the rest: the result keeps that key column as one
- * `set` only where it is, and the read it falls back from, which a later cast names one by.
+ * Wherever the value is present the result is the value, so a key column holding the value holds
+ * the result on those rows and is NULL on the others. The result keeps that key column, marked
+ * `set`, and the read it falls back from, through which a later cast finds the key column.
  */
 export function WithDefault(
   dialect: Dialect,

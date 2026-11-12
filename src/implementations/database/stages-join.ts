@@ -4,7 +4,7 @@ import type { QueryStage } from "@antelopejs/interface-database/common";
 import { CROSS_INSTANCE } from "@antelopejs/interface-database/schema";
 
 import type { Dialect } from "../../dialect";
-import { Bind, type Sql, ident, sql } from "../../statement";
+import { type Sql, ident, sql } from "../../statement";
 import { Compare, Collected } from "./json";
 import { UnifyOperands } from "./coerce";
 import { DecodeFunction, RecordedLambda } from "./value";
@@ -13,7 +13,7 @@ import type { DecodingContext } from "./context";
 import { NamedField, type RowSource } from "./row-source";
 import type { PipelineStage, PipelineStageMap } from "./pipeline";
 import { FIRST_OPERAND, RequireOperand, SECOND_OPERAND } from "./stage";
-import { type Compiled, QualifiedColumn } from "./sql";
+import { type Compiled, QualifiedColumn, ReadsColumn } from "./sql";
 import {
   ArrayOf,
   IsArray,
@@ -97,9 +97,8 @@ function InstanceScoped(
     return condition;
   }
   const { alias } = root.relation;
-  const text = Bind(condition).sql;
   const lookup = InstanceLookupColumns(RequireOrigin(root.relation).plan).some(
-    (column) => text.includes(Bind(QualifiedColumn(alias, column)).sql),
+    (column) => ReadsColumn(condition, alias, column),
   );
   const instance = QualifiedColumn(alias, INSTANCE_COLUMN);
   const scope = dialect.sql.rows.joinScope(instance, root.instance.sql, lookup);
