@@ -178,7 +178,7 @@ const OrderByStage: PipelineStage = (relation, stage, context) => {
   const prepared = Prepare(relation, ORDER_BLOCKERS, context);
   const descending = OptionsOf(stage)?.direction === DESCENDING;
   const terms = ScanColumns(prepared, SortName(stage)).flatMap((column) =>
-    (column.value.native?.order ?? [column.order]).map((sql): OrderTerm => ({
+    (column.value.native?.order ?? column.order).map((sql): OrderTerm => ({
       sql,
       descending,
     })),

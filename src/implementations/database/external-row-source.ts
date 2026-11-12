@@ -125,6 +125,7 @@ export class ExternalRowSource implements RowSource {
       bind: descriptor.conversion,
       numeric: descriptor.numeric,
       type: descriptor.native,
+      present: descriptor.present?.(column),
     };
     return { ...value, native };
   }

@@ -13,6 +13,7 @@ const COLUMN = sql`${ident("t0")}.${ident("tags")}`;
 const TAGS: RowColumn = {
   alias: "t0",
   keys: [],
+  values: [],
   elements: ["tags"],
   source: "tags",
 };

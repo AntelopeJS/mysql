@@ -3,7 +3,7 @@ import assert from "node:assert";
 import type { Dialect } from "../../dialect";
 import type { Sql } from "../../statement";
 import type { SqlType } from "./types";
-import { ElementColumns, type TablePlan } from "./plan";
+import { ElementColumns, type TablePlan, ValueKeys } from "./plan";
 import type { TableModel } from "./fields";
 import { type Compiled, QualifiedColumn } from "./sql";
 import {
@@ -149,7 +149,7 @@ export function IndexColumns(
   const fields = origin ? origin.index(name) : [name];
   return fields.map((field) => {
     const value = NamedField(relation.dialect, source, field);
-    return { name: field, value, order: value.sql };
+    return { name: field, value, order: [value.sql] };
   });
 }
 
@@ -207,6 +207,7 @@ function TableSource(
       ? {
           alias,
           columns: origin.plan.keyColumns,
+          values: ValueKeys(origin.plan),
           elements: ElementColumns(origin.plan),
         }
       : undefined;

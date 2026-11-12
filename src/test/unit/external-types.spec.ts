@@ -35,8 +35,16 @@ const READINGS: [string, string, string][] = [
   ["decimal(12,2)", "number", "CAST(`c` AS DOUBLE)"],
   ["double", "number", "`c`"],
   ["tinyint(1)", "boolean", "(`c` <> 0)"],
-  ["datetime(6)", "date", "`c`"],
-  ["date", "date", "CAST(`c` AS DATETIME(6))"],
+  [
+    "datetime(6)",
+    "date",
+    "IF((MONTH(`c`) <> 0 AND DAYOFMONTH(`c`) <> 0), `c`, NULL)",
+  ],
+  [
+    "date",
+    "date",
+    "IF((MONTH(`c`) <> 0 AND DAYOFMONTH(`c`) <> 0), CAST(`c` AS DATETIME(6)), NULL)",
+  ],
   ["json", "object", "`c`"],
   ["json", "string[]", "`c`"],
 ];

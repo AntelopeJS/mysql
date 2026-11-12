@@ -158,6 +158,76 @@ describe("The date stages", () => {
   });
 });
 
+/** A text and a literal pattern, whose match JavaScript's own `RegExp` decides. */
+type PatternCase = readonly [string, string];
+
+const ARABIC_THREE = String.fromCodePoint(0x663);
+const BYTE_ORDER_MARK = String.fromCodePoint(0xfeff);
+const NO_BREAK_SPACE = String.fromCodePoint(0xa0);
+const NEXT_LINE = String.fromCodePoint(0x85);
+const VERTICAL_TAB = String.fromCodePoint(0x0b);
+const BACKSPACE = String.fromCodePoint(0x08);
+
+const LINE_CASES: readonly PatternCase[] = [
+  ["a\nb", "^a.b$"],
+  [`a${VERTICAL_TAB}b`, "^a.b$"],
+  [`a${NEXT_LINE}b`, "^a.b$"],
+  ["a b", "^a.b$"],
+  ["abc\n", "c$"],
+  ["abc", "c$"],
+  ["a b", "\\bb"],
+  ["ab", "(?<first>a)b"],
+  ["[", "[[]"],
+  ["&", "[a&&b]"],
+  ["Ab", "^ab$"],
+];
+
+const CLASS_ESCAPE_CASES: readonly PatternCase[] = [
+  [ARABIC_THREE, "^\\d$"],
+  ["7", "^\\d$"],
+  [ARABIC_THREE, "^\\D$"],
+  ["é", "^\\w$"],
+  ["_", "^\\w$"],
+  ["é", "^\\W$"],
+  [BYTE_ORDER_MARK, "^\\s$"],
+  [NEXT_LINE, "^\\s$"],
+  [NO_BREAK_SPACE, "^\\s$"],
+  [NEXT_LINE, "^\\S$"],
+  ["aé", "a\\b"],
+  ["ab", "a\\B"],
+  [VERTICAL_TAB, "^\\v$"],
+  ["\n", "^\\v$"],
+  [BACKSPACE, "^[\\b]$"],
+  [ARABIC_THREE, "^[\\d]$"],
+  ["é", "^[\\w-]$"],
+  [ARABIC_THREE, "^[^\\d]$"],
+  ["5", "^[\\D]$"],
+  [BYTE_ORDER_MARK, "^[\\s]$"],
+];
+
+/** A text as its code points, which names an invisible or a look-alike character unambiguously. */
+function CodePoints(text: string): string {
+  return Array.from(
+    text,
+    (char) =>
+      `U+${(char.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0")}`,
+  ).join(" ");
+}
+
+/** The cases whose literal pattern the module matches otherwise than JavaScript's `RegExp` does. */
+async function Mismatches(cases: readonly PatternCase[]): Promise<string[]> {
+  const mismatches: string[] = [];
+  for (const [text, pattern] of cases) {
+    const matched = await First(
+      table.rows().map(() => ValueProxy.constant(text).match(pattern)),
+    );
+    if (matched !== new RegExp(pattern).test(text)) {
+      mismatches.push(`${CodePoints(text)} against ${pattern}`);
+    }
+  }
+  return mismatches;
+}
+
 describe("The string stages", () => {
   before(() => table.setup());
   after(() => table.teardown());
@@ -176,28 +246,11 @@ describe("The string stages", () => {
   });
 
   it("match a JavaScript pattern the way JavaScript does: `.` stops at four line terminators, `$` at the end", async () => {
-    const cases: readonly (readonly [string, string])[] = [
-      ["a\nb", "^a.b$"],
-      ["a\u000bb", "^a.b$"],
-      ["a\u0085b", "^a.b$"],
-      ["a b", "^a.b$"],
-      ["abc\n", "c$"],
-      ["abc", "c$"],
-      ["a b", "\\bb"],
-      ["ab", "(?<first>a)b"],
-      ["[", "[[]"],
-      ["&", "[a&&b]"],
-      ["Ab", "^ab$"],
-    ];
-    for (const [text, pattern] of cases) {
-      assert.equal(
-        await First(
-          table.rows().map(() => ValueProxy.constant(text).match(pattern)),
-        ),
-        new RegExp(pattern).test(text),
-        `${JSON.stringify(text)} against ${pattern}`,
-      );
-    }
+    assert.deepEqual(await Mismatches(LINE_CASES), []);
+  });
+
+  it("match a JavaScript class escape the way JavaScript does, with ASCII digits and word characters and its own whitespace", async () => {
+    assert.deepEqual(await Mismatches(CLASS_ESCAPE_CASES), []);
   });
 
   it("match against a pattern the statement computes, bound as it is", async () => {

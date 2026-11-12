@@ -100,6 +100,52 @@ const OUTSIDE_CLASS = new Map([
 ]);
 
 /**
+ * The members of JavaScript's `\d`, `\w` and `\s`: ASCII digits, ASCII word characters, and its
+ * own whitespace and line terminators. ICU reads its escapes as Unicode classes, which also hold
+ * other scripts' digits and letters, and a different whitespace.
+ */
+const JS_DIGIT = "0-9";
+const JS_WORD = "A-Za-z0-9_";
+const JS_SPACE =
+  "\\t\\n\\x{0B}\\f\\r \\x{A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}\\x{2029}\\x{202F}\\x{205F}\\x{3000}\\x{FEFF}";
+
+const WORD = `[${JS_WORD}]`;
+
+/** JavaScript's `\v` is the vertical tab alone, where ICU's is every vertical whitespace. */
+const VERTICAL_TAB = "\\x{0B}";
+
+/**
+ * The escapes JavaScript reads otherwise than ICU outside a class, as the ICU that reads them the
+ * JavaScript way. A word boundary is spelled with lookarounds over JavaScript's `\w`.
+ */
+const OUTSIDE_CLASS_ESCAPES = new Map([
+  ["d", `[${JS_DIGIT}]`],
+  ["D", `[^${JS_DIGIT}]`],
+  ["w", WORD],
+  ["W", `[^${JS_WORD}]`],
+  ["s", `[${JS_SPACE}]`],
+  ["S", `[^${JS_SPACE}]`],
+  ["b", `(?:(?<=${WORD})(?!${WORD})|(?<!${WORD})(?=${WORD}))`],
+  ["B", `(?:(?<=${WORD})(?=${WORD})|(?<!${WORD})(?!${WORD}))`],
+  ["v", VERTICAL_TAB],
+]);
+
+/**
+ * The same escapes inside a class, as members of it: a negated one as a nested set, which ICU
+ * unites with the rest of the class. JavaScript's `[\b]` is a backspace.
+ */
+const INSIDE_CLASS_ESCAPES = new Map([
+  ["d", JS_DIGIT],
+  ["D", `[^${JS_DIGIT}]`],
+  ["w", JS_WORD],
+  ["W", `[^${JS_WORD}]`],
+  ["s", JS_SPACE],
+  ["S", `[^${JS_SPACE}]`],
+  ["b", "\\x{08}"],
+  ["v", VERTICAL_TAB],
+]);
+
+/**
  * Rewrites a JavaScript pattern into ICU's flavour, following escapes and classes. Only a literal
  * pattern reaches it: a pattern the statement computes is bound as it is.
  */
@@ -109,7 +155,9 @@ function TranslatePattern(pattern: string): string {
   for (let at = 0; at < pattern.length; at++) {
     const char = pattern[at];
     if (char === ESCAPE && at + 1 < pattern.length) {
-      out += char + pattern[at + 1];
+      const escaped = pattern[at + 1];
+      const escapes = inClass ? INSIDE_CLASS_ESCAPES : OUTSIDE_CLASS_ESCAPES;
+      out += escapes.get(escaped) ?? char + escaped;
       at++;
       continue;
     }

@@ -96,7 +96,7 @@ describe("the lookup stage", () => {
 
   it("reads a dotted other key as a path, reaching the key column its index holds", () => {
     expect(Compile(Other().lookup(Root(), "name", "meta.title")).sql).to.match(
-      /`t1`\.`__k_meta_title_[0-9a-f]{8}` = `t0`\.`name` AND \(CASE WHEN/,
+      /\(`t1`\.`__k_meta_title_[0-9a-f]{8}` = CONCAT\('2', `t0`\.`name`\) AND \(CASE WHEN/,
     );
   });
 

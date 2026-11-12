@@ -5,13 +5,24 @@ import {
   type QueryValue,
 } from "@antelopejs/interface-database/common";
 
-import { type Sql, join, sql } from "../../statement";
+import { Bind, type Sql, join, sql } from "../../statement";
 import { IsArray } from "./types";
 import { StoredAs } from "./readings";
 import { DecodeValue } from "./value";
 import type { DecodingContext } from "./context";
-import { type Compiled, QualifiedColumn } from "./sql";
+import {
+  type Compiled,
+  type Equality,
+  QualifiedColumn,
+  type ValueReference,
+} from "./sql";
 import { Compare, Contains, EqualityKey, type Ordering } from "./json";
+import {
+  type RankedKey,
+  RankedEqualities,
+  RankedKeyOf,
+  RankedRange,
+} from "./ranked-key";
 import { KeylessRefusal } from "./external-refusals";
 import type { PipelineStage, PipelineStageMap } from "./pipeline";
 import { ID_COLUMN, INSTANCE_COLUMN, OptionsOf } from "./utils";
@@ -31,12 +42,21 @@ const COMMA = sql`, `;
 const SINGLE_FIELD = 1;
 
 /**
- * One selection stage mid-compilation: the columns its keys address, the stage and index name,
- * and the context. All are needed at the bottom of the key walk, so they travel as one value.
+ * One part of what a selection stage's keys address: the value a key is compared with, and the
+ * value key that narrows the rows where the part is a value of no declared type.
+ */
+interface SelectedPart {
+  readonly value: Compiled;
+  readonly ranked?: ValueReference;
+}
+
+/**
+ * One selection stage mid-compilation: the parts its keys address, the stage and index name, and
+ * the context. All are needed at the bottom of the key walk, so they travel as one value.
  */
 interface KeySelection {
   relation: Relation;
-  columns: Compiled[];
+  parts: SelectedPart[];
   indexId: string | undefined;
   stage: QueryStage;
   context: DecodingContext;
@@ -54,13 +74,16 @@ function Selected(
 ): KeySelection {
   const prepared = Prepare(relation, WHERE_BLOCKERS, context);
   RequireKey(RequireOrigin(prepared), indexId);
-  const columns =
+  const parts: SelectedPart[] =
     indexId === undefined
-      ? [prepared.source.field(ID_COLUMN)]
-      : ScanColumns(prepared, indexId).map((column) => column.value);
+      ? [{ value: prepared.source.field(ID_COLUMN) }]
+      : ScanColumns(prepared, indexId);
   return {
     relation: prepared,
-    columns: columns.map(Addressed),
+    parts: parts.map(({ value, ranked }) => ({
+      value: Addressed(value),
+      ranked,
+    })),
     indexId,
     stage,
     context,
@@ -97,24 +120,34 @@ function IndexOption(stage: QueryStage): string | undefined {
 }
 
 /**
- * Reads one caller-supplied key as the type of the column it addresses.
+ * One caller-supplied key as a part compares it: read as the type of the value the part holds, which
+ * decides the rows, and as the part's value key holds it, which narrows them.
+ */
+interface KeyOperand {
+  readonly compared: Compiled;
+  readonly ranked?: RankedKey;
+}
+
+/**
+ * Reads one caller-supplied key as the part it addresses compares it.
  * Only `undefined` is an absent operand; a `null` key is a value, and deliberately not an open bound.
  */
 function KeyValue(
   selection: KeySelection,
   key: QueryValue,
-  column: Compiled,
+  part: SelectedPart,
   index: number,
   operator: Ordering = "=",
-): Compiled {
-  const stored = StoredAs(
-    selection.context.dialect,
-    Decoded(selection, key, index),
-    column.type,
-  );
-  return column.native
+): KeyOperand {
+  const dialect = selection.context.dialect;
+  const decoded = Decoded(selection, key, index);
+  const column = part.value;
+  const stored = StoredAs(dialect, decoded, column.type);
+  const compared = column.native
     ? { sql: column.native.bind(stored.sql, operator), type: stored.type }
     : stored;
+  const ranked = part.ranked && RankedKeyOf(dialect, part.ranked, decoded);
+  return { compared, ranked };
 }
 
 function Decoded(
@@ -138,21 +171,21 @@ function KeyList(argument: QueryValue): readonly QueryValue[] {
  * One key, taken whole against a single-field index and element-wise against a compound one.
  * A hole inside a tuple is named by the index and the position it is missing from.
  */
-function KeyTuple(selection: KeySelection, key: QueryValue): Compiled[] {
-  const columns = selection.columns;
-  if (columns.length === SINGLE_FIELD) {
-    return [KeyValue(selection, key, columns[0], FIRST_OPERAND)];
+function KeyTuple(selection: KeySelection, key: QueryValue): KeyOperand[] {
+  const parts = selection.parts;
+  if (parts.length === SINGLE_FIELD) {
+    return [KeyValue(selection, key, parts[0], FIRST_OPERAND)];
   }
   assert(
-    IsList(key) && key.length === columns.length,
-    `The '${selection.indexId}' index takes a key of ${columns.length} values, received ${IsList(key) ? `${key.length} values` : ClassifyMember(key).kind}`,
+    IsList(key) && key.length === parts.length,
+    `The '${selection.indexId}' index takes a key of ${parts.length} values, received ${IsList(key) ? `${key.length} values` : ClassifyMember(key).kind}`,
   );
-  return key.map((part, position) => {
+  return key.map((value, position) => {
     assert(
-      part !== undefined,
+      value !== undefined,
       `The '${selection.indexId}' index takes a value for every field, and has none at position ${position}`,
     );
-    return KeyValue(selection, part, columns[position], FIRST_OPERAND);
+    return KeyValue(selection, value, parts[position], FIRST_OPERAND);
   });
 }
 
@@ -161,7 +194,7 @@ function KeyTuple(selection: KeySelection, key: QueryValue): Compiled[] {
  * disjunction of element tests an index over the elements serves.
  */
 function Contained(selection: KeySelection, keys: readonly QueryValue[]): Sql {
-  const column = selection.columns[0];
+  const column = selection.parts[0].value;
   assert(IsArray(column.type), "A contained key addresses a list column");
   const elem = column.type.elem;
   const dialect = selection.context.dialect;
@@ -176,7 +209,7 @@ function Contained(selection: KeySelection, keys: readonly QueryValue[]): Sql {
 /** Refuses an index that keys on an array field beside others, naming the index. */
 function RequireAddressable(selection: KeySelection): void {
   assert(
-    !selection.columns.some((column) => IsArray(column.type)),
+    !selection.parts.some((part) => IsArray(part.value.type)),
     `The '${selection.indexId}' index keys on an array field beside others, which no key addresses`,
   );
 }
@@ -188,35 +221,74 @@ function Row(parts: readonly Sql[]): Sql {
 }
 
 /**
- * The columns compared against a list of key tuples, and the tuples: through the key columns where
- * a part has one, so the index narrows the rows, and then through the values themselves, which
+ * The equalities that hold on every row a key tuple names: through a typed key column, through a
+ * value key's columns for the key's kind, or through the value itself where no index keys the part.
+ * A value key cannot narrow a key whose kind only the statement knows, and leaves it out.
+ */
+function TupleEqualities(
+  selection: KeySelection,
+  tuple: readonly KeyOperand[],
+): Equality[] {
+  const dialect = selection.context.dialect;
+  return tuple.flatMap((operand, position) => {
+    const part = selection.parts[position];
+    if (part.ranked) {
+      return (operand.ranked && RankedEqualities(operand.ranked)) ?? [];
+    }
+    const value = operand.compared.sql;
+    return (
+      EqualityKey(dialect, part.value, value) ?? [
+        { column: part.value.sql, value },
+      ]
+    );
+  });
+}
+
+/**
+ * The tuples whose equalities name the same columns, as a row of those columns in a list of rows:
+ * the form an index serves as one lookup per tuple. Keys of different kinds name different columns
+ * of a value key, so a list of them is one such test per kind.
+ */
+function EqualitySets(bounds: readonly (readonly Equality[])[]): Sql {
+  const byColumns = new Map<string, (readonly Equality[])[]>();
+  for (const bound of bounds) {
+    const columns = Bind(Row(bound.map((equality) => equality.column))).sql;
+    byColumns.set(columns, [...(byColumns.get(columns) ?? []), bound]);
+  }
+  const sets = [...byColumns.values()].map((group) => {
+    const columns = Row(group[0].map((equality) => equality.column));
+    const rows = group.map((bound) =>
+      Row(bound.map((equality) => equality.value)),
+    );
+    return sql`${columns} IN (${join(rows, COMMA)})`;
+  });
+  return sets.length === SINGLE_FIELD
+    ? sets[0]
+    : sql`(${join(sets, sql` OR `)})`;
+}
+
+/**
+ * The parts compared against a list of key tuples, and the tuples: through the key columns where a
+ * part has them, so the index narrows the rows, and then through the values themselves, which
  * decide them.
  */
 function InList(
   selection: KeySelection,
-  tuples: readonly (readonly Compiled[])[],
+  tuples: readonly (readonly KeyOperand[])[],
 ): Sql {
-  const dialect = selection.context.dialect;
-  const columns = selection.columns;
-  const plain = sql`${Row(columns.map((column) => column.sql))} IN (${join(
-    tuples.map((tuple) => Row(tuple.map((value) => value.sql))),
+  const parts = selection.parts;
+  const plain = sql`${Row(parts.map((part) => part.value.sql))} IN (${join(
+    tuples.map((tuple) => Row(tuple.map((operand) => operand.compared.sql))),
     COMMA,
   )})`;
-  if (!columns.some((column) => column.key)) {
+  if (!parts.some((part) => part.value.key || part.ranked)) {
     return plain;
   }
-  const keyed = tuples.map((tuple) =>
-    tuple.map(
-      (value, position) =>
-        EqualityKey(dialect, columns[position], value.sql) ?? {
-          column: columns[position].sql,
-          bound: value.sql,
-        },
-    ),
-  );
-  const keyColumns = Row(keyed[0].map((part) => part.column));
-  const bounds = keyed.map((tuple) => Row(tuple.map((part) => part.bound)));
-  return sql`${keyColumns} IN (${join(bounds, COMMA)}) AND ${plain}`;
+  const bounds = tuples.map((tuple) => TupleEqualities(selection, tuple));
+  if (bounds.some((bound) => bound.length === 0)) {
+    return plain;
+  }
+  return sql`${EqualitySets(bounds)} AND ${plain}`;
 }
 
 /**
@@ -227,8 +299,8 @@ function KeySet(selection: KeySelection, keys: readonly QueryValue[]): Sql {
   if (keys.length === 0) {
     return NO_KEYS;
   }
-  const columns = selection.columns;
-  if (columns.length === SINGLE_FIELD && IsArray(columns[0].type)) {
+  const parts = selection.parts;
+  if (parts.length === SINGLE_FIELD && IsArray(parts[0].value.type)) {
     return Contained(selection, keys);
   }
   RequireAddressable(selection);
@@ -261,14 +333,14 @@ const GetStage: PipelineStage = (relation, stage, context) => {
   assert(IsQueryStage(stage, "get"), "The 'get' stage reads a 'get' stage");
   const selection = Selected(relation, stage, context, undefined);
   const prepared = selection.relation;
-  const column = selection.columns[0];
+  const part = selection.parts[0];
   const key = KeyValue(
     selection,
     StageOperand(stage, FIRST_OPERAND),
-    column,
+    part,
     FIRST_OPERAND,
   );
-  prepared.where.push(Compare(context.dialect, column, key, "="));
+  prepared.where.push(Compare(context.dialect, part.value, key.compared, "="));
   prepared.single = true;
   prepared.absent = undefined;
   BoundToOneInstance(prepared);
@@ -289,7 +361,9 @@ const GetAllStage: PipelineStage = (relation, stage, context) => {
 
 /**
  * Restricts the relation to a half-open range over one field, low inclusive and high exclusive.
- * A compound index and an array field are both refused by name, having no reading to offer.
+ * A compound index and an array field are both refused by name, having no reading to offer. Over a
+ * value of no declared type the bounds compare as JSON values, as without the index, and the
+ * value key narrows the rows to the kinds and values between them.
  */
 const BetweenStage: PipelineStage = (relation, stage, context) => {
   assert(
@@ -299,33 +373,43 @@ const BetweenStage: PipelineStage = (relation, stage, context) => {
   const name = IndexOption(stage);
   assert(name !== undefined, "The 'between' stage is missing its field name");
   const selection = Selected(relation, stage, context, name);
-  const columns = selection.columns;
+  const parts = selection.parts;
   assert(
-    columns.length === SINGLE_FIELD,
-    `The 'between' stage ranges over one field, but '${name}' names ${columns.length}`,
+    parts.length === SINGLE_FIELD,
+    `The 'between' stage ranges over one field, but '${name}' names ${parts.length}`,
   );
-  const column = columns[0];
+  const part = parts[0];
   assert(
-    !IsArray(column.type),
+    !IsArray(part.value.type),
     `The 'between' stage ranges over one value, but '${name}' holds a list`,
   );
   const low = KeyValue(
     selection,
     StageOperand(stage, FIRST_OPERAND),
-    column,
+    part,
     FIRST_OPERAND,
     ">=",
   );
   const high = KeyValue(
     selection,
     StageOperand(stage, SECOND_OPERAND),
-    column,
+    part,
     SECOND_OPERAND,
     "<",
   );
-  selection.relation.where.push(
-    Compare(context.dialect, column, low, ">="),
-    Compare(context.dialect, column, high, "<"),
+  const where = selection.relation.where;
+  const present = part.value.native?.present;
+  if (present) {
+    where.push(present);
+  }
+  if (part.ranked && low.ranked && high.ranked) {
+    where.push(
+      RankedRange(context.dialect, part.ranked, low.ranked, high.ranked),
+    );
+  }
+  where.push(
+    Compare(context.dialect, part.value, low.compared, ">="),
+    Compare(context.dialect, part.value, high.compared, "<"),
   );
   return selection.relation;
 };

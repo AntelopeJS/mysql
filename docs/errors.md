@@ -153,15 +153,16 @@ See [External mode](./external-mode.md).
 
 A value that does not fit its column, and a constraint the database enforces, surface as an `ExternalWriteError`. Its `kind` comes from MySQL's errno:
 
-| Errno                        | `kind`       | Message                                                                                                  |
-| ---------------------------- | ------------ | -------------------------------------------------------------------------------------------------------- |
-| checked before the write     | `invalid`    | `Field '{path}' cannot hold {value}: {reason}`, one per field, joined by `; `                            |
-| 1264, 1265, 1292, 1366, 1406 | `invalid`    | `Field '{schema}.{table}.{column}' cannot hold the value written: {detail}`                              |
-| 1048, 1364                   | `missing`    | `Field '{schema}.{table}.{column}' of {relation} is required`                                            |
-| 1062                         | `duplicate`  | ``A row of {relation} already has this value of unique `{constraint}`: Duplicate entry '…' for key '…'`` |
-| 1452                         | `reference`  | ``A referenced row does not exist for `{constraint}` of {relation}: {database message}``                 |
-| 1451                         | `referenced` | ``The row of {relation} is still referenced through `{constraint}`: {database message}``                 |
-| 3819                         | `check`      | ``The row breaks check `{constraint}` of {relation}``                                                    |
-| 1142, 1143                   | `forbidden`  | `The connected account may not write to {relation}: {database message}`                                  |
+| Errno                        | `kind`       | Message                                                                                                                                                                 |
+| ---------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| checked before the write     | `invalid`    | `Field '{path}' cannot hold {value}: {reason}`, one per field, joined by `; `                                                                                           |
+| 1264, 1265, 1292, 1366, 1406 | `invalid`    | `Field '{schema}.{table}.{column}' cannot hold the value written: {detail}`                                                                                             |
+| 3854                         | `invalid`    | `Field '{schema}.{table}.?' cannot hold the value written: {detail}`, for text a computed value holds that the column's character set cannot; MySQL 9.7 names no column |
+| 1048, 1364                   | `missing`    | `Field '{schema}.{table}.{column}' of {relation} is required`                                                                                                           |
+| 1062                         | `duplicate`  | ``A row of {relation} already has this value of unique `{constraint}`: Duplicate entry '…' for key '…'``                                                                |
+| 1452                         | `reference`  | ``A referenced row does not exist for `{constraint}` of {relation}: {database message}``                                                                                |
+| 1451                         | `referenced` | ``The row of {relation} is still referenced through `{constraint}`: {database message}``                                                                                |
+| 3819                         | `check`      | ``The row breaks check `{constraint}` of {relation}``                                                                                                                   |
+| 1142, 1143                   | `forbidden`  | `The connected account may not write to {relation}: {database message}`                                                                                                 |
 
 No layer maps an `ExternalWriteError` to an HTTP status, so a client sees it as a failed write that carries this message.

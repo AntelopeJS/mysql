@@ -9,7 +9,11 @@ import {
   param,
   sql,
 } from "../../statement";
-import type { KeyColumn, KeyPart } from "../../implementations/database/paths";
+import {
+  type KeyColumn,
+  KeyColumnsOf,
+  type KeyPart,
+} from "../../implementations/database/paths";
 import type {
   DeclaredColumn,
   IndexPlan,
@@ -110,6 +114,7 @@ const REPRESENTATIONS: Record<SqlType["kind"], (value: Sql) => Sql> = {
 function KeyType(key: KeyColumn): Sql {
   switch (key.read) {
     case "double":
+    case "ranked-number":
       return sql`DOUBLE`;
     case "bool":
       return sql`TINYINT(1)`;
@@ -159,7 +164,11 @@ function IndexPart(part: KeyPart): Sql {
     case "stored":
       return ident(part.column);
     case "key":
-      return ident(part.key.name);
+    case "value":
+      return join(
+        KeyColumnsOf(part).map((key) => ident(key.name)),
+        sql`, `,
+      );
     case "elements":
       return sql`(CAST(${json.indexedElements(ident(part.column))} AS CHAR(${int(ELEMENT_CHARS)}) ARRAY))`;
   }

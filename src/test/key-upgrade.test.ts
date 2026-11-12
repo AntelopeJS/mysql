@@ -3,7 +3,7 @@ import type { SchemaDefinition } from "@antelopejs/interface-database/schema";
 import { Schema } from "@antelopejs/interface-database/schema";
 
 import { GetDialect, Read } from "../connection";
-import { type Sql, ident, lit, param, sql } from "../statement";
+import { type Sql, ident, int, lit, param, sql } from "../statement";
 import type { KeyColumn } from "../implementations/database/paths";
 import {
   GetTablePlan,
@@ -74,12 +74,17 @@ function ChainedRead(key: KeyColumn): Sql {
   );
 }
 
+/** The type a value key's column has: its text a `VARCHAR` of its width, its number a `DOUBLE`. */
+function ColumnType(key: KeyColumn): Sql {
+  return "fit" in key ? sql`VARCHAR(${int(key.fit.width)})` : sql`DOUBLE`;
+}
+
 /** Regenerates a key column with the chained read, as a table an earlier release made holds it. */
 function Downgrade(key: KeyColumn): Sql {
-  const width = "fit" in key ? key.fit.width : 0;
   const { json, scalar } = GetDialect().sql;
-  const value = scalar.left(json.key(key.read, ChainedRead(key)), width);
-  return sql`ALTER TABLE ${Table()} MODIFY COLUMN ${ident(key.name)} VARCHAR(${param(width)}) GENERATED ALWAYS AS (${value}) VIRTUAL COMMENT ${lit(key.definition)}`;
+  const read = json.key(key.read, ChainedRead(key));
+  const value = "fit" in key ? scalar.left(read, key.fit.width) : read;
+  return sql`ALTER TABLE ${Table()} MODIFY COLUMN ${ident(key.name)} ${ColumnType(key)} GENERATED ALWAYS AS (${value}) VIRTUAL COMMENT ${lit(key.definition)}`;
 }
 
 async function Generation(key: KeyColumn): Promise<string> {
@@ -133,11 +138,15 @@ describe("a key column an earlier release generated with one member read per key
 
   it("is left in place by the convergence of the same declaration", async () => {
     const deep = KeyColumns().filter((key) => key.path.length > 1);
-    expect(deep.map((key) => downgraded.get(key.name))).to.satisfy(
-      (expressions: string[]) =>
-        expressions.length === 1 &&
-        expressions[0].includes("json_extract(json_extract("),
-    );
+    expect(deep.map((key) => key.read).sort()).to.deep.equal([
+      "ranked-number",
+      "ranked-text",
+    ]);
+    for (const key of deep) {
+      expect(downgraded.get(key.name), key.read).to.include(
+        "json_extract(json_extract(",
+      );
+    }
     for (const key of KeyColumns()) {
       expect(await Generation(key)).to.equal(downgraded.get(key.name));
     }

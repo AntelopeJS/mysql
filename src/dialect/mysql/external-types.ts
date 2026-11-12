@@ -5,7 +5,7 @@ import type {
   ExternalTypeSyntax,
   NativeFamily,
 } from "../external";
-import { type Sql, join, lit, sql } from "../../statement";
+import { type Sql, ident, join, lit, sql } from "../../statement";
 import {
   BOOL,
   FLOAT,
@@ -15,6 +15,7 @@ import {
   TIMESTAMP,
 } from "../../implementations/database/types";
 import { CheckFor } from "./external-checks";
+import { session } from "./session";
 
 const FAMILY_BY_TYPE = new Map<string, NativeFamily>([
   ["char", "text"],
@@ -52,6 +53,17 @@ type Value = (column: Sql) => Sql;
 
 const Bare: Value = (column) => column;
 const AsText: Value = (column) => sql`CAST(${column} AS CHAR)`;
+
+/** The character set every value the module binds or computes is in. */
+const WIDE_CHARSET = "utf8mb4";
+
+/**
+ * Text as an expression in the wide character set, which the server converts into a column's own
+ * when it compares or stores it: a value bound bare is converted itself, and refused outright when
+ * the column's character set cannot hold it.
+ */
+const Wide: Value = (value) =>
+  sql`CONVERT(${value} USING ${ident(WIDE_CHARSET)})`;
 const AsDouble: Value = (column) => sql`CAST(${column} AS DOUBLE)`;
 const AsBoolean: Value = (column) => sql`(${column} <> 0)`;
 const DayAsInstant: Value = (column) => sql`CAST(${column} AS DATETIME(6))`;
@@ -109,9 +121,32 @@ const IntegerNumber: Conversion = (other, operator) =>
 const FloatConversion: Conversion = (other, operator) =>
   operator === "=" ? sql`CAST(${other} AS FLOAT)` : other;
 
+/**
+ * Text compared with a text column, in the column's own character set and collation, which is what
+ * keeps the column's index serving the comparison: a value the character set cannot hold is NULL,
+ * so it matches nothing rather than the replacement marks a conversion would leave. The value is
+ * converted as an expression, never as a bound value itself, which the server refuses to narrow.
+ */
+function TextIn(column: CatalogColumn): Conversion {
+  const { charset, collation } = column;
+  if (charset === null || collation === null) {
+    return Unconverted;
+  }
+  return (other) => {
+    const wide = Wide(other);
+    if (charset === WIDE_CHARSET) {
+      return sql`(${wide} COLLATE ${ident(collation)})`;
+    }
+    const held = sql`CONVERT(${wide} USING ${ident(charset)}) COLLATE ${ident(collation)}`;
+    const back = sql`CAST(CONVERT(${held} USING ${ident(WIDE_CHARSET)}) AS BINARY)`;
+    return sql`IF(${back} = CAST(${wide} AS BINARY), ${held}, NULL)`;
+  };
+}
+
+/** The families whose values are text in the column's own character set and collation. */
+const TEXT_FAMILIES: readonly NativeFamily[] = ["text", "enum"];
+
 const TEXT_CONVERSIONS: Partial<Record<NativeFamily, Conversion>> = {
-  text: Unconverted,
-  enum: Unconverted,
   int: IntegerText,
   bigint: IntegerText,
   decimal: DecimalText,
@@ -128,6 +163,7 @@ interface Reading {
   readonly lossy?: string;
   readonly conversion?: Conversion;
   readonly writing?: Value;
+  readonly present?: Value;
 }
 
 const LOSSY_BIGINT =
@@ -140,8 +176,8 @@ const NAIVE = "a DATETIME holds no time zone and is read as UTC";
 const MICROSECONDS = "microseconds are truncated to milliseconds";
 
 const TEXT_READINGS: Partial<Record<NativeFamily, Reading>> = {
-  text: { value: Bare, conversion: Unconverted, writing: Bare },
-  enum: { value: Bare, conversion: Unconverted, writing: Bare },
+  text: { value: Bare, writing: Wide },
+  enum: { value: Bare, writing: Wide },
   set: { value: Bare },
   rendered: { value: AsText, writing: Bare },
   int: { value: AsText, conversion: IntegerText, writing: Bare },
@@ -173,10 +209,42 @@ const FLOAT_READINGS: Partial<Record<NativeFamily, Reading>> = {
   double: { value: Bare, writing: Bare },
 };
 
+/**
+ * Whether a date or a time names a day that exists. A server without `NO_ZERO_DATE` or
+ * `NO_ZERO_IN_DATE` may have stored `0000-00-00` or a zero month or day, which is no instant.
+ */
+const RealDay: Value = (column) =>
+  sql`(MONTH(${column}) <> 0 AND DAYOFMONTH(${column}) <> 0)`;
+
+/** A reading that answers NULL, an absent value, where the column holds no real day, on every server version. */
+function OnRealDays(value: Value): Value {
+  return (column) => sql`IF(${RealDay(column)}, ${value(column)}, NULL)`;
+}
+
+/**
+ * Instants read as absent where they name no real day, and compared through the bare column, so its
+ * index serves the comparison, only where they do.
+ */
 const TIMESTAMP_READINGS: Partial<Record<NativeFamily, Reading>> = {
-  timestamp: { value: Bare, writing: Bare },
-  datetime: { value: Bare, lossy: NAIVE, writing: Bare },
-  date: { value: DayAsInstant, conversion: Unconverted, writing: AsDay },
+  timestamp: {
+    value: OnRealDays(Bare),
+    conversion: Unconverted,
+    writing: Bare,
+    present: RealDay,
+  },
+  datetime: {
+    value: OnRealDays(Bare),
+    lossy: NAIVE,
+    conversion: Unconverted,
+    writing: Bare,
+    present: RealDay,
+  },
+  date: {
+    value: OnRealDays(DayAsInstant),
+    conversion: Unconverted,
+    writing: AsDay,
+    present: RealDay,
+  },
 };
 
 /**
@@ -270,6 +338,15 @@ function ReadOnlyReason(
     : `a ${column.native} column, read-only in this version`;
 }
 
+/** How a column of the family takes a value compared with it, for the column itself. */
+function ConversionOf(
+  family: NativeFamily,
+  column: CatalogColumn,
+  conversion: Conversion | undefined,
+): Conversion | undefined {
+  return TEXT_FAMILIES.includes(family) ? TextIn(column) : conversion;
+}
+
 function ReadingOf(kind: SqlType, column: CatalogColumn) {
   const family = Family(column);
   const reading = family ? READINGS[kind.kind][family] : undefined;
@@ -280,8 +357,9 @@ function ReadingOf(kind: SqlType, column: CatalogColumn) {
   return {
     family,
     value: reading.value,
+    present: reading.present,
     lossy: InstantLoss(kind, family, column, reading.lossy),
-    conversion: reading.conversion,
+    conversion: ConversionOf(family, column, reading.conversion),
     numeric: kind.kind === "float" && NUMERIC_FAMILIES.includes(family),
     writing: readOnly ? undefined : reading.writing,
     readOnly,
@@ -299,9 +377,9 @@ function KeyReading(column: CatalogColumn): ColumnReading | undefined {
   return {
     family,
     value: text?.value ?? AsText,
-    conversion: TEXT_CONVERSIONS[family],
+    conversion: ConversionOf(family, column, TEXT_CONVERSIONS[family]),
     numeric: false,
-    writing: readOnly ? undefined : Bare,
+    writing: readOnly ? undefined : (text?.writing ?? Bare),
     readOnly,
     check: CheckFor(TEXT, family, column),
   };
@@ -314,22 +392,46 @@ function AsRead(kind: SqlType, value: Sql): Sql {
     : value;
 }
 
-/** One JSON string inside an array, its escaped characters kept as written. */
-const JSON_STRING = String.raw` *"((?:[^"\\]|\\.)*)" *`;
+/** Text as its bytes in the wide character set: equal only to the same code points, whatever a collation folds. */
+function Exact(value: Sql): Sql {
+  return sql`CAST(${Wide(value)} AS BINARY)`;
+}
+
+/**
+ * Whether two values read alike, NULL included: as a read answers them, and text code point for
+ * code point, since a read answers the text itself and not what the column's collation equates.
+ */
+function SameRead(kind: SqlType, left: Sql, right: Sql): Sql {
+  return kind.kind === "text"
+    ? sql`(${Exact(left)} <=> ${Exact(right)})`
+    : sql`(${AsRead(kind, left)} <=> ${AsRead(kind, right)})`;
+}
+
+/**
+ * The body of one JSON string as JSON spells it: any character but a quote, a backslash or a
+ * control character, or one of JSON's escapes, a `\u` escape of a surrogate only within a pair.
+ */
+const JSON_STRING_BODY = String.raw`(?:[^"\\\x{00}-\x{1F}]|\\["\\/bfnrt]|\\u(?![dD][89a-fA-F])[0-9a-fA-F]{4}|\\u[dD][89abAB][0-9a-fA-F]{2}\\u[dD][c-fC-F][0-9a-fA-F]{2})*`;
+
+/** One JSON string inside an array, its body captured as written. */
+const JSON_STRING = ` *"(${JSON_STRING_BODY})" *`;
 
 /**
  * Each part of a composite `_id` as text, from the text of a JSON array of exactly the key's width
- * of strings, matched with a pattern rather than parsed: the server raises on JSON text it cannot
- * parse as soon as the statement is prepared, whatever guards it.
+ * of strings: the pattern checks the array and every string in it, and the server's own JSON
+ * reading unescapes each body, which only a valid JSON string ever reaches. The server raises on
+ * JSON text it cannot parse, so a malformed `_id` gives the reading an empty string and the part
+ * NULL. Each part is text in the session's collation, which a key column's conversion takes into the
+ * column's own.
  */
 function IdParts(id: Sql, width: number): Sql[] {
   const strings = Array.from({ length: width }, () => JSON_STRING).join(",");
   const pattern = lit(`^\\[${strings}\\]$`);
+  const valid = sql`(${id} REGEXP ${pattern})`;
   return Array.from({ length: width }, (_, position) => {
-    const part = sql`REGEXP_REPLACE(${id}, ${pattern}, ${lit(`$${position + 1}`)})`;
-    const quotes = sql`REPLACE(${part}, ${lit('\\"')}, ${lit('"')})`;
-    const unescaped = sql`REPLACE(${quotes}, ${lit("\\\\")}, ${lit("\\")})`;
-    return sql`IF(${id} REGEXP ${pattern}, ${unescaped}, NULL)`;
+    const body = sql`IF(${valid}, REGEXP_REPLACE(${id}, ${pattern}, ${lit(`$${position + 1}`)}), '')`;
+    const unescaped = sql`JSON_UNQUOTE(CONCAT('"', ${body}, '"')) COLLATE ${ident(session.binaryCollation)}`;
+    return sql`IF(${valid}, ${unescaped}, NULL)`;
   });
 }
 
@@ -339,6 +441,7 @@ export const types: ExternalTypeSyntax = {
   keyReading: KeyReading,
   proposed: (family) => PROPOSED[family],
   asRead: AsRead,
+  sameRead: SameRead,
   compositeId: (parts) =>
     sql`CAST(JSON_ARRAY(${join(parts, sql`, `)}) AS CHAR)`,
   idParts: IdParts,

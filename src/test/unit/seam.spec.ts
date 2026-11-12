@@ -41,6 +41,8 @@ const MASKED_JSON: JsonSyntax = {
   is: (value) => Marked(value),
   as: (value) => Marked(value),
   key: (_read, value) => Marked(value),
+  ranks: { null: 0, number: 1, string: 2, object: 3, array: 4, boolean: 5 },
+  tagged: (_rank, text) => Marked(...Present(text)),
   of: (value) => Marked(value),
   parse: (text) => Marked(text),
   text: (value) => Marked(value),

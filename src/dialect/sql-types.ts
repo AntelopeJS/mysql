@@ -82,6 +82,16 @@ export interface JsonSyntax {
    * member, so an index serves what a statement reads.
    */
   key(read: KeyColumn["read"], value: Sql): Sql;
+  /**
+   * The place of each kind in the engine's own sort order of JSON values, lowest first. A value
+   * key's `text` column leads with it as a tag, and a boolean's value orders it further.
+   */
+  readonly ranks: Readonly<Record<JsonKind, number>>;
+  /**
+   * What a value key's `text` column holds for a value of the kind ranked `rank`: the rank's tag,
+   * followed by `text` where the kind has one. A value of a higher rank holds a greater one.
+   */
+  tagged(rank: number, text?: Sql): Sql;
   /** A scalar of `kind` as a JSON value. */
   of(value: Sql, kind: ScalarKind): Sql;
   /** JSON text, parsed. */

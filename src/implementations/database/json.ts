@@ -1,11 +1,14 @@
 import assert from "node:assert";
 
 import type { Dialect } from "../../dialect";
-import { type Sql, sql } from "../../statement";
+import { type Sql, join, sql } from "../../statement";
 import type { KeyColumn } from "./paths";
 import type { SqlType } from "./types";
+import { ValueKeyAt, ValueKeyRead } from "./value-key";
 import {
   type Compiled,
+  Equal,
+  type Equality,
   type KeyReference,
   QualifiedColumn,
   type ValuePath,
@@ -14,7 +17,9 @@ import {
 type KeyRead = KeyColumn["read"];
 
 /** The key column read a value read out of JSON as each scalar kind lands on. */
-const MEMBER_KEY_READS: Partial<Record<SqlType["kind"], KeyRead>> = {
+const MEMBER_KEY_READS: Partial<
+  Record<SqlType["kind"], Extract<KeyRead, "string" | "double" | "bool">>
+> = {
   text: "string",
   float: "double",
   bool: "bool",
@@ -48,20 +53,51 @@ export function KeyAt(
       key.source === source && key.read === read && SamePath(key.path, path),
   );
   const best = matches.sort((left, right) => KeyRank(right) - KeyRank(left))[0];
-  return (
-    best && {
-      column: QualifiedColumn(alias, best.name),
-      key: best,
-      rows: "every",
-    }
-  );
+  return best && TypedKeyReference(alias, best);
 }
 
-function KeyOfPath(path: ValuePath, read: KeyRead): KeyReference | undefined {
+/** A key column of a typed read at a row's alias, which holds the value on every row and NULL where it is absent. */
+export function TypedKeyReference(alias: string, key: KeyColumn): KeyReference {
+  const column = QualifiedColumn(alias, key.name);
+  return {
+    column,
+    key,
+    rows: "every",
+    pins: [],
+    absent: sql`${column} IS NULL`,
+  };
+}
+
+/**
+ * The key column of a typed read at a path: one keyed by that read where the declaration types the
+ * path, or else the value key over it, which holds a value of every kind.
+ */
+function KeyOfPath(
+  dialect: Dialect,
+  path: ValuePath,
+  read: Extract<KeyRead, "string" | "double" | "bool">,
+): KeyReference | undefined {
   const column = path.column;
-  return (
-    column && KeyAt(column.alias, column.keys, column.source, path.path, read)
+  if (!column) {
+    return undefined;
+  }
+  const typed = KeyAt(
+    column.alias,
+    column.keys,
+    column.source,
+    path.path,
+    read,
   );
+  if (typed) {
+    return typed;
+  }
+  const value = ValueKeyAt(
+    column.alias,
+    column.values,
+    column.source,
+    path.path,
+  );
+  return value && ValueKeyRead(dialect, value, read);
 }
 
 /**
@@ -74,6 +110,7 @@ function KeyOfPath(path: ValuePath, read: KeyRead): KeyReference | undefined {
  * such a read to a default names the column too, as holding it only where it is set.
  */
 export function PathReference(
+  dialect: Dialect,
   value: Pick<Compiled, "path" | "defaulted">,
   target: SqlType,
 ): KeyReference | undefined {
@@ -82,9 +119,9 @@ export function PathReference(
     return undefined;
   }
   if (value.path) {
-    return KeyOfPath(value.path, read);
+    return KeyOfPath(dialect, value.path, read);
   }
-  const fallback = value.defaulted && KeyOfPath(value.defaulted, read);
+  const fallback = value.defaulted && KeyOfPath(dialect, value.defaulted, read);
   return fallback && { ...fallback, rows: "set" };
 }
 
@@ -136,6 +173,34 @@ const MIRRORED: Record<Ordering, Ordering> = {
   ">=": "<=",
 };
 
+/** The operand as a key column holds it: tagged as the column tags its kind, and cut to a prefix's width. */
+function Held(dialect: Dialect, key: KeyReference, other: Sql): Sql {
+  const tagged =
+    key.tag === undefined ? other : dialect.sql.json.tagged(key.tag, other);
+  const fit = "fit" in key.key ? key.key.fit : undefined;
+  return fit?.kind === "prefix"
+    ? dialect.sql.scalar.left(tagged, fit.width)
+    : tagged;
+}
+
+/**
+ * The other end of a tagged column's region for an ordering: values of one kind lie between its
+ * tag and the next rank's, so a bound on one side of the operand is closed on the other by them.
+ */
+function TagRegion(
+  dialect: Dialect,
+  key: KeyReference,
+  operator: Ordering,
+): Sql | undefined {
+  if (key.tag === undefined || operator === "=") {
+    return undefined;
+  }
+  const json = dialect.sql.json;
+  return operator === "<" || operator === "<="
+    ? sql`${key.column} >= ${json.tagged(key.tag)}`
+    : sql`${key.column} < ${json.tagged(key.tag + 1)}`;
+}
+
 function KeyedBound(
   dialect: Dialect,
   key: KeyReference,
@@ -143,11 +208,17 @@ function KeyedBound(
   operator: Ordering,
 ): Sql {
   const fit = "fit" in key.key ? key.key.fit : undefined;
+  const compare = fit?.kind === "prefix" ? PREFIX_BOUNDS[operator] : operator;
+  const compared = sql`${key.column} ${OPERATORS[compare]} ${Held(dialect, key, other.sql)}`;
+  const region = TagRegion(dialect, key, operator);
+  const parts = [
+    ...(key.pins.length > 0 ? [Equal(key.pins)] : []),
+    ...(region ? [region] : []),
+    compared,
+  ];
   const bound =
-    fit?.kind === "prefix"
-      ? sql`${key.column} ${OPERATORS[PREFIX_BOUNDS[operator]]} ${dialect.sql.scalar.left(other.sql, fit.width)}`
-      : sql`${key.column} ${OPERATORS[operator]} ${other.sql}`;
-  return key.rows === "set" ? sql`(${bound} OR ${key.column} IS NULL)` : bound;
+    parts.length === 1 ? compared : sql`(${join(parts, sql` AND `)})`;
+  return key.rows === "set" ? sql`(${bound} OR ${key.absent})` : bound;
 }
 
 /**
@@ -178,7 +249,7 @@ export function Compare(
 }
 
 /**
- * The key column an equality on `value` can be served by, and `other` fitted to what it holds: the
+ * The key columns an equality on `value` can be served by, and `other` fitted to what they hold: the
  * form a list of keys takes, where {@link Compare} takes one pair at a time. A key `set` only on
  * some rows cannot stand for the value in a list, so it serves none.
  */
@@ -186,15 +257,15 @@ export function EqualityKey(
   dialect: Dialect,
   value: Compiled,
   other: Sql,
-): { readonly column: Sql; readonly bound: Sql } | undefined {
+): Equality[] | undefined {
   if (!value.key || value.key.rows === "set") {
     return undefined;
   }
   const key = value.key;
-  const fit = "fit" in key.key ? key.key.fit : undefined;
-  const bound =
-    fit?.kind === "prefix" ? dialect.sql.scalar.left(other, fit.width) : other;
-  return { column: key.column, bound };
+  return [
+    ...key.pins,
+    { column: key.column, value: Held(dialect, key, other) },
+  ];
 }
 
 /**

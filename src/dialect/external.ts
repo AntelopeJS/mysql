@@ -41,6 +41,9 @@ export interface CatalogColumn {
   readonly comment: string | null;
   /** An enum's labels, in their sort order. */
   readonly enumLabels: readonly string[] | null;
+  /** A text column's character set and collation, which a value compared with it or written to it is converted into. */
+  readonly charset: string | null;
+  readonly collation: string | null;
 }
 
 /** An index of a relation; `columns` is empty when any part is an expression. */
@@ -128,6 +131,11 @@ export type ValueCheck = (value: CheckedValue) => string | undefined;
 export interface ColumnReading {
   readonly family: NativeFamily;
   readonly value: (column: Sql) => Sql;
+  /**
+   * Where the column holds a value its read answers, for a column that can hold one it reads as
+   * absent: a comparison through the bare column holds only there.
+   */
+  readonly present?: (column: Sql) => Sql;
   readonly lossy?: string;
   readonly conversion?: Conversion;
   readonly numeric: boolean;
@@ -147,6 +155,11 @@ export interface ExternalTypeSyntax {
   proposed(family: NativeFamily): SqlType;
   /** A value at the precision a read of `kind` answers it, which is what "unchanged" means. */
   asRead(kind: SqlType, value: Sql): Sql;
+  /**
+   * Whether two values of `kind` read alike, NULL equal to NULL: at the precision a read answers,
+   * and text code point for code point, whatever the column's collation equates.
+   */
+  sameRead(kind: SqlType, left: Sql, right: Sql): Sql;
   /** A composite key's `_id`: its parts' texts, as the text of one JSON array. */
   compositeId(parts: readonly Sql[]): Sql;
   /**

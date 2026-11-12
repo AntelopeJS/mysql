@@ -98,6 +98,11 @@ function BooleanStage(operator: Sql): StageHandler {
   });
 }
 
+/** A test that holds only where the native columns a pair compares bare hold a value a read answers. */
+function WherePresent(pair: CompiledPair, test: Sql): Sql {
+  return pair.present ? sql`(${pair.present} AND ${test})` : test;
+}
+
 function Comparison(
   dialect: Dialect,
   value: Compiled,
@@ -105,7 +110,8 @@ function Comparison(
   operator: Ordering,
 ): Compiled {
   const pair = UnifyOperands(dialect, value, other, operator);
-  return { sql: Compare(dialect, pair.left, pair.right, operator), type: BOOL };
+  const compared = Compare(dialect, pair.left, pair.right, operator);
+  return { sql: WherePresent(pair, compared), type: BOOL };
 }
 
 const Identical: Equality = (dialect, value, other) =>
@@ -141,10 +147,8 @@ function Distinguishable(
 const Distinct: Equality = (dialect, value, other) => {
   const pair = Distinguishable(dialect, value, other);
   if (pair.converted) {
-    return {
-      sql: sql`((${pair.left.sql} = ${pair.right.sql}) IS NOT TRUE)`,
-      type: BOOL,
-    };
+    const same = sql`(${pair.left.sql} = ${pair.right.sql})`;
+    return { sql: sql`(${WherePresent(pair, same)} IS NOT TRUE)`, type: BOOL };
   }
   const same = dialect.sql.rows.nullSafeEqual(pair.left.sql, pair.right.sql);
   return { sql: sql`(NOT ${same})`, type: BOOL };

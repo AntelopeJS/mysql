@@ -67,10 +67,11 @@ The module reads each column as the type that its field declares, the same way w
 | `object`, `any`, a list | `JSON`                                                                                              |
 
 - `DATETIME` reads as UTC, and `DATE` as midnight UTC.
+- A zero date, `0000-00-00`, or one with a zero month or day, which a server without `NO_ZERO_DATE` may hold, reads as absent on every server version. It satisfies no comparison but `ne`, as an absent value does, and sorts before every real date. A profile leaves it out of the column's range and months.
 - A `BIGINT` or `DECIMAL` declared `string` reads as its exact text.
-- Comparisons, `get`, `getAll`, `lookup` and `orderBy` compare the column in its own type, so the database's indexes serve them. A value that is not valid for the column, such as an unknown `ENUM` label or a fraction for an integer, matches nothing. It does not fail the query.
+- Comparisons, `get`, `getAll`, `lookup` and `orderBy` compare the column in its own type, so the database's indexes serve them. A value that is not valid for the column, such as an unknown `ENUM` label, a fraction for an integer, or text its character set cannot hold, such as an emoji against a `utf8mb3` or `latin1` column, matches nothing. It does not fail the query.
 - Sorting follows the column's own order. An `ENUM` sorts in its declared order but compares by its label, and a `BIGINT` declared `string` sorts numerically.
-- A column with a case-insensitive collation, such as one ending in `_ci`, compares in that collation, as the column does.
+- A text column compares in its own collation, as the column does, and so does each text part of a composite `_id`. One ending in `_ci` ignores case.
 - MySQL has no `uuid` type. A `CHAR(36)` key accepts any 36 characters.
 
 ## `_id`
@@ -78,7 +79,7 @@ The module reads each column as the type that its field declares, the same way w
 Every row of a table with a key answers `_id`, the key as a string, beside the key columns under their own names. Declare it as `@Field("string") declare _id: string`.
 
 - With a single-column primary key, `_id` is its value: `"42"`. A date or a time key reads as the server spells it in UTC, such as `"2026-01-01 10:00:00.123456"`.
-- With a composite primary key, `_id` is its parts as a JSON array of strings: `["42", "3"]`. Only the `\"` and `\\` escapes are understood in it.
+- With a composite primary key, `_id` is its parts as a JSON array of strings: `["42", "3"]`. It is read as JSON, so every escape JSON defines is understood in it, such as `\n` for a part that holds a newline. An `_id` that is not such an array names no row.
 - With no primary key but a unique index over `NOT NULL` columns, that index is the key. If several qualify, the one with the fewest columns wins, then the first by name. A prefix index and an invisible index never count. A `FLOAT`, `DOUBLE`, `SET` or `JSON` column is never part of a key.
 
 The module reads a relation with no key at all without `_id`: a table without a primary key or such an index, and every view. Queries, counts and aggregations work. `get`, `getAll` without an index, and `_id` itself are refused, and declaring `_id` on such a relation fails registration.
@@ -92,8 +93,8 @@ The module reads a relation with no key at all without `_id`: a table without a 
 - An `AUTO_INCREMENT` key may be left out of an `insert`, and the module answers the key the database generated. It also accepts an explicit value, as MySQL does. A key that only a `DEFAULT` expression such as `UUID()` fills must be given, because nothing answers it back.
 - The database fills generated columns, and the module treats `SET` columns as read-only. `update` and `replace` ignore a value for one of them, so writing back a whole row that you read works. `insert` refuses such a value.
 - A field that an `insert` leaves out takes the column's `DEFAULT`. A field that `replace` leaves out takes its `DEFAULT` too, or NULL when it has none. `update` clears a field given as `undefined` or `null`.
-- The module checks every value it can against its column's exact type before it writes anything, because MySQL rounds silently where it could refuse: a string too long for `VARCHAR(n)`, an unknown `ENUM` label, a fraction or an out-of-range number for an integer, too many integer digits for a `DECIMAL`, and a date out of range for its column. A value that does not fit refuses the write and names the field. Strict mode refuses the rest, and that error is mapped the same way.
-- A column keeps its stored value when the written value equals what a read of it answers. A row that you read and write back whole therefore loses nothing that a read could not spell, such as a `BIGINT` beyond 2^53 read as a number, or microseconds. A write that changes nothing changes no row and answers 0.
+- The module checks every value it can against its column's exact type before it writes anything, because MySQL rounds silently where it could refuse: a string too long for `VARCHAR(n)`, an unknown `ENUM` label, a fraction or an out-of-range number for an integer, too many integer digits for a `DECIMAL`, a date out of range for its column, and text the column's character set cannot hold, such as an emoji for a `utf8mb3` column or `日本` for a `latin1` one. A value that does not fit refuses the write and names the field. Strict mode refuses the rest, and that error is mapped the same way.
+- A column keeps its stored value when the written value equals what a read of it answers. A row that you read and write back whole therefore loses nothing that a read could not spell, such as a `BIGINT` beyond 2^53 read as a number, or microseconds. A write that changes nothing changes no row and answers 0. Text compares code point for code point here, whatever the column's collation equates, so writing `"ABC"` over `"Abc"`, `"café"` over `"cafe"` or `"b"` over `"b  "` changes the row.
 - `insert` answers each new row's `_id` in input order, keys that the database generates included. Each document is one `INSERT`, all in one transaction.
 - `insert` with a conflict mode locks the row by its key, then updates or inserts it. A clash on another unique index still fails, as `duplicate`.
 - A constraint that the database enforces surfaces as an `ExternalWriteError`. Its `kind` is `invalid`, `missing`, `duplicate`, `reference`, `referenced`, `check` or `forbidden`, and it names the field or the constraint concerned. [Errors and refusals](./errors.md#external-write-errors) lists the errno behind each kind.

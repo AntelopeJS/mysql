@@ -62,22 +62,22 @@ describe("A read", () => {
     );
   });
 
-  it("names the key column a path below a declared object reads into, read as a string", () => {
+  it("names the text column of the value key a path below a declared object reads into, its operand tagged as a string", () => {
     const bound = Compile(
       Root().filter((doc) => doc.key("meta").key("title").eq("Dr")),
     );
     expect(bound.sql).to.match(
-      /`t0`\.`__k_meta_title_[0-9a-f]{8}` = \? AND \(CASE WHEN/,
+      /\(`t0`\.`__k_meta_title_[0-9a-f]{8}` = CONCAT\('2', \?\) AND \(CASE WHEN/,
     );
     expect(bound.sql).to.include("JSON_EXTRACT(`t0`.`meta`, '$.\"title\"')");
   });
 
-  it("names the key column of an overflow path", () => {
+  it("names the value key of an overflow path, its text cut to the prefix it holds", () => {
     const bound = Compile(
       Root().filter((doc) => doc.key("_internal").key("owner").eq("u1")),
     );
     expect(bound.sql).to.match(
-      /`t0`\.`__k__internal_owner_[0-9a-f]{8}` = LEFT\(\?, 640\)/,
+      /`t0`\.`__k__internal_owner_[0-9a-f]{8}` = LEFT\(CONCAT\('2', \?\), 638\)/,
     );
   });
 

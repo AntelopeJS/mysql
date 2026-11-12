@@ -5,7 +5,10 @@ import type { MigrationMode } from "../../config";
 import { Bind } from "../../statement";
 import { DIALECTS, type ObservedTable } from "../../dialect";
 import { ParseTable } from "../../implementations/database/fields";
-import type { KeyPart } from "../../implementations/database/paths";
+import {
+  KeyColumnsOf,
+  type KeyPart,
+} from "../../implementations/database/paths";
 import {
   BuildTablePlan,
   type TablePlan,
@@ -39,14 +42,15 @@ function Plan(definition: TableDefinition): TablePlan {
   ).plan;
 }
 
-function PartColumn(part: KeyPart): string | undefined {
+function PartColumns(part: KeyPart): (string | undefined)[] {
   switch (part.kind) {
     case "key":
-      return part.key.name;
+    case "value":
+      return KeyColumnsOf(part).map((key) => key.name);
     case "elements":
-      return undefined;
+      return [undefined];
     default:
-      return part.column;
+      return [part.column];
   }
 }
 
@@ -68,7 +72,7 @@ function Created(plan: TablePlan): ObservedTable {
       name: index.name,
       unique: index.unique,
       comment: index.signature,
-      columns: index.parts.map(PartColumn),
+      columns: index.parts.flatMap(PartColumns),
     })),
     triggers: [],
   };

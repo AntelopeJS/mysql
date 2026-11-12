@@ -138,6 +138,8 @@ function ParseColumn(row: Row): CatalogColumn {
     autoIncrement: AUTO_INCREMENT.test(extra),
     comment: comment === "" ? null : comment,
     enumLabels: EnumLabels(native, dataType),
+    charset: OptionalText(row, "charset"),
+    collation: OptionalText(row, "collation_name"),
   };
 }
 
@@ -239,7 +241,8 @@ export const catalog: ExternalCatalogSyntax = {
   parseRelation: ParseRelation,
   columns: (schema, table) =>
     sql`SELECT COLUMN_NAME AS name, COLUMN_TYPE AS native, DATA_TYPE AS data_type, IS_NULLABLE AS nullable,
-      COLUMN_DEFAULT AS default_value, EXTRA AS extra, COLUMN_COMMENT AS comment
+      COLUMN_DEFAULT AS default_value, EXTRA AS extra, COLUMN_COMMENT AS comment,
+      CHARACTER_SET_NAME AS charset, COLLATION_NAME AS collation_name
       FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ${param(schema)} AND TABLE_NAME = ${param(table)}
       ORDER BY ORDINAL_POSITION`,
   parseColumn: ParseColumn,

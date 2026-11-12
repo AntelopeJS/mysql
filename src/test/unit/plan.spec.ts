@@ -40,7 +40,7 @@ function Index(definition: TableDefinition, name: string): IndexPlan {
   return found ?? Plan(definition).plan.indexes[0];
 }
 
-/** Each part as `kind:column`, with the read and the fit of a key column. */
+/** Each part as `kind:column`, with the read and the fit of a key column, and the fit of a value key's text. */
 function Parts(index: IndexPlan): string[] {
   return index.parts.map((part: KeyPart) => {
     switch (part.kind) {
@@ -53,6 +53,10 @@ function Parts(index: IndexPlan): string[] {
         const { key } = part;
         const fit = "fit" in key ? `:${key.fit.kind}${key.fit.width}` : "";
         return `key:${key.source}${JSON.stringify(key.path)}:${key.read}${fit}`;
+      }
+      case "value": {
+        const { text } = part.key;
+        return `value:${text.source}${JSON.stringify(text.path)}:${text.fit.kind}${text.fit.width}`;
       }
     }
   });
@@ -125,10 +129,24 @@ describe("BuildTablePlan key parts", () => {
     );
   });
 
-  it("reads a dotted field below a declared document as a nested path", () => {
+  it("reads a dotted field below a declared document as a nested path, keyed as a value of any kind", () => {
     const index = Index(
       {
         fields: { title: "object" },
+        indexes: { titleFr: { fields: ["title.fr"] } },
+      },
+      "titleFr",
+    );
+    expect(Parts(index)).to.deep.equal([
+      "instance:_instance",
+      'value:title["fr"]:prefix638',
+    ]);
+  });
+
+  it("keys a path a nested record declares a string by its text alone", () => {
+    const index = Index(
+      {
+        fields: { title: { fr: "string", en: "string" } },
         indexes: { titleFr: { fields: ["title.fr"] } },
       },
       "titleFr",
@@ -149,16 +167,16 @@ describe("BuildTablePlan key parts", () => {
     );
     expect(Parts(owner)).to.deep.equal([
       "instance:_instance",
-      'key:_extra["_internal","data","owner"]:string:prefix640',
+      'value:_extra["_internal","data","owner"]:prefix638',
     ]);
     const sku = Index({ fields: {}, indexes: { sku: {} } }, "sku");
     expect(Parts(sku)).to.deep.equal([
       "instance:_instance",
-      'key:_extra["sku"]:string:prefix640',
+      'value:_extra["sku"]:prefix638',
     ]);
   });
 
-  it("reads a member by its declared type: a number as a number, an object as JSON text", () => {
+  it("reads a member by its declared type: a number as a number, a string as text", () => {
     const index = Index(
       {
         fields: { stats: { rank: "number", label: "string" } },
@@ -173,14 +191,14 @@ describe("BuildTablePlan key parts", () => {
     ]);
   });
 
-  it("keys a whole document on its canonical JSON text", () => {
+  it("keys a whole document as a value of any kind, its number taking 8 bytes of the budget", () => {
     const index = Index(
       { fields: { title: "object" }, indexes: { title: {} } },
       "title",
     );
     expect(Parts(index)).to.deep.equal([
       "instance:_instance",
-      "key:title[]:json:prefix640",
+      "value:title[]:prefix638",
     ]);
   });
 
@@ -296,7 +314,7 @@ describe("BuildTablePlan multi and crossInstance indexes", () => {
     );
     expect(Parts(index)).to.deep.equal([
       "instance:_instance",
-      "key:scores[]:json:prefix640",
+      "value:scores[]:prefix638",
     ]);
   });
 
