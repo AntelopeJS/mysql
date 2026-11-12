@@ -1,6 +1,6 @@
 # Feature map
 
-One file per feature. Every journey that reaches the server runs on MySQL 8.4 under its id and on MariaDB 11.8 under `<id>-mariadb`; `ENGINES` in `session.ts` lists the two. `covers:` lists the source globs it owns, `docs:` the pages a verdict judges, and `journeys:` the journeys it runs. `pnpm exec antelopejs-verify map` checks that every user-facing file is covered.
+One file per feature. Every repository journey that reaches the server runs on MySQL 8.4 under its id and on MariaDB 11.8 under `<id>-mariadb`; `ENGINES` in `session.ts` lists the two. The pack's `module-dev` takes the one `moduleConfig` and runs on MySQL only; each `-mariadb` journey starts `ajs project dev` on MariaDB and checks that Ctrl+C exits 130. `covers:` lists the source globs it owns, `docs:` the pages a verdict judges, and `journeys:` the journeys it runs. `pnpm exec antelopejs-verify map` checks that every user-facing file is covered.
 
 | Feature | What the user does | Journeys |
 |---|---|---|
@@ -11,4 +11,4 @@ One file per feature. Every journey that reaches the server runs on MySQL 8.4 un
 | [feeds](feeds.md) | A consumer module follows `changes()` on a table while it and other writers write. | change-feeds, change-feeds-mariadb |
 | [external](external.md) | The developer points an external instance at a client's database and reads and writes its rows. | external-read-write, external-registration, external-read-write-mariadb, external-registration-mariadb |
 | [catalog](catalog.md) | A generator describes, profiles and samples the client's database through the catalog. | catalog-describe, catalog-refused, catalog-describe-mariadb, catalog-refused-mariadb |
-| [smoke](smoke.md) | The fixed journey every verdict runs: load the module and write rows read back with the native client, on MySQL 8.4 and MariaDB 11.8. | module-dev, insert-values, insert-values-mariadb |
+| [smoke](smoke.md) | The fixed journey every verdict runs: load the module and write rows read back with the native client, on MySQL 8.4 and, through `insert-values-mariadb`, MariaDB 11.8. | module-dev, insert-values, insert-values-mariadb |
