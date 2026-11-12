@@ -25,8 +25,8 @@ describe("The MySQL regular expression translation", () => {
     expect(translate("[a&&b]")).to.equal("[a\\&\\&b]");
   });
 
-  it("leaves a word boundary and a named group, which ICU reads as JavaScript does", () => {
-    expect(translate("\\b(?<x>a)")).to.equal("\\b(?<x>a)");
+  it("leaves a named group and a back reference, which ICU reads as JavaScript does", () => {
+    expect(translate("(?<x>a)\\1")).to.equal("(?<x>a)\\1");
   });
 
   it("ends a class at its closing bracket, so what follows is outside it", () => {
