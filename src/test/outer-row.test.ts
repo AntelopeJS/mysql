@@ -202,7 +202,7 @@ async function GroupFilteredByOuterRow(): Promise<void> {
 
 /**
  * MySQL takes the two key orders as one document and MariaDB, which keeps the text as written, as
- * two; a nested group keeps the keys a dedup of the same rows keeps, whichever the engine.
+ * two; a nested group keeps the documents a dedup of the same rows keeps, whichever the engine.
  */
 async function GroupByDocumentOfOuterRow(): Promise<void> {
   const [read] = await Owners()
