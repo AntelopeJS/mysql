@@ -1,6 +1,10 @@
 import { antelopeKnipConfig } from "@antelopejs/tooling-configs/knip";
 
 export default antelopeKnipConfig({
-  entry: ["src/test/**/*.spec.ts", "src/test-external/**/*.test.ts"],
+  entry: [
+    "src/test/**/*.spec.ts",
+    "src/test-external/**/*.test.ts",
+    ".agents/skills/formal-change-feed-delivery/check.{mjs,ts}",
+  ],
   ignoreDependencies: ["@types/mocha"],
 });
