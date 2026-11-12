@@ -1,11 +1,17 @@
 import type {
   BindSyntax,
+  ConstantJson,
   Int32Syntax,
   RegexSyntax,
   ScalarKind,
   ScalarSyntax,
 } from "../sql-types";
 import { type Sql, int, join, lit, param, sql } from "../../statement";
+import {
+  IsBoolean,
+  IsNumber,
+  IsString,
+} from "../../implementations/database/guards";
 
 /** A decimal literal with an optional sign, exponent and surrounding space, and nothing else. */
 const NUMERIC_TEXT = lit(
@@ -14,6 +20,7 @@ const NUMERIC_TEXT = lit(
 
 const UTC_DESIGNATOR = /Z$/;
 const UTC_OFFSET = "+00:00";
+const COMMA = sql`, `;
 
 const CASTS: Record<ScalarKind, (value: Sql) => Sql> = {
   text: (value) => sql`CAST(${value} AS CHAR)`,
@@ -21,6 +28,62 @@ const CASTS: Record<ScalarKind, (value: Sql) => Sql> = {
   timestamp: (value) => sql`CAST(${value} AS DATETIME(6))`,
   bool: (value) => sql`((${value}) <> 0)`,
 };
+
+/**
+ * Whether JSON text keeps a number on every server version. MySQL 8.4's JSON parser reads some
+ * doubles of 17 significant digits as a neighbour, and JSON text spells a negative zero `0`, so of
+ * the finite numbers only a safe integer other than -0 survives the text. A number JSON cannot
+ * spell is written `null` either way, as `JSON.stringify` writes it.
+ */
+function IsTextExactNumber(value: number): boolean {
+  return (
+    !Number.isFinite(value) ||
+    (Number.isSafeInteger(value) && !Object.is(value, -0))
+  );
+}
+
+/** Whether a constant's JSON text keeps every number in it. */
+function IsTextExact(value: ConstantJson | undefined): boolean {
+  if (
+    value === undefined ||
+    value === null ||
+    IsString(value) ||
+    IsBoolean(value)
+  ) {
+    return true;
+  }
+  if (IsNumber(value)) {
+    return IsTextExactNumber(value);
+  }
+  const members = Array.isArray(value) ? value : Object.values(value);
+  return members.every(IsTextExact);
+}
+
+/**
+ * A constant as one bound JSON text wherever the text keeps it, so a list of any length is one
+ * argument. Any other constant is assembled around each number it holds, bound as a `DOUBLE`, which
+ * the server turns into JSON without reading text.
+ */
+function JsonConstant(value: ConstantJson): Sql {
+  if (
+    value === null ||
+    IsString(value) ||
+    IsBoolean(value) ||
+    IsTextExact(value)
+  ) {
+    return sql`CAST(${param(JSON.stringify(value))} AS JSON)`;
+  }
+  if (IsNumber(value)) {
+    return sql`CAST(CAST(${param(value)} AS DOUBLE) AS JSON)`;
+  }
+  if (Array.isArray(value)) {
+    return sql`JSON_ARRAY(${join(value.map(JsonConstant), COMMA)})`;
+  }
+  const members = Object.entries(value).flatMap(([key, member]) =>
+    member === undefined ? [] : [sql`${param(key)}, ${JsonConstant(member)}`],
+  );
+  return sql`JSON_OBJECT(${join(members, COMMA)})`;
+}
 
 /**
  * A number is cast to `DOUBLE`, since the driver sends an integer as a `BIGINT`. A boolean goes as
@@ -36,7 +99,7 @@ const bind: BindSyntax = {
     Number.isNaN(value.getTime())
       ? sql`CAST(NULL AS DATETIME(6))`
       : sql`CAST(${param(value.toISOString().replace(UTC_DESIGNATOR, UTC_OFFSET))} AS DATETIME(6))`,
-  json: (value) => sql`CAST(${param(JSON.stringify(value))} AS JSON)`,
+  json: JsonConstant,
 };
 
 const TWO_POW_32 = sql`4294967296`;

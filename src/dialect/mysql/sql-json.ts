@@ -198,16 +198,29 @@ function SetKeys(
   return sql`JSON_SET(${document}, ${join(pairs, COMMA)})`;
 }
 
+/** The digits of the largest row number, to which an ordinal is padded so its text sorts as it does. */
+const ORDINAL_DIGITS = 20;
+
 /**
- * `JSON_ARRAYAGG` takes no `ORDER BY`, so the array is concatenated from each element's JSON text.
- * `GROUP_CONCAT` skips SQL NULL, so an absent element is spelled as a JSON null; the session pins
- * `group_concat_max_len` high enough that no array is cut short.
+ * Collects JSON values without reading any back from text, since MySQL 8.4's JSON parser reads some
+ * doubles of 17 significant digits as a neighbour. `JSON_ARRAYAGG` takes no order, so an ordered
+ * array is first an object keyed by each row's ordinal at a fixed width: the server keeps an
+ * object's keys sorted, and `$.*` reads its members in that order. A dedup keys each element by its
+ * text instead, which keeps one element per text. An absent element is a JSON null either way.
  */
-function Collect(element: Sql, order: Sql | undefined, distinct: boolean): Sql {
-  const text = sql`COALESCE(CAST(${element} AS CHAR), 'null')`;
-  const deduped = distinct ? sql`DISTINCT ${text}` : text;
-  const ordered = order ? sql`${deduped} ORDER BY ${order}` : deduped;
-  return sql`COALESCE(CAST(CONCAT('[', GROUP_CONCAT(${ordered} SEPARATOR ','), ']') AS JSON), JSON_ARRAY())`;
+function Collect(
+  element: Sql,
+  ordinal: Sql | undefined,
+  distinct: boolean,
+): Sql {
+  if (ordinal === undefined && !distinct) {
+    return sql`COALESCE(JSON_ARRAYAGG(${element}), JSON_ARRAY())`;
+  }
+  const key =
+    ordinal === undefined
+      ? sql`COALESCE(CAST(${element} AS CHAR), 'null')`
+      : sql`LPAD(${ordinal}, ${int(ORDINAL_DIGITS)}, '0')`;
+  return sql`COALESCE(JSON_EXTRACT(JSON_OBJECTAGG(${key}, ${element}), '$.*'), JSON_ARRAY())`;
 }
 
 /** A path to the one key a statement computes, quoted as {@link KeyPath} quotes a static one. */

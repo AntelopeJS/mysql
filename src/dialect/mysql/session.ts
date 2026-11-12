@@ -21,9 +21,6 @@ const BINARY_COLLATION = "utf8mb4_0900_bin";
 const SQL_MODE =
   "STRICT_ALL_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION";
 
-/** The largest value the server accepts on every platform; no aggregate built with it is cut short. */
-const GROUP_CONCAT_MAX_LEN = 4_294_967_295;
-
 /** Server messages that are parsed for a key or column name stay in English whatever the server's language. */
 const MESSAGES = "en_US";
 
@@ -54,7 +51,6 @@ function Pin(settings: SessionSettings): Sql {
     sql`NAMES utf8mb4 COLLATE ${lit(BINARY_COLLATION)}`,
     sql`time_zone = ${lit(UTC)}`,
     sql`sql_mode = ${lit(SQL_MODE)}`,
-    sql`group_concat_max_len = ${int(GROUP_CONCAT_MAX_LEN)}`,
     sql`lc_messages = ${lit(MESSAGES)}`,
   ];
   if (settings.statementTimeoutMs !== undefined) {

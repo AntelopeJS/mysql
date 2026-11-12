@@ -80,7 +80,7 @@ describe("The array stages", () => {
         Skills((doc) => doc.key("skills").filter((skill) => skill.eq("ts"))),
       ),
     ]) {
-      expect(sql).to.include("ORDER BY `t1`.`ord` SEPARATOR ','");
+      expect(sql).to.include("JSON_OBJECTAGG(LPAD(`t1`.`ord`, 20, '0'), ");
       expect(sql).to.include("JSON_ARRAY())");
     }
   });
@@ -96,7 +96,9 @@ describe("The array stages", () => {
     const sql = Projected(
       Skills((doc) => doc.key("skills").filter((skill) => skill.eq("ts"))),
     );
-    expect(sql).to.include("COALESCE(CAST(`t1`.`value` AS CHAR), 'null')");
+    expect(sql).to.include(
+      "JSON_OBJECTAGG(LPAD(`t1`.`ord`, 20, '0'), `t1`.`value`)",
+    );
     expect(sql).to.include("WHERE ((CASE WHEN (JSON_TYPE(`t1`.`value`)");
   });
 

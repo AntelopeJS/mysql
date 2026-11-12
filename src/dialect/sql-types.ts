@@ -33,7 +33,7 @@ export interface BindSyntax {
   bool(value: boolean): Sql;
   /** An instant; an invalid date binds SQL NULL. */
   timestamp(value: Date): Sql;
-  /** A JSON document sent whole as its text. */
+  /** A JSON document, sent whole as its text wherever the text keeps every number in it exactly. */
   json(value: ConstantJson): Sql;
 }
 
@@ -131,10 +131,10 @@ export interface JsonSyntax {
   /** Whether a value is truthy in JavaScript's sense; SQL NULL stays SQL NULL. */
   truthy(value: Sql): Sql;
   /**
-   * Aggregates JSON elements into an array, empty rather than SQL NULL over no row, in `order` or
-   * deduplicated, never both.
+   * Aggregates JSON elements into an array, empty rather than SQL NULL over no row, in the order of
+   * `ordinal`, a distinct positive integer per row, or deduplicated, never both.
    */
-  collect(element: Sql, order: Sql | undefined, distinct: boolean): Sql;
+  collect(element: Sql, ordinal: Sql | undefined, distinct: boolean): Sql;
   /** The number of elements of an array, or of members of an object. */
   length(container: Sql): Sql;
   /**

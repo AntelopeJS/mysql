@@ -86,7 +86,7 @@ describe("obj_keys and obj_values", () => {
     const sql = Projected(Compile(Root().map((doc) => doc.key("meta").keys())));
     expect(sql).to.include("(CASE WHEN (JSON_TYPE(`t0`.`meta`) IN ('OBJECT'");
     expect(sql).to.include(`JSON_TABLE(JSON_KEYS(${META}), '$[*]'`);
-    expect(sql).to.include("ORDER BY `t1`.`ord`");
+    expect(sql).to.include("JSON_OBJECTAGG(LPAD(`t1`.`ord`, 20, '0'), ");
   });
 
   it("walk the member values of the same object in the server's own order, so the two line up", () => {

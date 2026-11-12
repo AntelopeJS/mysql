@@ -10,7 +10,7 @@ import { FIRST_OPERAND } from "./stage";
 import { ParameterKey } from "./value";
 import { type DecodingContext, IsSubqueryProvider } from "./context";
 import { CurrentValue, type Relation, SetProjection } from "./relation";
-import { AbsorbOrder, Prepare, type RelationFlag, Render } from "./render";
+import { Numbered, Prepare, type RelationFlag, Render } from "./render";
 
 /**
  * What has already decided *which* rows there are blocks the aggregate from absorbing. Shorter
@@ -24,20 +24,24 @@ const SUBQUERY_BLOCKERS: readonly RelationFlag[] = [
 ];
 
 /**
- * Collects every row of a nested query into one JSON array, in the order the query asked for.
- * Absorbed into the relation rather than wrapped, so the aggregate can name its own order terms.
+ * Collects every row of a nested query into one JSON array, in the order the query asked for. An
+ * ordered query's rows are numbered in that order first, and the aggregate orders by the number.
  */
 function Aggregated(relation: Relation, context: DecodingContext): Compiled {
   const prepared = Prepare(relation, SUBQUERY_BLOCKERS, context);
-  const value = CurrentValue(prepared);
+  const numbered =
+    prepared.orderBy.length > 0 ? Numbered(prepared, context) : undefined;
+  const rows = numbered?.relation ?? prepared;
+  rows.orderBy = [];
+  const value = CurrentValue(rows);
   const type = ArrayOf(value.type);
   const collected = Collected(
     context.dialect,
-    AbsorbOrder(prepared),
+    numbered?.rowNumber,
     AsJson(context.dialect, value).sql,
   );
   return {
-    sql: sql`(${Render(SetProjection(prepared, { sql: collected, type }))})`,
+    sql: sql`(${Render(SetProjection(rows, { sql: collected, type }))})`,
     type,
   };
 }

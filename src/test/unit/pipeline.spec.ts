@@ -215,9 +215,7 @@ describe("A reshaping stage", () => {
           .map((p) => p.key("price")),
       })),
     );
-    expect(bound.sql).to.include(
-      "COALESCE(CAST(CONCAT('[', GROUP_CONCAT(COALESCE(CAST(",
-    );
+    expect(bound.sql).to.include("COALESCE(JSON_ARRAYAGG(");
     expect(bound.sql).to.include("JSON_ARRAY())");
   });
 });

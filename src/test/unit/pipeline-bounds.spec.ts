@@ -46,7 +46,10 @@ describe("a row bound", () => {
     expect(sql).to.include(
       "`t2`.`_row` <= COALESCE(CAST(? AS DOUBLE), 0) + LEAST(GREATEST(TRUNCATE(`t0`.`age`, 0), 0), 9007199254740991)",
     );
-    expect(sql).to.include("ORDER BY `t2`.`_row` ASC SEPARATOR ','");
+    expect(sql).to.include(
+      "ROW_NUMBER() OVER (ORDER BY `t2`.`_row` ASC) AS `_row`",
+    );
+    expect(sql).to.include("JSON_OBJECTAGG(LPAD(`t3`.`_row`, 20, '0'), ");
   });
 
   it("takes one numbered row for an nth the statement computes, and answers it as a single row", () => {

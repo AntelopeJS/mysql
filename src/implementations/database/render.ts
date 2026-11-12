@@ -120,22 +120,19 @@ function OrderByClause(relation: Relation): Sql | undefined {
 }
 
 /**
- * Takes the order terms off the relation, spelled exactly as the clause spells them.
- *
- * The one door for a stage that absorbs an aggregate: a stream aggregate discards the terms, since
- * no ordering can change what it reduces to, while a subquery's aggregate re-emits them inside its
- * array aggregate. The refusal asserts that a term carries no bound value: a discarded term holding
- * one would leave nothing wrong in the text, but an order term that ever decodes an argument has to
- * be rendered into a subselect instead, and this says so where that edit lands.
+ * Takes the order terms off the relation, for a stream aggregate that absorbs it: no ordering can
+ * change what the aggregate reduces to. The refusal asserts that a term carries no bound value: a
+ * discarded term holding one would leave nothing wrong in the text, but an order term that ever
+ * decodes an argument has to be rendered into a subselect instead, and this says so where that
+ * edit lands.
  */
-export function AbsorbOrder(relation: Relation): Sql | undefined {
+export function AbsorbOrder(relation: Relation): void {
   const terms = OrderTerms(relation);
   assert(
     terms === undefined || Bind(terms).args.length === 0,
     "An order term must carry no bound value, since absorbing an aggregate discards it",
   );
   relation.orderBy = [];
-  return terms;
 }
 
 /** The row count that makes a relation answer at most one row, which `nth` and a lookup take. */

@@ -269,21 +269,21 @@ export function EqualityKey(
 }
 
 /**
- * Aggregates rows into a JSON array in a stated order, empty rather than NULL over none of them.
+ * Aggregates rows into a JSON array, empty rather than NULL over none of them.
  *
- * The order is named explicitly where it matters, and `distinct` dedups the elements. The two are
- * exclusive: nothing asks for both, and an engine may refuse ordering a deduplicated aggregate by
- * anything but its argument.
+ * Where the order matters it is named by `ordinal`, a distinct positive integer per row, such as a
+ * walk's position or a row number, and `distinct` dedups the elements. The two are exclusive:
+ * nothing asks for both.
  */
 export function Collected(
   dialect: Dialect,
-  order: Sql | undefined,
+  ordinal: Sql | undefined,
   target: Sql,
   distinct = false,
 ): Sql {
   assert(
-    !distinct || order === undefined,
+    !distinct || ordinal === undefined,
     "A collected aggregate orders its elements or dedups them, never both",
   );
-  return dialect.sql.json.collect(target, order, distinct);
+  return dialect.sql.json.collect(target, ordinal, distinct);
 }

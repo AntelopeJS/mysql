@@ -105,7 +105,7 @@ describe("a group's sub-stream", () => {
         Root().group("name", (stream) => ({ ages: stream.distinct("age") })),
       ).sql,
     ).to.include(
-      "GROUP_CONCAT(DISTINCT COALESCE(CAST(CAST(`t0`.`age` AS JSON) AS CHAR), 'null')",
+      "JSON_OBJECTAGG(COALESCE(CAST(CAST(`t0`.`age` AS JSON) AS CHAR), 'null'), CAST(`t0`.`age` AS JSON))",
     );
   });
 

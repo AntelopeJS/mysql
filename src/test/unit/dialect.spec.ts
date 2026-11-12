@@ -50,7 +50,6 @@ describe("the MySQL session pin", () => {
     expect(pin).to.match(/^SET NAMES utf8mb4 COLLATE 'utf8mb4_0900_bin', /);
     expect(pin).to.contain("time_zone = '+00:00'");
     expect(pin).to.contain("lc_messages = 'en_US'");
-    expect(pin).to.contain("group_concat_max_len = 4294967295");
   });
 
   it("is strict and keeps backslash escapes, plain `||` and backtick identifiers", () => {
