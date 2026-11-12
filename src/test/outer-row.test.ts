@@ -1,100 +1,21 @@
 import { expect } from "chai";
-import { Schema } from "@antelopejs/interface-database/schema";
-
-const SCHEMA_ID = "outer_row";
-const INSTANCE = "one";
-const ITEMS = 24;
-const VIEW_KINDS = 4;
-const KIND_COUNT = 3;
-/** Items of 1 view are 1, 5, 9…; every other one writes its tag with its keys reversed. */
-const TAG_ORDERS = 8;
-const NOTED_ITEM = 2;
-const NOTED_VIEWS = NOTED_ITEM % VIEW_KINDS;
-
-interface Item {
-  _id: string;
-  slug: string;
-  kind: string | null;
-  views: number;
-  tag?: Record<string, number>;
-  note?: null;
-}
-
-interface Owner {
-  _id: string;
-  take: number;
-}
-
-const schema = new Schema<{ items: Item; owners: Owner }>(SCHEMA_ID, {
-  items: {
-    fields: { slug: "string", kind: "string", views: "number" },
-    indexes: {},
-  },
-  owners: { fields: { take: "number" }, indexes: {} },
-});
-
-function Items() {
-  return schema.instance(INSTANCE).table("items");
-}
-
-function Owners() {
-  return schema.instance(INSTANCE).table("owners");
-}
-
-const KINDS = ["a", "b", "c"];
-
-/**
- * Item `n` has `n % 4` views and kind `a`, `b` or `c` by `n % 3`, so each view count meets every
- * kind; one more item of 3 views has no kind, which a dedup and a group keep as a value of its own.
- * An item of 1 view has an undeclared `tag`, one document written with its keys in either order.
- * Item 2 alone holds an undeclared `note`, a JSON null, which every other item of 2 views lacks.
- */
-const ITEM_ROWS: Item[] = [
-  ...Array.from({ length: ITEMS }, (_, n) => {
-    const item: Item = {
-      _id: `i${n}`,
-      slug: `slug-${String(n).padStart(2, "0")}`,
-      kind: KINDS[n % KIND_COUNT],
-      views: n % VIEW_KINDS,
-    };
-    if (item.views === 1) {
-      item.tag = n % TAG_ORDERS === 1 ? { x: 1, y: 2 } : { y: 2, x: 1 };
-    }
-    if (n === NOTED_ITEM) {
-      item.note = null;
-    }
-    return item;
-  }),
-  { _id: "unkinded", slug: "slug-99", kind: null, views: 3 },
-];
-
-/** `o3` takes a view count no item has, so every nested query of it reads no row. */
-const OWNERS: Owner[] = [
-  { _id: "o1", take: 2 },
-  { _id: "o2", take: 0 },
-  { _id: "o3", take: 9 },
-  { _id: "o4", take: 3 },
-  { _id: "o5", take: 1 },
-];
-
-function Viewed(take: number): Item[] {
-  return ITEM_ROWS.filter((item) => item.views === take);
-}
-
-/** Orders kinds by their text, a missing kind as `null`, which a result is sorted by to compare. */
-function ByText(left: string | null, right: string | null): number {
-  return String(left).localeCompare(String(right));
-}
-
-function KindsViewed(take: number): (string | null)[] {
-  return [...new Set(Viewed(take).map((item) => item.kind))].sort(ByText);
-}
-
-async function Seed(): Promise<void> {
-  await schema.createInstance(INSTANCE).run();
-  await Items().insert(ITEM_ROWS).run();
-  await Owners().insert(OWNERS).run();
-}
+import {
+  AllBySlug,
+  BySlug,
+  ByText,
+  CountsByKind,
+  INSTANCE,
+  type Item,
+  KindsViewed,
+  NOTED_VIEWS,
+  OWNERS,
+  Owners,
+  Items,
+  Seed,
+  SortedByKind,
+  Unseed,
+  Viewed,
+} from "./outer-row-fixture";
 
 interface KindsRead {
   id: string;
@@ -272,14 +193,261 @@ async function RowsSlicedByOuterRow(): Promise<void> {
   );
 }
 
+interface GroupsRead<T> {
+  id: string;
+  groups: T[];
+}
+
+/** Each owner's groups, which come in no order, as `expected` computes them for its `take`. */
+function ExpectGroups<T extends { kind: string | null }>(
+  read: GroupsRead<T>[],
+  expected: (take: number) => T[],
+): void {
+  const sorted = read.map((row) => ({
+    id: row.id,
+    groups: SortedByKind(row.groups),
+  }));
+  expect(sorted).to.have.deep.members(
+    OWNERS.map((owner) => ({ id: owner._id, groups: expected(owner.take) })),
+  );
+}
+
+async function GroupAfterSlice(): Promise<void> {
+  const read = await Owners()
+    .map((owner) => ({
+      id: owner.key("_id"),
+      groups: Items()
+        .filter((item) => item.key("views").eq(owner.key("take")))
+        .orderBy("slug", "desc")
+        .slice(0, 2)
+        .group("kind", (stream, kind) => ({ kind, count: stream.count() })),
+    }))
+    .run();
+  ExpectGroups(read, (take) =>
+    CountsByKind(BySlug(Viewed(take)).reverse().slice(0, 2)),
+  );
+}
+
+async function GroupAfterMap(): Promise<void> {
+  const read = await Owners()
+    .map((owner) => ({
+      id: owner.key("_id"),
+      groups: Items()
+        .filter((item) => item.key("views").eq(owner.key("take")))
+        .map((item) => ({ sort: item.key("kind") }))
+        .group("sort", (stream, sort) => ({
+          kind: sort,
+          count: stream.count(),
+        })),
+    }))
+    .run();
+  ExpectGroups(read, (take) => CountsByKind(Viewed(take)));
+}
+
+/** Every owner's `take` is its own, so an item of that many views looks up the owner itself. */
+async function GroupAfterLookup(): Promise<void> {
+  const read = await Owners()
+    .map((owner) => ({
+      id: owner.key("_id"),
+      groups: Items()
+        .filter((item) => item.key("views").eq(owner.key("take")))
+        .lookup(Owners(), "views", "take")
+        .group("kind", (stream, kind) => ({
+          kind,
+          owners: stream.map((item) => item.key("views").key("_id")).distinct(),
+        })),
+    }))
+    .run();
+  const owner = (take: number) => OWNERS.find((one) => one.take === take);
+  ExpectGroups(read, (take) =>
+    KindsViewed(take).map((kind) => ({ kind, owners: [owner(take)?._id] })),
+  );
+}
+
+async function GroupAfterDistinct(): Promise<void> {
+  const read = await Owners()
+    .map((owner) => ({
+      id: owner.key("_id"),
+      groups: Items()
+        .filter((item) => item.key("views").eq(owner.key("take")))
+        .map((item) => ({ pair: { kind: item.key("kind") } }))
+        .distinct("pair")
+        .group("kind", (stream, kind) => ({ kind, count: stream.count() })),
+    }))
+    .run();
+  ExpectGroups(read, (take) =>
+    KindsViewed(take).map((kind) => ({ kind, count: 1 })),
+  );
+}
+
+/** Part of an item, as a reshaped nested query answers it. */
+type Row = Partial<Item> & { _instance?: string };
+
+interface RowsGroup {
+  kind: string | null;
+  rows: Row[];
+}
+
+/** A document as the engine builds it, with no member for a field that holds no value. */
+function Valued(row: Row): Row {
+  return Object.fromEntries(
+    Object.entries(row).filter(([, value]) => value !== null),
+  );
+}
+
+/** A group's rows, which come in no order, by `_id`; rows without one are alike. */
+function RowsById(groups: RowsGroup[]): RowsGroup[] {
+  return groups.map((group) => ({
+    kind: group.kind,
+    rows: [...group.rows].sort((left, right) =>
+      String(left._id).localeCompare(String(right._id)),
+    ),
+  }));
+}
+
+async function GroupAfterPluck(): Promise<void> {
+  const read = await Owners()
+    .map((owner) => ({
+      id: owner.key("_id"),
+      groups: Items()
+        .filter((item) => item.key("views").eq(owner.key("take")))
+        .pluck("kind")
+        .group("kind", (stream, kind) => ({ kind, rows: stream })),
+    }))
+    .run();
+  ExpectGroups(
+    read.map((row) => ({ id: row.id, groups: RowsById(row.groups) })),
+    (take) =>
+      CountsByKind(Viewed(take)).map(({ kind, count }) => ({
+        kind,
+        rows: Array.from({ length: count }, () => Valued({ kind })),
+      })),
+  );
+}
+
+async function GroupAfterWithout(): Promise<void> {
+  const read = await Owners()
+    .map((owner) => ({
+      id: owner.key("_id"),
+      groups: Items()
+        .filter((item) => item.key("views").eq(owner.key("take")))
+        .without("slug")
+        .group("kind", (stream, kind) => ({ kind, rows: stream })),
+    }))
+    .run();
+  ExpectGroups(
+    read.map((row) => ({ id: row.id, groups: RowsById(row.groups) })),
+    (take) =>
+      RowsById(
+        KindsViewed(take).map((kind) => ({
+          kind,
+          rows: Viewed(take)
+            .filter((item) => item.kind === kind)
+            .map(({ slug: _slug, ...item }) =>
+              Valued({ ...item, _instance: INSTANCE }),
+            ),
+        })),
+      ),
+  );
+}
+
+/** Both sides read the outer row; `o3` takes more views than any item has, so it reads them all. */
+async function GroupAfterUnion(): Promise<void> {
+  const read = await Owners()
+    .map((owner) => ({
+      id: owner.key("_id"),
+      groups: Items()
+        .filter((item) => item.key("views").eq(owner.key("take")))
+        .union(
+          Items().filter((item) => item.key("views").lt(owner.key("take"))),
+        )
+        .group("kind", (stream, kind) => ({ kind, count: stream.count() })),
+    }))
+    .run();
+  ExpectGroups(read, (take) =>
+    CountsByKind(AllBySlug().filter((item) => item.views <= take)),
+  );
+}
+
+interface KindViews {
+  kind: string;
+  views: number;
+}
+
+/** A compound key's fields as one text, which a read is sorted by to compare. */
+function KindViewsText(key: KindViews): string {
+  return `${key.kind}/${key.views}`;
+}
+
+/** `kindViews` indexes two fields, so a group by its name groups by a document of both. */
+async function GroupByIndexAfterSlice(): Promise<void> {
+  const read = await Owners()
+    .map((owner) => ({
+      id: owner.key("_id"),
+      groups: Items()
+        .filter((item) => item.key("views").lt(owner.key("take")))
+        .orderBy("slug")
+        .slice(0, 6)
+        .group("kindViews", (stream, key) => ({
+          key: key.cast<KindViews>(),
+          count: stream.count(),
+        })),
+    }))
+    .run();
+  const sorted = (groups: { key: KindViews; count: number }[]) =>
+    [...groups].sort((left, right) =>
+      KindViewsText(left.key).localeCompare(KindViewsText(right.key)),
+    );
+  expect(
+    read.map((row) => ({ id: row.id, groups: sorted(row.groups) })),
+  ).to.have.deep.members(
+    OWNERS.map((owner) => {
+      const counts = new Map<string, { key: KindViews; count: number }>();
+      for (const item of AllBySlug()
+        .filter((one) => one.views < owner.take)
+        .slice(0, 6)) {
+        const key = { kind: String(item.kind), views: item.views };
+        const group = counts.get(KindViewsText(key)) ?? { key, count: 0 };
+        counts.set(KindViewsText(key), { key, count: group.count + 1 });
+      }
+      return { id: owner._id, groups: sorted([...counts.values()]) };
+    }),
+  );
+}
+
+/** Only the second side reads the outer row; the first reads the items of no view. */
+async function UnionReadingOuterRow(): Promise<void> {
+  const read = await Owners()
+    .map((owner) => ({
+      id: owner.key("_id"),
+      slugs: Items()
+        .filter((item) => item.key("views").eq(0))
+        .map((item) => item.key("slug"))
+        .union(
+          Items()
+            .filter((item) => item.key("views").eq(owner.key("take")))
+            .map((item) => item.key("slug")),
+        ),
+    }))
+    .run();
+  expect(
+    read.map((row) => ({ id: row.id, slugs: [...row.slugs].sort() })),
+  ).to.have.deep.members(
+    OWNERS.map((owner) => ({
+      id: owner._id,
+      slugs: [...Viewed(0), ...Viewed(owner.take)]
+        .map((item) => item.slug)
+        .sort(),
+    })),
+  );
+}
+
 describe("nested queries that read their outer row", function () {
   this.timeout(30_000);
 
   before(Seed);
 
-  after(async () => {
-    await schema.destroyInstance(INSTANCE).run();
-  });
+  after(Unseed);
 
   it(
     "dedups a query ordered ahead of the filter that reads the outer row",
@@ -309,5 +477,17 @@ describe("nested queries that read their outer row", function () {
   it(
     "groups by a document as a dedup of the same rows compares it, whatever order its keys were written in",
     GroupByDocumentOfOuterRow,
+  );
+  it("groups the rows a constant slice keeps", GroupAfterSlice);
+  it("groups by a field a map computes", GroupAfterMap);
+  it("groups rows whose key a lookup replaced", GroupAfterLookup);
+  it("groups the rows a dedup keeps", GroupAfterDistinct);
+  it("groups the documents a pluck builds", GroupAfterPluck);
+  it("groups the documents a without leaves", GroupAfterWithout);
+  it("groups a union of two queries", GroupAfterUnion);
+  it("groups by an index of two fields after a slice", GroupByIndexAfterSlice);
+  it(
+    "concatenates a query with one that reads the outer row",
+    UnionReadingOuterRow,
   );
 });
