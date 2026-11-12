@@ -38,6 +38,14 @@ export interface BindSyntax {
   json(value: ConstantJson): Sql;
 }
 
+/** What a select that {@link JsonSyntax.collectInPlace} aggregates in place answers of its rows. */
+export interface CollectedRows {
+  readonly distinct: boolean;
+  readonly order?: Sql;
+  readonly offset?: number;
+  readonly count?: number;
+}
+
 /** One member of a document assembled from columns. `container` marks a JSON-backed member. */
 export interface DocumentMember {
   readonly name: string;
@@ -146,11 +154,12 @@ export interface JsonSyntax {
    */
   collect(element: Sql, ordinal: Sql | undefined, distinct: boolean): Sql;
   /**
-   * Aggregates JSON elements into an array, empty rather than SQL NULL over no row, in the order of
-   * `order`, the sort terms of the select the aggregate is in. Absent where the engine's aggregate
-   * takes no order, and the rows are numbered for {@link JsonSyntax.collect} instead.
+   * Aggregates JSON elements into an array, empty rather than SQL NULL over no row, with the rows
+   * the select it is in would answer: deduplicated, in the order of its sort terms, and bounded by
+   * its offset and count. Absent where the engine's aggregate takes none of these, and the select
+   * is a derived table that {@link JsonSyntax.collect} aggregates instead.
    */
-  readonly collectInOrder?: (element: Sql, order: Sql) => Sql;
+  readonly collectInPlace?: (element: Sql, rows: CollectedRows) => Sql;
   /** The number of elements of an array, or of members of an object. */
   length(container: Sql): Sql;
   /**

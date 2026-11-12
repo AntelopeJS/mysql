@@ -1,5 +1,6 @@
 import { type Sql, ident, int, join, lit, sql } from "../../statement";
 import type { ExternalCatalogSyntax } from "../external";
+import type { JsonSyntax } from "../sql-types";
 
 /** A value a one-row table holds, which the row reads back as a JSON value or as text. */
 export interface Held {
@@ -56,8 +57,8 @@ export interface Flavour {
     distinct: boolean,
     textOf: (value: Sql) => Sql,
   ): Sql;
-  /** The JSON syntax's `collectInOrder`, where the engine's aggregate takes an order. */
-  readonly collectInOrder?: (element: Sql, order: Sql) => Sql;
+  /** The JSON syntax's `collectInPlace`, where the engine's aggregate takes an order and bounds. */
+  readonly collectInPlace?: JsonSyntax["collectInPlace"];
   /** Whether an `INSERT` can answer values of the row it wrote, by a `RETURNING` clause. */
   readonly returning: boolean;
   /** Whether a derived table can read the columns of the tables joined before it. */

@@ -1,4 +1,5 @@
 import { type Flavour, type Held, FamilyDialect } from "../mysql";
+import type { CollectedRows } from "../sql-types";
 import { Bind, type Sql, ident, int, join, lit, sql } from "../../statement";
 import type { Row } from "../../connection";
 
@@ -62,14 +63,17 @@ function JsonEquals(left: Sql, right: Sql): Sql {
 /**
  * Whether one element of the array equals the element as JSON does. `JSON_CONTAINS` would also
  * find it inside a nested array or object, and MariaDB has no `MEMBER OF`. The element goes through
- * `JSON_ARRAY` so a scalar and a JSON value both arrive as JSON.
+ * `JSON_ARRAY` so a scalar and a JSON value both arrive as JSON. A value that is not an array holds
+ * only itself, as MySQL's `MEMBER OF` reads it.
  */
 function Includes(array: Sql, element: Sql): Sql {
   const member = ident("__member");
   const value = ident("value");
+  const sought = sql`JSON_EXTRACT(JSON_ARRAY(${element}), '$[0]')`;
   const elements = sql`JSON_TABLE(${array}, '$[*]' COLUMNS (${value} JSON PATH '$')) AS ${member}`;
-  const found = sql`EXISTS (SELECT 1 FROM ${elements} WHERE ${JsonEquals(sql`${member}.${value}`, sql`JSON_EXTRACT(JSON_ARRAY(${element}), '$[0]')`)})`;
-  return sql`(CASE WHEN ${array} IS NULL OR ${element} IS NULL THEN NULL ELSE ${found} END)`;
+  const found = sql`EXISTS (SELECT 1 FROM ${elements} WHERE ${JsonEquals(sql`${member}.${value}`, sought)})`;
+  const itself = JsonEquals(array, sought);
+  return sql`(CASE WHEN ${array} IS NULL OR ${element} IS NULL THEN NULL WHEN JSON_TYPE(${array}) = 'ARRAY' THEN ${found} ELSE ${itself} END)`;
 }
 
 /**
@@ -104,6 +108,27 @@ function Collect(
 const EARLIEST_OFFSET_MINUTES = -839;
 const LATEST_OFFSET_MINUTES = 840;
 const MINUTES_PER_HOUR = 60;
+
+/** The largest row count, which stands for none where an offset needs one. */
+const NO_LIMIT = sql`18446744073709551615`;
+
+/**
+ * MariaDB's `JSON_ARRAYAGG` takes a dedup, an order and a `LIMIT`, so a nested query is aggregated in
+ * the select that reads the outer row rather than in a derived table, which MariaDB cannot correlate.
+ * A dedup keeps one element per text, an absent element being a JSON null.
+ */
+function CollectInPlace(element: Sql, rows: CollectedRows): Sql {
+  const value = rows.distinct
+    ? sql`DISTINCT COALESCE(${element}, ${Json(lit("null"))})`
+    : element;
+  const order = rows.order ? sql` ORDER BY ${rows.order}` : sql``;
+  const bounded = rows.offset !== undefined || rows.count !== undefined;
+  const count = rows.count === undefined ? NO_LIMIT : int(rows.count);
+  const limit = bounded
+    ? sql` LIMIT ${int(rows.offset ?? 0)}, ${count}`
+    : sql``;
+  return sql`COALESCE(JSON_ARRAYAGG(${value}${order}${limit}), JSON_ARRAY())`;
+}
 
 /**
  * MariaDB's cast reads a zone offset and drops it, so the offset is subtracted from the local time,
@@ -165,12 +190,14 @@ function CatalogType(column: Sql): Sql {
 }
 
 const CREATE_TABLE = "Create Table";
-const JSON_CHECK = /json_valid\(`((?:[^`]|``)+)`\)/g;
+/** A column's own definition line whose check validates that same column as JSON. */
+const JSON_CHECK = /^\s*`((?:[^`]|``)+)` [^\n]*CHECK \(json_valid\(`\1`\)\)/gm;
 
 /**
  * The columns a relation's definition checks as JSON. `SHOW CREATE TABLE` answers any account that
  * holds a privilege on the relation, where `information_schema.CHECK_CONSTRAINTS` answers only one
- * granted the whole schema.
+ * granted the whole schema. A column whose generation expression calls `json_valid` on another is
+ * not one of them.
  */
 function JsonChecked(rows: readonly Row[]): ReadonlySet<string> {
   const definition = rows
@@ -210,8 +237,7 @@ const MARIADB: Flavour = {
     sql`(CASE ${truth} WHEN TRUE THEN ${Json(lit("true"))} WHEN FALSE THEN ${Json(lit("false"))} END)`,
   includes: Includes,
   collect: Collect,
-  collectInOrder: (element, order) =>
-    sql`COALESCE(JSON_ARRAYAGG(${element} ORDER BY ${order}), JSON_ARRAY())`,
+  collectInPlace: CollectInPlace,
   returning: true,
   lateral: false,
   hold: Hold,

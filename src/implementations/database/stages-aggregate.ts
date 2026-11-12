@@ -167,10 +167,20 @@ const CountStage: PipelineStage = (relation, stage, context) => {
  * Dedups the relation, on one named field or on whole rows. A named field also becomes the
  * projection; either way the relation stays a stream.
  */
+/**
+ * A dedup of the whole value dedups the select list, which a plain projection already is, so the
+ * projection stays in the select that filters the rows. A subquery that reads its outer row then
+ * keeps that read out of a derived table, which MariaDB cannot correlate.
+ */
+const VALUE_DISTINCT_BLOCKERS: readonly RelationFlag[] =
+  DISTINCT_BLOCKERS.filter((flag) => flag !== "projection");
+
 const DistinctStage: PipelineStage = (relation, stage, context) => {
-  const prepared = Prepare(relation, DISTINCT_BLOCKERS, context);
-  prepared.distinct = true;
   const field = NamedField(stage);
+  const blockers =
+    field === undefined ? VALUE_DISTINCT_BLOCKERS : DISTINCT_BLOCKERS;
+  const prepared = Prepare(relation, blockers, context);
+  prepared.distinct = true;
   if (field === undefined) {
     return prepared;
   }

@@ -422,7 +422,7 @@ export function JsonOf(flavour: Flavour): JsonSyntax {
     truthy: (value) =>
       sql`(NOT ${flavour.includes(flavour.json(FALSY), value)})`,
     collect,
-    collectInOrder: flavour.collectInOrder,
+    collectInPlace: flavour.collectInPlace,
     length: (container) => sql`JSON_LENGTH(${container})`,
     at: At,
     concatArrays: (left, right) => sql`JSON_MERGE_PRESERVE(${left}, ${right})`,

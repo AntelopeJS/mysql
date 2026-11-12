@@ -152,10 +152,12 @@ function Imaged(engine: ImageSyntax, row: Sql, column: CapturedColumn): Sql {
   return json.of(value, column.type.kind);
 }
 
-/** What an image is written with: the JSON syntax, and the deepest value it boxes. */
+/** What an image and its trigger are written with: the JSON syntax, the deepest value boxed, and how JSON compares. */
 interface ImageSyntax {
   readonly json: JsonSyntax;
   readonly boxedDepth: number;
+  /** Whether `<=>` compares JSON values as text, as MariaDB's does. */
+  readonly comparesText: boolean;
 }
 
 function Image(
@@ -196,11 +198,21 @@ const MOVING = sql`@antelopejs_moving`;
 const OLD = sql`OLD`;
 const NEW = sql`NEW`;
 
-function Unchanged(columns: readonly CapturedColumn[]): Sql {
-  const same = columns.map(
-    (column) =>
-      sql`${OLD}.${ident(column.name)} <=> ${NEW}.${ident(column.name)}`,
-  );
+/**
+ * Whether an update left every column as it was. A JSON column compares as JSON where the engine
+ * compares JSON as text, so a write that only reorders an object's keys changes nothing.
+ */
+function Unchanged(
+  image: ImageSyntax,
+  columns: readonly CapturedColumn[],
+): Sql {
+  const same = columns.map((column) => {
+    const before = sql`${OLD}.${ident(column.name)}`;
+    const after = sql`${NEW}.${ident(column.name)}`;
+    return image.comparesText && IsJsonBacked(column.type)
+      ? image.json.same(before, after)
+      : sql`${before} <=> ${after}`;
+  });
   return join(same, sql` AND `);
 }
 
@@ -224,7 +236,7 @@ function Triggers(
     },
     {
       operation: "modified",
-      body: sql`IF ${MOVING} IS NULL AND NOT (${Unchanged(columns)}) THEN ${head(sql`${oldImage}, ${newImage}`)} VALUES (${named}, ${instance(NEW)}, 'modified', ${Image(image, OLD, columns)}, ${Image(image, NEW, columns)}); END IF`,
+      body: sql`IF ${MOVING} IS NULL AND NOT (${Unchanged(image, columns)}) THEN ${head(sql`${oldImage}, ${newImage}`)} VALUES (${named}, ${instance(NEW)}, 'modified', ${Image(image, OLD, columns)}, ${Image(image, NEW, columns)}); END IF`,
     },
     {
       operation: "removed",
@@ -297,6 +309,7 @@ export function CaptureOf(flavour: Flavour, syntax: SqlSyntax): CaptureSyntax {
   const image: ImageSyntax = {
     json: syntax.json,
     boxedDepth: flavour.maxJsonNesting - IMAGE_LEVELS,
+    comparesText: flavour.jsonEquals !== undefined,
   };
   const { json } = syntax;
   const logged = LoggedTypes(syntax);
