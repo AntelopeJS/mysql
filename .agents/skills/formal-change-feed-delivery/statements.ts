@@ -86,7 +86,7 @@ const STATEMENTS: readonly (readonly [RegExp, Parser])[] = [
   ],
   [
     new RegExp(
-      `^SELECT ${Epoch("\`epoch\`")} AS epoch, \`next_seq\` - 1 AS frontier, EXISTS \\(SELECT 1 FROM ${LOG} WHERE \`seq\` IS NULL\\) AS pending FROM ${CLOCK} WHERE \`id\` = 1$`,
+      `^SELECT ${Epoch("`epoch`")} AS epoch, \`next_seq\` - 1 AS frontier, EXISTS \\(SELECT 1 FROM ${LOG} WHERE \`seq\` IS NULL\\) AS pending FROM ${CLOCK} WHERE \`id\` = 1$`,
     ),
     (_, __, db) => frontier(db),
   ],
@@ -119,7 +119,7 @@ const STATEMENTS: readonly (readonly [RegExp, Parser])[] = [
   [/^SELECT RELEASE_LOCK\('([^']+)'\) AS released$/, (match, _, db, session) => releaseLock(db, session, match[1] ?? "")],
   [
     new RegExp(
-      `^SELECT c\\.epoch AS epoch, c\\.frontier AS frontier, c\\.high_water AS high_water, e\\.seq AS seq, e\\.op AS op, e\\.old_side AS old_side, e\\.new_side AS new_side, e\\.deep AS deep FROM \\(SELECT ${Epoch("k\\.\`epoch\`")} AS epoch, k\\.\`next_seq\` - 1 AS frontier, \\(SELECT r\\.\`high_water\` FROM ${REAPED} AS r WHERE r\\.\`tbl\` = \\?\\) AS high_water FROM ${CLOCK} AS k WHERE k\\.\`id\` = 1\\) AS c LEFT JOIN LATERAL \\(SELECT \`ev\`\\.\`seq\` AS seq, \`ev\`\\.\`op\` AS op, CASE WHEN \`ev\`\\.\`old_row\` IS NOT NULL AND NOT \\(.*\\) THEN \\(.*\\) END AS old_side, CASE WHEN \`ev\`\\.\`new_row\` IS NOT NULL AND NOT \\(.*\\) THEN \\(.*\\) END AS new_side, \\(.*\\) AS deep FROM ${LOG} AS \`ev\` WHERE \`ev\`\\.\`tbl\` = \\?( AND \`ev\`\\.\`inst\` = \\?)? AND \`ev\`\\.\`seq\` > ${BIGINT_ARG} AND \`ev\`\\.\`seq\` <= c\\.frontier ORDER BY \`ev\`\\.\`seq\` LIMIT (\\d+)\\) AS e ON TRUE ORDER BY e\\.seq$`,
+      `^SELECT c\\.epoch AS epoch, c\\.frontier AS frontier, c\\.high_water AS high_water, e\\.seq AS seq, e\\.op AS op, e\\.old_side AS old_side, e\\.new_side AS new_side FROM \\(SELECT ${Epoch("k\\.`epoch`")} AS epoch, k\\.\`next_seq\` - 1 AS frontier, \\(SELECT r\\.\`high_water\` FROM ${REAPED} AS r WHERE r\\.\`tbl\` = \\?\\) AS high_water FROM ${CLOCK} AS k WHERE k\\.\`id\` = 1\\) AS c LEFT JOIN LATERAL \\(SELECT \`ev\`\\.\`seq\` AS seq, \`ev\`\\.\`op\` AS op, CASE WHEN \\(.*\\) THEN CASE WHEN \`ev\`\\.\`old_row\` IS NOT NULL THEN \\(.*\\) END END AS old_side, CASE WHEN \\(.*\\) THEN CASE WHEN \`ev\`\\.\`new_row\` IS NOT NULL THEN \\(.*\\) END END AS new_side FROM ${LOG} AS \`ev\` WHERE \`ev\`\\.\`tbl\` = \\?( AND \`ev\`\\.\`inst\` = \\?)? AND \`ev\`\\.\`seq\` > ${BIGINT_ARG} AND \`ev\`\\.\`seq\` <= c\\.frontier ORDER BY \`ev\`\\.\`seq\` LIMIT (\\d+)\\) AS e ON TRUE ORDER BY e\\.seq$`,
       "s",
     ),
     (match, bound, db) => poll(db, bound.args, match[1] !== undefined, Number(match[2])),

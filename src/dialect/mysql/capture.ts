@@ -264,29 +264,24 @@ function Triggers(
   ];
 }
 
-/** One polled side, read only where the log row holds that image (an insert has no old row) and the event is not too deep to build. */
-function Side(alias: Sql, image: string, deep: Sql, statement: Sql): Sql {
-  return sql`CASE WHEN ${alias}.${ident(image)} IS NOT NULL AND NOT ${deep} THEN (${statement}) END`;
+/** One polled side, read only where the log row holds that image: an insert has no old row. */
+function Side(alias: Sql, image: string, statement: Sql): Sql {
+  return sql`CASE WHEN ${alias}.${ident(image)} IS NOT NULL THEN (${statement}) END`;
 }
 
 /**
- * Whether an image holds a value of a `nested` column as deep as the engine builds a document. Only
- * a value too deep for its box is logged as its JSON text, so only such a member is measured.
+ * Whether either side of the polled event passed the feed's stages. MySQL builds a side's document
+ * whenever it is read, and fails the statement on one nested too deep, so a side is read only for
+ * an event the feed delivers.
  */
-function TooDeep(
-  flavour: Flavour,
-  json: JsonSyntax,
-  image: Sql,
-  nested: readonly string[],
+function Admitted(
+  alias: Sql,
+  tables: ChangeLogTables,
+  request: PollRequest,
 ): Sql {
-  const tests = nested.map((column) => {
-    const member = json.member(image, column);
-    const depth = sql`JSON_DEPTH(${json.parse(sql`JSON_UNQUOTE(${member})`)})`;
-    return sql`(${json.is(member, ["string"])} AND NOT ${flavour.nestsUnder(depth)})`;
-  });
-  return tests.length > 0
-    ? sql`COALESCE(${join(tests, sql` OR `)}, FALSE)`
-    : sql`FALSE`;
+  const old = Side(alias, tables.oldImage, request.matches.old);
+  const now = Side(alias, tables.newImage, request.matches.new);
+  return sql`(COALESCE(${old}, FALSE) OR COALESCE(${now}, FALSE))`;
 }
 
 /**
@@ -295,14 +290,13 @@ function TooDeep(
  */
 function Poll(
   flavour: Flavour,
-  json: JsonSyntax,
   tables: ChangeLogTables,
   request: PollRequest,
 ): Sql {
   const ev = ident(request.alias);
-  const deepIn = (image: string) =>
-    TooDeep(flavour, json, sql`${ev}.${ident(image)}`, request.nested);
-  const deep = sql`(${deepIn(tables.oldImage)} OR ${deepIn(tables.newImage)})`;
+  const admitted = Admitted(ev, tables, request);
+  const side = (image: string, statement: Sql) =>
+    sql`CASE WHEN ${admitted} THEN ${Side(ev, image, statement)} END`;
   const table = param(request.table);
   const scope =
     request.instance === undefined
@@ -312,9 +306,9 @@ function Poll(
   const frontier = flavour.lateral
     ? sql`c.frontier`
     : sql`(SELECT f.${NEXT_SEQ} - 1 FROM ${ident(tables.clock)} AS f WHERE f.${ID} = ${CLOCK_ROW})`;
-  const events = sql`SELECT ${ev}.${SEQ} AS seq, ${ev}.${OPERATION} AS op, ${Side(ev, tables.oldImage, deep, request.old)} AS old_side, ${Side(ev, tables.newImage, deep, request.new)} AS new_side, ${deep} AS deep FROM ${ident(tables.log)} AS ${ev} WHERE ${ev}.${TABLE} = ${table}${scope} AND ${ev}.${SEQ} > ${Seq(request.after)} AND ${ev}.${SEQ} <= ${frontier} ORDER BY ${ev}.${SEQ} LIMIT ${int(request.limit)}`;
+  const events = sql`SELECT ${ev}.${SEQ} AS seq, ${ev}.${OPERATION} AS op, ${side(tables.oldImage, request.old)} AS old_side, ${side(tables.newImage, request.new)} AS new_side FROM ${ident(tables.log)} AS ${ev} WHERE ${ev}.${TABLE} = ${table}${scope} AND ${ev}.${SEQ} > ${Seq(request.after)} AND ${ev}.${SEQ} <= ${frontier} ORDER BY ${ev}.${SEQ} LIMIT ${int(request.limit)}`;
   const join = flavour.lateral ? sql`LEFT JOIN LATERAL` : sql`LEFT JOIN`;
-  return sql`SELECT c.epoch AS epoch, c.frontier AS frontier, c.high_water AS high_water, e.seq AS seq, e.op AS op, e.old_side AS old_side, e.new_side AS new_side, e.deep AS deep FROM (${header}) AS c ${join} (${events}) AS e ON TRUE ORDER BY e.seq`;
+  return sql`SELECT c.epoch AS epoch, c.frontier AS frontier, c.high_water AS high_water, e.seq AS seq, e.op AS op, e.old_side AS old_side, e.new_side AS new_side FROM (${header}) AS c ${join} (${events}) AS e ON TRUE ORDER BY e.seq`;
 }
 
 /**
@@ -334,9 +328,6 @@ function Stamp(
   );
   return sql`UPDATE ${ident(tables.log)} AS c JOIN ${numbered} ON c.${ID} = v.id SET c.${SEQ} = ${Seq(first)} + v.n - 1, c.${SEQUENCED_AT} = UTC_TIMESTAMP(6) WHERE c.${ID} IN (${named})`;
 }
-
-/** `The JSON document exceeds the maximum depth`, which MySQL raises where MariaDB answers NULL. */
-const DOCUMENT_TOO_DEEP = 3157;
 
 /** `You do not have the SUPER privilege and binary logging is enabled`, raised by `CREATE TRIGGER`. */
 const BINARY_LOG_REFUSAL = 1419;
@@ -372,7 +363,8 @@ export function CaptureOf(flavour: Flavour, syntax: SqlSyntax): CaptureSyntax {
       sql`CREATE TRIGGER ${ident(name)} AFTER ${EVENTS[trigger.operation]} ON ${ident(table)} FOR EACH ROW ${trigger.body}`,
     dropTrigger: (name) => sql`DROP TRIGGER IF EXISTS ${ident(name)}`,
     triggerRefusal: TriggerRefusal,
-    tooDeep: (error) => "errno" in error && error.errno === DOCUMENT_TOO_DEEP,
+    tooDeep: (error) =>
+      "errno" in error && error.errno === flavour.tooDeepErrno,
     lockTable: (table) => sql`LOCK TABLES ${ident(table)} WRITE`,
     unlockTables: sql`UNLOCK TABLES`,
     markMoves: sql`SET ${MOVING} = 1`,
@@ -392,7 +384,7 @@ export function CaptureOf(flavour: Flavour, syntax: SqlSyntax): CaptureSyntax {
       sql`SELECT ${LogEpoch(tables, EPOCH)} AS epoch, ${NEXT_SEQ} - 1 AS frontier, EXISTS (SELECT 1 FROM ${ident(tables.log)} WHERE ${SEQ} IS NULL) AS pending FROM ${ident(tables.clock)} WHERE ${ID} = ${CLOCK_ROW}`,
     changedTables: (tables, after) =>
       sql`SELECT DISTINCT ${TABLE} AS tbl FROM ${ident(tables.log)} WHERE ${SEQ} > ${Seq(after)}`,
-    poll: (tables, request) => Poll(flavour, json, tables, request),
+    poll: (tables, request) => Poll(flavour, tables, request),
     reapThrough: (tables, retentionMs, limit) =>
       sql`SELECT MAX(b.${SEQ}) AS through FROM (SELECT ${SEQ} FROM ${ident(tables.log)} WHERE ${SEQUENCED_AT} < UTC_TIMESTAMP(6) - INTERVAL ${int(retentionMs * MICROSECONDS_PER_MS)} MICROSECOND ORDER BY ${SEQUENCED_AT} LIMIT ${int(limit)}) AS b`,
     raiseReaped: (tables, through) => {

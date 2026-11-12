@@ -55,6 +55,9 @@ const EMPTY = 0;
  */
 const FALLBACK_WAIT_MS = 5000;
 
+/** The events a narrow poll reads, so the one it fails on is the one too deep to build. */
+const NARROW_LIMIT = 1;
+
 const POLL_FAILED = "a MySQL change feed's poll failed and will be retried";
 
 const EXTERNAL_FEED =
@@ -114,6 +117,11 @@ interface FeedState {
   wake?: () => void;
   woken: boolean;
   full: boolean;
+  /**
+   * Whether the feed polls one event at a time, as it does from the first poll that failed on a
+   * document deeper than the server builds, so it delivers every event before that one.
+   */
+  narrow: boolean;
   ending: Promise<void>;
   endNow: () => void;
   unsubscribe?: () => void;
@@ -180,6 +188,7 @@ function Registered(reqId: number, env?: FeedEnvironment): FeedState {
     buffer: [],
     woken: false,
     full: false,
+    narrow: false,
     ending,
     endNow,
     env: env ?? LIVE,
@@ -267,11 +276,25 @@ function Delivered(event: LoggedEvent): RowObject {
 }
 
 /**
+ * Whether the server answered no document for a side of an event the feed delivers. Only a feed
+ * whose documents are whole rows can tell: MariaDB 11.8 answers SQL NULL for a document nested
+ * deeper than it builds, and a row is never null.
+ */
+function Unbuilt(plan: FeedPlan, event: LoggedEvent): boolean {
+  return (
+    plan.whole &&
+    Admitted(event) &&
+    (event.old?.doc === null || event.new?.doc === null)
+  );
+}
+
+/**
  * One poll: read what was numbered, check nothing was lost, and buffer what arrived.
  *
  * A batch that was not full moves the watermark to the frontier the same statement read, so a feed
  * whose table is quiet moves with the log. A full one moves it to the last row it scanned, admitted
- * or not, and the next poll reads on from there.
+ * or not, and the next poll reads on from there. A batch that reaches an event the server built no
+ * document for is cut before it, so the next poll starts at that event and ends the feed.
  */
 async function Poll(
   reqId: number,
@@ -279,7 +302,7 @@ async function Poll(
   options: ResolvedOptions,
 ): Promise<void> {
   const { target, plan } = state;
-  const limit = options.changeBatchSize;
+  const limit = state.narrow ? NARROW_LIMIT : options.changeBatchSize;
   const statement = PollStatement(
     state.env.dialect(),
     plan,
@@ -298,13 +321,14 @@ async function Poll(
     Retire(reqId, state, { reason: "lapsed", target, gap });
     return;
   }
-  const deep = answer.scanned.findIndex((event) => event.deep);
-  if (deep === 0) {
+  const unbuilt = answer.scanned.findIndex((event) => Unbuilt(plan, event));
+  if (unbuilt === 0) {
     Retire(reqId, state, { reason: "tooDeep", target, after: state.watermark });
     return;
   }
-  const scanned = deep === -1 ? answer.scanned : answer.scanned.slice(0, deep);
-  state.full = deep !== -1 || scanned.length >= limit;
+  const scanned =
+    unbuilt === -1 ? answer.scanned : answer.scanned.slice(0, unbuilt);
+  state.full = unbuilt !== -1 || scanned.length >= limit;
   for (const event of scanned) {
     if (Admitted(event)) {
       state.buffer.push(Delivered(event));
@@ -403,6 +427,25 @@ async function Open(state: FeedState, stages: QueryStage[]): Promise<void> {
   }
 }
 
+/**
+ * Answers a poll that failed on a document deeper than the server builds. A poll of a batch says
+ * only that some event in it is too deep, so the feed reads on one event at a time, at once, and
+ * delivers every event before that one. A poll of one event names it, and ends the feed after the
+ * last event it got past.
+ */
+function Deepened(reqId: number, state: OpenFeed): void {
+  if (!state.narrow) {
+    state.narrow = true;
+    state.full = true;
+    return;
+  }
+  Retire(reqId, state, {
+    reason: "tooDeep",
+    target: state.target,
+    after: state.watermark,
+  });
+}
+
 function Ended(end: FeedEnd): IteratorResult<RowObject, void> {
   switch (end.reason) {
     case "closed":
@@ -446,12 +489,7 @@ async function Advance(
     await Promise.race([
       Polled(reqId, open, stages, options).catch((err: unknown) => {
         if (err instanceof Error && open.env.dialect().capture.tooDeep(err)) {
-          const after = open.watermark;
-          Retire(reqId, open, {
-            reason: "tooDeep",
-            target: open.target,
-            after,
-          });
+          Deepened(reqId, open);
         } else if (!open.end) {
           Logger.Warn(POLL_FAILED, err);
         }

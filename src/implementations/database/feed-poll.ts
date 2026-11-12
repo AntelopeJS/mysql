@@ -25,13 +25,12 @@ interface LoggedSide {
 }
 
 /**
- * One log row a poll scanned, with the sides its images have. A `deep` event has neither: a value
- * it holds nests too deep for the document around it.
+ * One log row a poll scanned, with the sides its images have. An event neither side of which
+ * passed the feed's stages has neither.
  */
 export interface LoggedEvent {
   readonly seq: bigint;
   readonly op: ChangeOperation;
-  readonly deep: boolean;
   readonly old?: LoggedSide;
   readonly new?: LoggedSide;
 }
@@ -65,7 +64,7 @@ export function PollStatement(
     alias: EVENT_ALIAS,
     old: plan.old,
     new: plan.new,
-    nested: plan.nested,
+    matches: plan.matches,
   });
 }
 
@@ -102,7 +101,6 @@ function EventOf(row: Row, type: SqlType): LoggedEvent {
   return {
     seq: UnsignedOf(row, "seq"),
     op: OperationOf(row),
-    deep: Number(row.get("deep")) === 1,
     old: SideOf(row, "old_side", type),
     new: SideOf(row, "new_side", type),
   };

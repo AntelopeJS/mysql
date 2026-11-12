@@ -23,12 +23,8 @@ export interface Flavour {
   readonly jsonType: Sql;
   /** The most containers a stored JSON document nests. */
   readonly maxJsonNesting: number;
-  /**
-   * Whether the engine builds a document around a value whose `JSON_DEPTH` is `depth`. The document
-   * holds one container more than the value, and `JSON_DEPTH` counts a level for the scalar inside
-   * the deepest container, which no engine's limit counts, so the document nests `depth` containers.
-   */
-  nestsUnder(depth: Sql): Sql;
+  /** The errno a statement fails with when a JSON document it reads or builds nests too deep. */
+  readonly tooDeepErrno: number;
   /** Whether a `multi` index over a JSON array can be built as a multi-valued index. */
   readonly multiValuedIndex: boolean;
   /** Session assignments of the engine's own that the pin adds to the family's. */
@@ -140,15 +136,12 @@ const UTC_OFFSET = "+00:00";
  * a neighbour, and JSON text spells a negative zero `0`, so of the finite numbers only a safe
  * integer other than -0 survives the text; any other goes as a bound `DOUBLE`.
  */
-/** The most containers MySQL nests a JSON document to, stored or built. */
-const MYSQL_NESTING = 100;
-
 export const MYSQL: Flavour = {
   id: "mysql",
   binaryCollation: "utf8mb4_0900_bin",
   jsonType: sql`JSON`,
-  maxJsonNesting: MYSQL_NESTING,
-  nestsUnder: (depth) => sql`(${depth} <= ${int(MYSQL_NESTING)})`,
+  maxJsonNesting: 100,
+  tooDeepErrno: 3157,
   multiValuedIndex: true,
   pinned: [],
   readTimeout: (ms) => sql`max_execution_time = ${int(ms)}`,
