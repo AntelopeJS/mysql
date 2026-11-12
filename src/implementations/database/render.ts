@@ -171,13 +171,10 @@ function LockClause(relation: Relation): Sql | undefined {
   return relation.locked ? sql`FOR UPDATE` : undefined;
 }
 
-const CLAUSES: ClauseBuilder[] = [
-  SelectClause,
-  ...BODY,
-  OrderByClause,
-  LimitClause,
-  LockClause,
-];
+/** Every clause after the select list. */
+const TAIL: ClauseBuilder[] = [...BODY, OrderByClause, LimitClause, LockClause];
+
+const CLAUSES: ClauseBuilder[] = [SelectClause, ...TAIL];
 
 function RenderClauses(relation: Relation, builders: ClauseBuilder[]): Sql {
   const clauses = builders
@@ -241,12 +238,13 @@ function FreeColumn(relation: Relation, base = ROW_NUMBER_COLUMN): string {
 /**
  * Wraps the relation as {@link Nested} does, and keeps its order: each sort term is selected beside
  * the row, and the fresh relation sorts by those columns. A derived table's own `ORDER BY` orders
- * nothing outside it, and MariaDB reads its rows in another order.
+ * nothing outside it, and MariaDB reads its rows in another order. The subselect keeps its own
+ * `ORDER BY`, row bounds and lock, so a bounded relation keeps the rows its order chose.
  */
-export function NestedInOrder(
-  relation: Relation,
-  context: DecodingContext,
-): Relation {
+function NestedInOrder(relation: Relation, context: DecodingContext): Relation {
+  if (relation.orderBy.length === 0) {
+    return Nested(relation, context);
+  }
   const columns = relation.orderBy.map((term, index) => ({
     term,
     name: FreeColumn(relation, `_order${index}`),
@@ -255,7 +253,7 @@ export function NestedInOrder(
     ({ term, name }) => sql`${term.sql} AS ${ident(name)}`,
   );
   const select = sql`${SelectClause(relation)}, ${join(selected, COMMA)}`;
-  const rest = RenderClauses(relation, [...BODY, OrderByClause, LimitClause]);
+  const rest = RenderClauses(relation, TAIL);
   const wrapped = Wrapped(relation, sql`(${select} ${rest})`, context);
   wrapped.orderBy = columns.map(({ term, name }) => ({
     sql: QualifiedColumn(wrapped.alias, name),
@@ -335,11 +333,20 @@ export function HasFlag(
 /**
  * The one place a *conditional* wrap is decided: every stage continuing its own relation opens by
  * naming the flags that block it, and reaches {@link Nested} through nothing else.
+ *
+ * A stage blocked by `ordered`, such as `group` or `distinct`, drops the order ahead of it. Every
+ * other stage keeps it across the wrap, since a derived table's own `ORDER BY` orders nothing the
+ * statement around it reads.
  */
 export function Prepare(
   relation: Relation,
   blockedBy: readonly RelationFlag[],
   context: DecodingContext,
 ): Relation {
-  return HasFlag(relation, blockedBy) ? Nested(relation, context) : relation;
+  if (!HasFlag(relation, blockedBy)) {
+    return relation;
+  }
+  return blockedBy.includes("ordered")
+    ? Nested(relation, context)
+    : NestedInOrder(relation, context);
 }
