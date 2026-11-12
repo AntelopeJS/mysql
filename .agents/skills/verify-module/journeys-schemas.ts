@@ -98,7 +98,7 @@ return {
       same("a unique index is UNIQUE within the instance, over the exact key column", [unique("sku"), parts("sku")], [true, `_instance, ${sku}`]),
       same("the __g twin is never unique", unique("name__g"), false),
       has("a multi index over a string array is multi-valued, CHAR(512) ARRAY", parts("tags"), /^_instance, cast\(json_extract\(`tags`,.*\) as char\(512\) array\)$/u),
-      same("a dotted index field keys on the key column of the nested path", parts("titleFr"), `_instance, ${titleFr}`),
+      has("a dotted index field below an object field keys on the nested path's value key, its kind and text then its number", parts("titleFr"), /^_instance, __k_title_fr_[0-9a-f]+, __k_title_fr_[0-9a-f]+$/u),
       has("each index is signed in its comment", text(pick(indexes.value, "price", "comment")), /^antelopejs:1:btree:_instance,price$/u),
     ]);
     const registry = await sql(

@@ -15,6 +15,8 @@ covers:
   - src/implementations/database/types.ts
   - src/implementations/database/plan.ts
   - src/implementations/database/paths.ts
+  - src/implementations/database/value-key.ts
+  - src/implementations/database/ranked-key.ts
   - src/implementations/database/duplicate-key.ts
 docs:
   - docs/storage.md
