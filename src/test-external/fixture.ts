@@ -173,17 +173,19 @@ const WRITE_TABLES: readonly string[] = [
 ];
 
 /**
- * Dates a server without `NO_ZERO_DATE` stored, which strict sessions refuse to write: a zero date
- * and one with a zero month, beside a real one and NULL.
+ * Dates a server without `NO_ZERO_DATE` stored, which strict sessions refuse to write: a zero date,
+ * one with a zero month and one with a zero day, each stored between real ones, and NULL.
  */
 const ZERO_DATES: readonly string[] = [
-  "CREATE TABLE sales.zero_days (id INT PRIMARY KEY, d DATE, dt DATETIME, INDEX zero_days_d (d))",
+  "CREATE TABLE sales.zero_days (id INT PRIMARY KEY, d DATE, dt DATETIME, INDEX zero_days_d (d), INDEX zero_days_dt (dt))",
   "SET SESSION sql_mode = ''",
   `INSERT INTO sales.zero_days VALUES
     (1, '0000-00-00', '0000-00-00 00:00:00'),
     (2, '2024-01-01', '2024-01-01 10:00:00'),
     (3, '2024-00-15', '2024-00-15 00:00:00'),
-    (4, NULL, NULL)`,
+    (4, NULL, NULL),
+    (5, '2024-05-00', '2024-05-00 00:00:00'),
+    (6, '2023-12-31', '2023-12-31 23:00:00')`,
   "SET SESSION sql_mode = DEFAULT",
 ];
 
