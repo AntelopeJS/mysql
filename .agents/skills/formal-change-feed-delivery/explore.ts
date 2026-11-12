@@ -118,8 +118,7 @@ export class Schedule {
     });
   }
 
-  /** The id the next step of `session` takes. */
-  idFor(session: string): string {
+  private idFor(session: string): string {
     const count = this.counts.get(session) ?? 0;
     this.counts.set(session, count + 1);
     return `${session}#${count}`;
@@ -194,6 +193,37 @@ export class Schedule {
 }
 
 /**
+ * A step that waited on a lock at the point it raced could have run before the step that took the
+ * lock: the latest earlier point, after the actor's own last step, where it could run gets it too.
+ */
+function offerEarlier(nodes: readonly Node[], actor: string, before: number, after: number): void {
+  for (let m = before - 1; m > after; m -= 1) {
+    const node = nodes[m];
+    if (node?.options.some((option) => option.actor === actor)) {
+      node.backtrack.add(actor);
+      return;
+    }
+  }
+}
+
+/**
+ * The point before step `at` must also run `actor`, or every actor it could run there when `actor`
+ * could not, and then the latest earlier point where `actor` could run.
+ */
+function markRace(nodes: readonly Node[], actor: string, at: number, after: number): void {
+  const node = nodes[at];
+  const runnable = node?.options.some((option) => option.actor === actor) ?? false;
+  for (const option of node?.options ?? []) {
+    if (!runnable || option.actor === actor) {
+      node?.backtrack.add(option.actor);
+    }
+  }
+  if (!runnable) {
+    offerEarlier(nodes, actor, at, after);
+  }
+}
+
+/**
  * Marks, for each step of the run, every earlier dependent step of another actor that no step
  * between them orders before it: the point before that earlier step must also try the later actor,
  * or every actor it could run when the later one could not run there.
@@ -213,13 +243,7 @@ function markRaces(nodes: readonly Node[], taken: readonly Taken[]): void {
       const isOrdered = (clock.get(earlier.actor) ?? -1) >= j;
       if (earlier.actor !== step.actor && !isOrdered && !isRaced) {
         isRaced = true;
-        const node = nodes[j];
-        const runnable = node?.options.some((option) => option.actor === step.actor);
-        for (const option of node?.options ?? []) {
-          if (!runnable || option.actor === step.actor) {
-            node?.backtrack.add(option.actor);
-          }
-        }
+        markRace(nodes, step.actor, j, own ?? -1);
       }
       for (const [actor, index] of clocks[j] ?? []) {
         clock.set(actor, Math.max(clock.get(actor) ?? -1, index));

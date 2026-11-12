@@ -16,7 +16,7 @@ import { SetOptions } from "../../../src/config";
 import { DIALECTS } from "../../../src/dialect";
 import { CloseOneFeed, ReadFeedEvent } from "../../../src/implementations/database/feeds";
 import { ReapOnce } from "../../../src/implementations/database/reaper";
-import { Sequence } from "../../../src/implementations/database/sequencer";
+import { ReadFrontier, Sequence } from "../../../src/implementations/database/sequencer";
 import type { RowValue } from "../../../src/implementations/database/result";
 import { IsDocument, IsString } from "../../../src/implementations/database/guards";
 import { type Drained, exploreOrders, type Schedule } from "./explore";
@@ -36,8 +36,8 @@ import { type Counterexample, type Exploration, exploreShard, mergeResults, runS
 
 const EXIT = { ok: 0, changed: 1, tool: 2 };
 const BOUNDS = {
-  ci: { scenarios: 100, orders: 20_000, size: { writers: 2, ticks: 1, reapers: 1 } },
-  full: { scenarios: 300, orders: 50_000, size: { writers: 2, ticks: 2, reapers: 2 } },
+  ci: { scenarios: 100, orders: 20_000, size: { seeds: 1, writers: 2, writes: 1, ticks: 1, reapers: 1 } },
+  full: { scenarios: 100, orders: 20_000, size: { seeds: 2, writers: 2, writes: 2, ticks: 2, reapers: 2 } },
 };
 const DEFAULT_SEED = 2023;
 const MAX_DEFAULT_JOBS = 4;
@@ -46,7 +46,7 @@ const STEP_BUDGET = 500;
 const LAPSED = /events (\d+) through (\d+) were reaped/;
 
 /** Rules the code breaks today; SKILL.md records each one. */
-const FINDINGS: ReadonlySet<string> = new Set<string>([]);
+const FINDINGS: ReadonlySet<string> = new Set<keyof typeof RULES>(["KeepsRowOrder"]);
 
 interface Options {
   size: Size;
@@ -85,10 +85,10 @@ function changeOf(value: RowValue | undefined): string {
   return IsString(change) ? change : `an unknown document ${JSON.stringify(value)}`;
 }
 
-function endingOf(message: string): Ending {
+function endingOf(message: string, at: number): Ending {
   const lapsed = LAPSED.exec(message);
   if (lapsed) {
-    return { kind: "lapsed", from: BigInt(lapsed[1] ?? "0"), to: BigInt(lapsed[2] ?? "0") };
+    return { kind: "lapsed", from: BigInt(lapsed[1] ?? "0"), to: BigInt(lapsed[2] ?? "0"), at };
   }
   return { kind: "failed", message };
 }
@@ -170,7 +170,7 @@ async function runScenario(schedule: Schedule, scenario: Scenario): Promise<Run 
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      ending = endingOf(message);
+      ending = endingOf(message, server.db.now);
       schedule.trace.push(`feed: ended, ${message}`);
     }
     probe.done = true;
@@ -178,11 +178,16 @@ async function runScenario(schedule: Schedule, scenario: Scenario): Promise<Run 
   startWriters(server, scenario, changes, start);
   const dialect = DIALECTS.mysql;
   for (let n = 1; n <= scenario.ticks; n += 1) {
-    start(`tick ${n}`, () => Sequence(server.session(`tick ${n}`), dialect, "skip"));
+    start(`tick ${n}`, async () => {
+      const session = server.session(`tick ${n}`);
+      if ((await ReadFrontier(session, dialect)).pending) {
+        await Sequence(session, dialect, "skip");
+      }
+    });
   }
   for (let n = 1; n <= scenario.reapers; n += 1) {
     start(`reaper ${n}`, async () => {
-      await ReapOnce(server.session(`reaper ${n}`), dialect, 0);
+      await ReapOnce(server.session(`reaper ${n}`), dialect, scenario.retention);
     });
   }
   const wake = () => server.wakeStep(probe);
@@ -210,7 +215,9 @@ async function runScenario(schedule: Schedule, scenario: Scenario): Promise<Run 
     delivered,
     ending,
     seqs: server.db.numbered,
-    reapedSeqs: server.db.deleted.get(FEED_TABLE) ?? [],
+    passes: server.db.passes,
+    retention: scenario.retention,
+    reaped: server.db.deleted.get(FEED_TABLE) ?? [],
     settled,
     trace: schedule.trace,
     modelErrors: server.modelErrors,

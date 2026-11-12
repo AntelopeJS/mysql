@@ -7,7 +7,7 @@
  * the compile or the check and remove the scratch folder.
  */
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,35 @@ import { fileURLToPath } from "node:url";
 const TOOL_ERROR = 2;
 const skill = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(skill, "../../..");
+/**
+ * Code the check copies rather than runs, since the real code takes a pooled connection: the feed's
+ * open, copied in `server.ts`, and the change clock's look, copied as the tick in `check.ts`.
+ */
+const COPIED = [
+  {
+    file: "src/implementations/database/feeds.ts",
+    copy: "the feed's open in server.ts",
+    text: `
+      await Sequence(session, dialect, "wait");
+      return ReadFrontier(session, dialect);
+    }),
+  read: (statement) => Read(statement),`,
+  },
+  {
+    file: "src/implementations/database/change-loop.ts",
+    copy: "the tick in check.ts",
+    text: `
+  let frontier = await ReadFrontier(session, dialect);
+  if (frontier.pending) {
+    await Sequence(session, dialect, "skip");`,
+  },
+];
+for (const { file, copy, text } of COPIED) {
+  if (!readFileSync(path.join(root, file), "utf8").includes(text)) {
+    console.error(`${file} no longer matches ${copy}: update the copy, then its text in check.mjs`);
+    process.exit(TOOL_ERROR);
+  }
+}
 const out = mkdtempSync(path.join(tmpdir(), "formal-change-feed-delivery-"));
 /** @type {import("node:child_process").ChildProcess | undefined} */
 let running;

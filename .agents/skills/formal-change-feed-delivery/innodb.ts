@@ -48,6 +48,13 @@ export class Txn {
 /** Raised for a statement or a state the model does not cover; the check then cannot run. */
 export class ModelError extends Error {}
 
+/** A row the reaper deleted: its `seq`, the tick it was numbered at, and the tick its delete committed at. */
+export interface Reaped {
+  readonly seq: bigint;
+  readonly sequencedAt: number;
+  readonly at: number;
+}
+
 export interface ClockRow {
   readonly nextSeq: bigint;
   readonly epoch: string;
@@ -76,8 +83,10 @@ export class InnoDb {
   readonly named = new Map<string, number>();
   /** The `seq` each logged change was committed with, by label. */
   readonly numbered = new Map<string, bigint>();
-  /** The `seq` of every row a committed `DELETE` removed, per table. */
-  readonly deleted = new Map<string, bigint[]>();
+  /** Each pass that numbered rows, as the ids it numbered in `seq` order. */
+  readonly passes: bigint[][] = [];
+  /** Every row a committed `DELETE` removed, per table: its `seq` and the tick it went at. */
+  readonly deleted = new Map<string, Reaped[]>();
   /** Counts commits that changed what a poll reads, so a feed can tell whether the log moved. */
   version = 0;
   /** The clock `UTC_TIMESTAMP(6)` reads: one tick per step. */
@@ -169,22 +178,27 @@ export class InnoDb {
   }
 
   commit(txn: Txn): void {
+    const stamped: { id: bigint; seq: bigint }[] = [];
     for (const row of this.log.values()) {
       if (row.pending?.txn !== txn) {
         continue;
       }
       if (row.pending.next === "deleted") {
         this.log.delete(row.id);
-        const seqs = this.deleted.get(row.tbl) ?? [];
-        seqs.push(row.committed?.seq ?? -1n);
-        this.deleted.set(row.tbl, seqs);
+        const gone = this.deleted.get(row.tbl) ?? [];
+        gone.push({ seq: row.committed?.seq ?? -1n, sequencedAt: row.committed?.sequencedAt ?? -1, at: this.now });
+        this.deleted.set(row.tbl, gone);
       } else {
         row.committed = row.pending.next;
         row.pending = undefined;
         if (row.committed.seq !== null) {
           this.numbered.set(row.label, row.committed.seq);
+          stamped.push({ id: row.id, seq: row.committed.seq });
         }
       }
+    }
+    if (stamped.length > 0) {
+      this.passes.push(stamped.sort((a, b) => (a.seq < b.seq ? -1 : 1)).map(({ id }) => id));
     }
     publish(this.clock, txn);
     for (const value of this.reaped.values()) {

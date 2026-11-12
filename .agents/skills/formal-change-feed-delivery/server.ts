@@ -16,7 +16,7 @@ import { ReadFrontier, Sequence } from "../../../src/implementations/database/se
 import type { Footprint, Schedule, Step } from "./explore";
 import { InnoDb, ModelError, POLLED, type Txn } from "./innodb";
 import { Parse } from "./statements";
-import { type Answer, type SessionState, TxnResources } from "./steps";
+import { type Answer, type Op, type SessionState, TxnResources } from "./steps";
 
 export const SCHEMA_ID = "shop";
 export const TABLE_ID = "orders";
@@ -80,35 +80,55 @@ export class FakeServer {
     };
   }
 
-  private run(actor: string, state: SessionState, statement: Sql): Promise<Answer> {
-    const bound = Bind(statement);
-    let op;
+  /**
+   * Runs a statement as the steps it takes on the server: most take one, a locking scan one per row
+   * it visits. Outside a transaction the statement commits once its last step has run, or rolls
+   * back when one fails.
+   */
+  private async run(actor: string, state: SessionState, statement: Sql): Promise<Answer> {
+    let op: Op | undefined;
     try {
-      op = Parse(bound, this.db, state);
+      op = Parse(Bind(statement), this.db, state);
     } catch (error) {
       if (error instanceof ModelError) {
         this.modelErrors.push(error.message);
       }
-      return Promise.reject(error);
+      throw error;
     }
+    const explicit = state.txn;
+    const txn = explicit ?? this.db.begin();
+    const rows: Row[] = [];
+    let affected = 0;
+    try {
+      while (op) {
+        const answer = await this.step(actor, state, op, txn);
+        rows.push(...answer.rows);
+        affected += answer.affected;
+        op = answer.more;
+      }
+    } catch (error) {
+      if (!explicit) {
+        this.db.rollback(txn);
+      }
+      throw error;
+    }
+    if (!explicit && state.txn === undefined) {
+      this.db.commit(txn);
+    }
+    return { rows, affected, note: "" };
+  }
+
+  private step(actor: string, state: SessionState, op: Op, txn: Txn): Promise<Answer> {
     const execute = (): Answer => {
-      const explicit = state.txn;
-      const txn = explicit ?? this.db.begin();
       let result: Answer;
       try {
-        result = op.run(txn);
+        result = op.run(state.txn ?? txn);
       } catch (error) {
         if (error instanceof ModelError) {
           this.modelErrors.push(error.message);
         }
-        if (!explicit) {
-          this.db.rollback(txn);
-        }
         this.schedule.trace.push(`${actor}: ${op.label} -> error ${error instanceof Error ? error.message : String(error)}`);
         throw error;
-      }
-      if (!explicit && state.txn === undefined) {
-        this.db.commit(txn);
       }
       this.db.now += 1;
       if (op.label !== "read committed") {
@@ -123,7 +143,8 @@ export class FakeServer {
         return Promise.reject(error);
       }
     }
-    return this.schedule.submit(actor, op.label, () => !op.blocked(state.txn), () => op.footprint(state.txn), execute);
+    const holder = () => state.txn ?? txn;
+    return this.schedule.submit(actor, op.label, () => !op.blocked(holder()), () => op.footprint(holder()), execute);
   }
 
   /** One write of a document in `txn`: its row lock, then the log row its capture trigger inserts. */

@@ -10,11 +10,12 @@ import { type InnoDb, type LogRow, ModelError, NUMBERED, POLLED, type Txn, UNNUM
 
 type Cell = string | number | null;
 
-/** What a statement answered: its rows, the rows it matched, and a note for the trace. */
+/** What a step answered: its rows, the rows it matched, a note for the trace, and the statement's next step if it has one. */
 export interface Answer {
   readonly rows: Row[];
   readonly affected: number;
   readonly note: string;
+  readonly more?: Op;
 }
 
 /** A statement bound to the model. */
@@ -94,40 +95,67 @@ export function lockClock(db: InnoDb, mode: string | undefined): Op {
   };
 }
 
-export function unsequenced(db: InnoDb, descending: boolean, limit: number, mode: string | undefined): Op {
-  const locking = mode !== undefined;
-  const skip = mode === " FOR UPDATE SKIP LOCKED";
-  const scanned = (txn: Txn | undefined) =>
-    db.rows().filter((each) => each.committed === undefined || each.committed.seq === null || each.pending?.txn === txn);
+/** How a scan of the log reads rows: in which order, how many at most, and whether it locks or skips them. */
+interface Scan {
+  readonly descending: boolean;
+  readonly limit: number;
+  readonly locking: boolean;
+  readonly skip: boolean;
+}
+
+/**
+ * The log row a scan visits after `after`, in its order, among the rows that exist now. A row that
+ * committed with a `seq` is passed over without a step of its own: only a pass, which holds the
+ * clock this scan holds, numbers a row, so visiting it answers the same at any moment.
+ */
+function nextRow(db: InnoDb, scan: Scan, after: bigint | undefined): LogRow | undefined {
+  const rows = scan.descending ? db.rows().reverse() : db.rows();
+  return rows.find(
+    (each) =>
+      (after === undefined || (scan.descending ? each.id < after : each.id > after)) &&
+      (each.committed?.seq ?? null) === null,
+  );
+}
+
+/**
+ * One row of `unsequenced`'s scan. InnoDB reads a locking scan row by row, each against the latest
+ * data and locks at that moment, so a transaction may commit, and another insert a row, between
+ * two rows of one scan: each visit is a step of its own.
+ */
+function visit(db: InnoDb, scan: Scan, after: bigint | undefined, taken: number): Op {
   return {
-    label: `select unnumbered rows${skip ? " skip locked" : locking ? " for update" : ""}`,
+    label: `select unnumbered rows${scan.skip ? " skip locked" : scan.locking ? " for update" : ""}, after id ${String(after ?? "start")}`,
     local: () => false,
-    footprint: locking ? () => ({ reads: [UNNUMBERED], writes: ["log-locks"] }) : reads(UNNUMBERED),
-    blocked: (txn) => locking && !skip && scanned(txn).some((each) => heldByOther(db, `log:${each.id}`, txn)),
+    footprint: scan.locking ? () => ({ reads: [UNNUMBERED, "ids"], writes: ["log-locks"] }) : reads(UNNUMBERED, "ids"),
+    blocked: (txn) => {
+      const next = nextRow(db, scan, after);
+      return scan.locking && !scan.skip && next !== undefined && heldByOther(db, `log:${next.id}`, txn);
+    },
     run: (txn) => {
-      const ordered = descending ? db.rows().reverse() : db.rows();
-      const found: bigint[] = [];
-      for (const each of ordered) {
-        if (found.length >= limit) {
-          break;
-        }
-        const isLocked = heldByOther(db, `log:${each.id}`, txn);
-        const version = db.visible(each, txn);
-        if ((locking && isLocked) || version?.seq !== null || version === undefined) {
-          continue;
-        }
-        if (locking) {
-          db.lock(`log:${each.id}`, txn);
-        }
-        found.push(each.id);
+      const next = taken < scan.limit ? nextRow(db, scan, after) : undefined;
+      if (!next) {
+        return answer([], 0, " -> end of scan");
       }
-      return answer(
-        found.map((id) => row({ id: id.toString() })),
-        0,
-        ` -> ids ${ids(found)}`,
-      );
+      const more = visit(db, scan, next.id, taken);
+      const version = db.visible(next, txn);
+      if (scan.locking && heldByOther(db, `log:${next.id}`, txn)) {
+        return { ...answer([], 0, ` -> id ${next.id} locked, skipped`), more };
+      }
+      if (version === undefined || version.seq !== null) {
+        return { ...answer([], 0, ` -> id ${next.id} not waiting`), more };
+      }
+      if (scan.locking) {
+        db.lock(`log:${next.id}`, txn);
+      }
+      return { ...answer([row({ id: next.id.toString() })], 0, ` -> id ${next.id} taken`), more: visit(db, scan, next.id, taken + 1) };
     },
   };
+}
+
+/** `unsequenced`: the rows still without a `seq`, in log order, read as InnoDB reads them. */
+export function unsequenced(db: InnoDb, descending: boolean, limit: number, mode: string | undefined): Op {
+  const locking = mode !== undefined;
+  return visit(db, { descending, limit, locking, skip: mode === " FOR UPDATE SKIP LOCKED" }, undefined, 0);
 }
 
 export function stamp(db: InnoDb, list: readonly string[], first: bigint): Op {

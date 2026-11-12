@@ -5,6 +5,7 @@
  */
 import fc from "fast-check";
 import type { ChangeOperation } from "../../../src/dialect";
+import type { Reaped } from "./innodb";
 
 /** Where a write lands: the feed's table and instance, another instance of it, or another table. */
 export type Place = "feed" | "otherInstance" | "otherTable";
@@ -26,8 +27,10 @@ export interface Scenario {
   readonly writers: readonly WriterSpec[];
   /** Change-clock ticks, each a `Sequence` pass that skips while another pass holds the clock. */
   readonly ticks: number;
-  /** Reaper passes, each in its own process, with a retention of 0. */
+  /** Reaper passes, each in its own process. */
   readonly reapers: number;
+  /** The reaper's `changeRetentionMs`, in ticks of the fake server's clock: one tick per step. */
+  readonly retention: number;
   /** The feed's `changeBatchSize`. */
   readonly batch: number;
 }
@@ -38,9 +41,11 @@ const writeArb: fc.Arbitrary<WriteSpec> = fc.record({
   op: fc.constantFrom<ChangeOperation>("added", "modified", "removed"),
 });
 
-/** The most writers, change-clock ticks and reaper passes a scenario draws. */
+/** The most seeded changes, writers, writes per writer, change-clock ticks and reaper passes a scenario draws. */
 export interface Size {
+  readonly seeds: number;
   readonly writers: number;
+  readonly writes: number;
   readonly ticks: number;
   readonly reapers: number;
 }
@@ -48,16 +53,17 @@ export interface Size {
 /** The scenarios of one size. */
 export function scenarioArb(size: Size): fc.Arbitrary<Scenario> {
   return fc.record({
-    seeds: fc.array(writeArb, { maxLength: 2 }),
+    seeds: fc.array(writeArb, { maxLength: size.seeds }),
     writers: fc.array(
       fc.record({
-        writes: fc.array(writeArb, { minLength: 1, maxLength: 2 }),
+        writes: fc.array(writeArb, { minLength: 1, maxLength: size.writes }),
         commit: fc.constantFrom(true, true, true, false),
       }),
       { minLength: 1, maxLength: size.writers },
     ),
     ticks: fc.integer({ min: 0, max: size.ticks }),
     reapers: fc.integer({ min: 0, max: size.reapers }),
+    retention: fc.constantFrom(0, 0, 30),
     batch: fc.integer({ min: 1, max: 3 }),
   });
 }
@@ -74,7 +80,7 @@ export interface Change {
 /** How the feed ended. */
 export type Ending =
   | { readonly kind: "closed" }
-  | { readonly kind: "lapsed"; readonly from: bigint; readonly to: bigint }
+  | { readonly kind: "lapsed"; readonly from: bigint; readonly to: bigint; readonly at: number }
   | { readonly kind: "failed"; readonly message: string };
 
 /** What one run of a scenario under one order left. */
@@ -88,8 +94,12 @@ export interface Run {
   readonly ending: Ending;
   /** The `seq` each change was numbered with, if it was. */
   readonly seqs: ReadonlyMap<string, bigint>;
-  /** The `seq` of every row of the feed's table that a reaper deleted. */
-  readonly reapedSeqs: readonly bigint[];
+  /** Each pass that numbered rows, as the log ids it numbered in `seq` order. */
+  readonly passes: readonly (readonly bigint[])[];
+  /** The reaper's retention, in ticks. */
+  readonly retention: number;
+  /** Every row of the feed's table that a reaper deleted. */
+  readonly reaped: readonly Reaped[];
   /** Whether every actor finished, and what stopped one that did not. */
   readonly settled: string | undefined;
   readonly trace: readonly string[];
@@ -176,9 +186,33 @@ export const RULES = {
     if (ending.kind !== "lapsed") {
       return [];
     }
-    const lost = run.reapedSeqs.some((seq) => seq >= ending.from && seq <= ending.to);
+    const lost = run.reaped.some(({ seq }) => seq >= ending.from && seq <= ending.to);
     return lost ? [] : [`the feed ended as lapsed for seq ${ending.from} through ${ending.to}, but no row of its table in that range was reaped`];
   },
+  /** A loss error names every row of its table, from where the feed stood, that was reaped before it ended. */
+  NamesTheLostRange: (run) => {
+    const { ending } = run;
+    if (ending.kind !== "lapsed") {
+      return [];
+    }
+    const before = run.reaped.filter(({ at }) => at < ending.at);
+    const highest = before.reduce((top, { seq }) => (seq > top ? seq : top), 0n);
+    const short = before
+      .filter(({ seq }) => seq >= ending.from && seq > ending.to)
+      .map(({ seq }) => `seq ${seq} of the feed's table was reaped before the feed ended, but its loss error names only ${ending.from} through ${ending.to}`);
+    const wide = ending.to > highest ? [`the loss error names ${ending.from} through ${ending.to}, but the highest seq reaped from the feed's table was ${highest}`] : [];
+    return [...short, ...wide];
+  },
+  /** A pass numbers the rows it takes in the order they were logged. */
+  NumbersEachPassInLogOrder: (run) =>
+    run.passes
+      .filter((ids) => ids.some((id, n) => n > 0 && id < (ids[n - 1] ?? 0n)))
+      .map((ids) => `one pass numbered log ids ${ids.join(", ")} in that seq order, not in the order they were logged`),
+  /** The reaper deletes a row only once it has been numbered for longer than the retention. */
+  KeepsRetention: (run) =>
+    run.reaped
+      .filter(({ at, sequencedAt }) => at - sequencedAt <= run.retention)
+      .map(({ seq, at, sequencedAt }) => `seq ${seq} was numbered at tick ${sequencedAt} and reaped at tick ${at}, within the retention of ${run.retention}`),
   /** Every actor finishes: no statement waits forever and no pass fails. */
   Settles: (run) => (run.settled === undefined ? [] : [run.settled]),
 } satisfies Readonly<Record<string, Judge>>;
