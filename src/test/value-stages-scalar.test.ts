@@ -141,6 +141,27 @@ describe("The date stages", () => {
     );
   });
 
+  it("read text with a zone offset as the instant new Date reads, before 1970 as after it", async () => {
+    const texts = [
+      "1500-03-01T12:00:00+02:00",
+      "1960-01-01T00:00:00+02:00",
+      "1960-01-01T00:00:00-05:30",
+      "1969-12-31T23:00:00+01:00",
+      "2024-06-01T12:00:00+02:00",
+    ];
+    const read = await First(
+      table
+        .rows()
+        .map(() =>
+          texts.map((text) => ValueProxy.constant<string | Date>(text).epoch()),
+        ),
+    );
+    assert.deepEqual(
+      read,
+      texts.map((text) => Date.parse(text) / 1000),
+    );
+  });
+
   it("read the parts in the zone named, a named one or an offset, and a date part after another stage in UTC again", async () => {
     assert.deepEqual(
       await First(
