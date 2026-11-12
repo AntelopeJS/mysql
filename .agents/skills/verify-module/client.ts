@@ -1,6 +1,6 @@
 import type { JourneyContext } from "@antelopejs/tooling-configs/verify";
 
-import { seed, server, urlOf, type ModuleConfig } from "./session.ts";
+import { seed, server, urlOf, type Engine, type ModuleConfig } from "./session.ts";
 
 /** The client's database an external instance reads, created by its owner and never by the module. In external mode the schema id names it. */
 export const CLIENT = "sales";
@@ -20,13 +20,13 @@ GRANT INSERT, UPDATE, DELETE ON ${CLIENT}.accounts TO '${READER}'@'%';
 ANALYZE TABLE ${CLIENT}.accounts;`;
 
 /** Creates the client's `sales` database with 30 accounts, and the reader account with its grants, as root. */
-export async function seedClient(context: JourneyContext): Promise<void> {
-  await seed(context, "create the client's database, rows, account and grants", CLIENT_SCHEMA, "mysql");
+export async function seedClient(context: JourneyContext, engine: Engine): Promise<void> {
+  await seed(context, engine, "create the client's database, rows, account and grants", CLIENT_SCHEMA, "mysql");
 }
 
 /** The config of an external instance on the client's database as the reader account, with `extra` merged in. */
-export function externalConfig(context: JourneyContext, extra: ModuleConfig = {}): ModuleConfig {
-  return { mode: "external", url: urlOf(server(context), READER, CLIENT), ...extra };
+export function externalConfig(context: JourneyContext, engine: Engine, extra: ModuleConfig = {}): ModuleConfig {
+  return { mode: "external", url: urlOf(server(context, engine), READER, CLIENT), ...extra };
 }
 
 /** The declaration of the client's `sales` database, verbatim names. */

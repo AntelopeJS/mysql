@@ -30,6 +30,7 @@ docs:
   - docs/indexes.md
 journeys:
   - read-queries
+  - read-queries-mariadb
 ---
 
 # Reads
@@ -39,6 +40,7 @@ Queries on an owned instance, compiled to SQL and iterated through cursors.
 ## Sub-features
 
 - `read-queries`: `filter` with `orderBy`, `orderBy` descending with `pluck`, `between` on an index, `getAll` on an index, `count` over an `includes` filter on a JSON array and `group(index, (rows, key) => rows.count())` each answer what the same SQL answers over the stored rows; a row without the sorted field comes first on an ascending `orderBy`; text sorts by code point and compares case-sensitively; `lookup` joins the matching row under the local key; `for await` over a stream reads every row with `cursorBatchSize: 2`, past several batches.
+- `read-queries-mariadb`: the same journey on MariaDB 11.8, whose queries the module writes as [MariaDB](../../../../docs/mariadb.md#queries) lists.
 
 ## How to get to it (user POV)
 

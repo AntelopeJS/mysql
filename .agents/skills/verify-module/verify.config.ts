@@ -1,4 +1,4 @@
-import type { VerifyConfig } from "@antelopejs/tooling-configs/verify";
+import type { Journey, VerifyConfig } from "@antelopejs/tooling-configs/verify";
 
 import { CLIENT, READER } from "./client.ts";
 import { catalogDescribe, catalogRefused } from "./journeys-catalog.ts";
@@ -8,7 +8,7 @@ import { configOptions, configRefused } from "./journeys-module.ts";
 import { readQueries } from "./journeys-reads.ts";
 import { migrations, storageLayout } from "./journeys-schemas.ts";
 import { insertValues, updateReplaceDelete } from "./journeys-writes.ts";
-import { DATABASE, ownedConfig, SERVICE } from "./session.ts";
+import { DATABASE, ENGINES, MYSQL, ownedConfig, type Engine } from "./session.ts";
 
 const RESET = [
   `DROP DATABASE IF EXISTS \`${DATABASE}\``,
@@ -16,6 +16,24 @@ const RESET = [
   `DROP USER IF EXISTS '${READER}'@'%'`,
   `CREATE DATABASE \`${DATABASE}\``,
 ].join("; ");
+
+const ON_EVERY_ENGINE = {
+  "config-options": configOptions,
+  "storage-layout": storageLayout,
+  migrations,
+  "insert-values": insertValues,
+  "update-replace-delete": updateReplaceDelete,
+  "read-queries": readQueries,
+  "change-feeds": changeFeeds,
+  "external-read-write": externalReadWrite,
+  "external-registration": externalRegistration,
+  "catalog-describe": catalogDescribe,
+  "catalog-refused": catalogRefused,
+} satisfies Record<string, (engine: Engine) => Journey>;
+
+function journeyId(id: string, engine: Engine): string {
+  return engine === MYSQL ? id : `${id}-${engine.service}`;
+}
 
 const FORMAL_CHANGE_FEED_DELIVERY = ".agents/skills/formal-change-feed-delivery";
 
@@ -75,32 +93,37 @@ const config: VerifyConfig = {
     },
   },
   userFacing: ["src/*.ts", "src/dialect/**", "src/implementations/**"],
-  services: {
-    [SERVICE]: {
-      image: "mysql:8.4",
-      port: 3306,
-      env: { MYSQL_ALLOW_EMPTY_PASSWORD: "yes", MYSQL_DATABASE: DATABASE },
-      ready: ["mysql", "-h127.0.0.1", "-uroot", "-N", "-e", "SELECT 1"],
-      reset: ["mysql", "-uroot", "-e", RESET],
-    },
-  },
+  shared: [
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "tsconfig.json",
+    "tsconfig.*.json",
+    "antelope-lock/**",
+    "src/interfaces/**",
+    "src/interface/**",
+    "src/dialect/mysql/flavour.ts",
+    "src/dialect/mariadb/**",
+  ],
+  services: Object.fromEntries(
+    ENGINES.map((engine) => [
+      engine.service,
+      {
+        image: engine.image,
+        port: 3306,
+        env: engine.env,
+        ready: [engine.client, "-h127.0.0.1", "-uroot", "-N", "-e", "SELECT 1"],
+        reset: [engine.client, "-uroot", "-e", RESET],
+      },
+    ]),
+  ),
   moduleConfig(services) {
-    const found = services.find((service) => service.name === SERVICE);
-    return ownedConfig({ name: SERVICE, container: found?.container ?? "", host: found?.host ?? "127.0.0.1", port: found?.port ?? 3306 });
+    const found = services.find((service) => service.name === MYSQL.service);
+    return ownedConfig({ name: MYSQL.service, container: found?.container ?? "", host: found?.host ?? "127.0.0.1", port: found?.port ?? 3306 });
   },
   journeys: {
     "config-refused": configRefused,
-    "config-options": configOptions,
-    "storage-layout": storageLayout,
-    migrations,
-    "insert-values": insertValues,
-    "update-replace-delete": updateReplaceDelete,
-    "read-queries": readQueries,
-    "change-feeds": changeFeeds,
-    "external-read-write": externalReadWrite,
-    "external-registration": externalRegistration,
-    "catalog-describe": catalogDescribe,
-    "catalog-refused": catalogRefused,
+    ...Object.fromEntries(ENGINES.flatMap((engine) => Object.entries(ON_EVERY_ENGINE).map(([id, journey]) => [journeyId(id, engine), journey(engine)]))),
   },
   formal: [
     {

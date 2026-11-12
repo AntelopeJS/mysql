@@ -1,7 +1,7 @@
 import type { Journey } from "@antelopejs/tooling-configs/verify";
 
 import { pick } from "./json.ts";
-import { answered, close, open, ownedConfig, part, same, sees, server, sql } from "./session.ts";
+import { answered, close, open, ownedConfig, part, same, sees, server, sql, type Engine } from "./session.ts";
 
 const CATALOG = `{ products: { fields: { name: "string", price: "number", category: "string", tags: "string[]" }, indexes: { price: {}, category: {} } }, categories: { fields: { label: "string" }, indexes: {} } }`;
 
@@ -9,16 +9,16 @@ const PRODUCTS = "`verify-reads__products`";
 
 const COMPARED = ["cheap", "byPriceDesc", "between", "getAll", "count", "groups", "streamed"];
 
-/** A JSON array of `value` over the rows `where` keeps, in `order`: GROUP_CONCAT keeps an order that JSON_ARRAYAGG does not promise. */
+/** A JSON array of `value` over the rows `where` keeps, in `order`: GROUP_CONCAT keeps an order that JSON_ARRAYAGG does not promise, and JSON_EXTRACT parses the text on both engines. */
 function ordered(value: string, order: string, where = "TRUE"): string {
-  return `(SELECT CAST(CONCAT('[', GROUP_CONCAT(${value} ORDER BY ${order} SEPARATOR ','), ']') AS JSON) FROM ${PRODUCTS} WHERE ${where})`;
+  return `(SELECT JSON_EXTRACT(CONCAT('[', GROUP_CONCAT(${value} ORDER BY ${order} SEPARATOR ','), ']'), '$') FROM ${PRODUCTS} WHERE ${where})`;
 }
 
-export const readQueries: Journey = {
+export const readQueries = (engine: Engine): Journey => ({
   title: "filter, orderBy, between, getAll, pluck, count, group and a lookup answer what the same SQL answers, NULL sorts first ascending, text compares by code point, and a cursor reads past its batch size",
   entryPoint: "`table.filter/orderBy/between/getAll/pluck/count/group/lookup` and `for await` over a stream from a consumer module, with `cursorBatchSize: 2`",
   async run(context) {
-    const session = await open(context, { ...ownedConfig(server(context)), cursorBatchSize: 2 });
+    const session = await open(context, { ...ownedConfig(server(context, engine)), cursorBatchSize: 2 });
     const result = await session.run(
       "query the products",
       `const schema = new Schema("verify-reads", ${CATALOG});
@@ -51,6 +51,7 @@ return out;`,
     context.expect(result.folder, [answered(result)], { critical: true });
     const expected = await sql(
       context,
+      engine,
       "the same reads in SQL",
       `SELECT JSON_OBJECT(
   'cheap', ${ordered("JSON_QUOTE(_id)", "price", "price < 50")},
@@ -58,7 +59,7 @@ return out;`,
   'between', ${ordered("JSON_QUOTE(_id)", "price", "price >= 10 AND price < 60")},
   'getAll', ${ordered("JSON_QUOTE(_id)", "price", "category = 'c1'")},
   'count', (SELECT COUNT(*) FROM ${PRODUCTS} WHERE JSON_CONTAINS(tags, '"home"')),
-  'groups', (SELECT CAST(CONCAT('[', GROUP_CONCAT(JSON_ARRAY(category, n) ORDER BY category SEPARATOR ','), ']') AS JSON) FROM (SELECT category, COUNT(*) AS n FROM ${PRODUCTS} GROUP BY category) g),
+  'groups', (SELECT JSON_EXTRACT(CONCAT('[', GROUP_CONCAT(JSON_ARRAY(category, n) ORDER BY category SEPARATOR ','), ']'), '$') FROM (SELECT category, COUNT(*) AS n FROM ${PRODUCTS} GROUP BY category) g),
   'streamed', ${ordered("JSON_QUOTE(_id)", "_id")})`,
     );
     context.expect(result.folder, [
@@ -76,4 +77,4 @@ return out;`,
     ]);
     await close(session);
   },
-};
+});

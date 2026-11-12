@@ -1,17 +1,17 @@
 import type { Journey, JourneyContext } from "@antelopejs/tooling-configs/verify";
 
 import { pick } from "./json.ts";
-import { answered, close, mysql, open, ownedConfig, part, same, sees, seed, server, SERVICE, sql } from "./session.ts";
+import { answered, client, close, open, ownedConfig, part, same, sees, seed, server, sql, type Engine } from "./session.ts";
 
 const DOCS = `new Schema("verify-feeds", { docs: { fields: { title: "string", price: "number" }, indexes: {} } })`;
 
 const TABLE = "verify-feeds__docs";
 
 /** Waits, inside the container, until watching the table has installed its row triggers, so the writes after it reach the log the feeds read. */
-async function triggersInstalled(context: JourneyContext): Promise<void> {
+async function triggersInstalled(context: JourneyContext, engine: Engine): Promise<void> {
   const query = `SELECT COUNT(*) FROM information_schema.TRIGGERS WHERE EVENT_OBJECT_SCHEMA = 'verify' AND EVENT_OBJECT_TABLE = '${TABLE}'`;
-  const check = [...mysql("verify"), `"${query}"`].join(" ");
-  const waited = await context.native("wait for the feed's triggers", SERVICE, [
+  const check = [...client(engine, "verify"), `"${query}"`].join(" ");
+  const waited = await context.native("wait for the feed's triggers", engine.service, [
     "sh",
     "-c",
     `for i in $(seq 100); do n=$(${check}); [ "$n" -gt 0 ] && exit 0; sleep 0.1; done; exit 1`,
@@ -19,11 +19,11 @@ async function triggersInstalled(context: JourneyContext): Promise<void> {
   context.expect(waited.folder, [{ name: "watching the table installed its triggers", pass: waited.exitCode === 0, detail: waited.stdout.trim() }], { critical: true });
 }
 
-export const changeFeeds: Journey = {
+export const changeFeeds = (engine: Engine): Journey => ({
   title: "a feed delivers added, modified and removed events in order with the documented oldValue and newValue, a write made with the mysql client included, and a filtered feed shows a row leaving its filter",
   entryPoint: "`table.changes()` and `table.filter(...).changes()` iterated by a consumer module while it and the mysql client write",
   async run(context) {
-    const session = await open(context, ownedConfig(server(context)));
+    const session = await open(context, ownedConfig(server(context, engine)));
     const opened = await session.run(
       "open two feeds",
       `const docs = ${DOCS}.instance().table("docs");
@@ -36,7 +36,7 @@ follow(docs.filter((d) => d.key("price").lt(100)).changes(), globalThis.verifyFe
 return "opened";`,
     );
     context.expect(opened.folder, [answered(opened)], { critical: true });
-    await triggersInstalled(context);
+    await triggersInstalled(context, engine);
     const written = await session.run(
       "write through the module",
       `const docs = ${DOCS}.instance().table("docs");
@@ -48,7 +48,7 @@ await docs.get("a").delete().run();
 return "written";`,
     );
     context.expect(written.folder, [answered(written)], { critical: true });
-    await seed(context, "write a row with the mysql client while the feeds are open", `INSERT INTO \`${TABLE}\` (_id, _instance, title, price) VALUES ('ext', '', 'from the client', 5)`);
+    await seed(context, engine, "write a row with the mysql client while the feeds are open", `INSERT INTO \`${TABLE}\` (_id, _instance, title, price) VALUES ('ext', '', 'from the client', 5)`);
     const read = await session.run(
       "read what the feeds delivered",
       `const feeds = globalThis.verifyFeeds;
@@ -74,6 +74,7 @@ return feeds;`,
     ]);
     const log = await sql(
       context,
+      engine,
       "read the change log and the table's triggers",
       `SELECT JSON_OBJECT(
   'log', (SELECT JSON_ARRAYAGG(t) FROM (SELECT TABLE_NAME AS t FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'verify' AND TABLE_NAME LIKE '\\_\\_antelope\\_change%' ORDER BY TABLE_NAME) l),
@@ -89,4 +90,4 @@ return feeds;`,
     ]);
     await close(session);
   },
-};
+});

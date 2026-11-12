@@ -5,6 +5,7 @@ docs:
 journeys:
   - module-dev
   - insert-values
+  - insert-values-mariadb
 ---
 
 # Smoke
@@ -15,6 +16,7 @@ The fixed journey every verdict runs, whatever the diff touches: load the module
 
 - `module-dev`: the pack's journey. As for every journey, the harness reruns the service's readiness command when it fails, so a MySQL that stopped answering ends it NOT VERIFIED, not FAIL.
 - `insert-values`: as in [writes](writes.md).
+- `insert-values-mariadb`: as in [writes](writes.md), on MariaDB 11.8.
 
 ## How to get to it (user POV)
 
