@@ -75,13 +75,11 @@ describe("the change log's triggers", () => {
   const plan = Plan(ITEMS);
   const bodies = Bodies(plan);
 
-  it("boxes a JSON-backed column, so a column holding SQL NULL logs apart from one holding JSON null", () => {
+  it("logs a JSON-backed column as its text, which nests no deeper than the column and keeps SQL NULL apart from JSON null", () => {
     for (const column of ["meta", "_extra"]) {
-      expect(bodies.INSERT).to.contain(
-        `IF(NEW.\`${column}\` IS NULL, NULL, JSON_ARRAY(NEW.\`${column}\`))`,
-      );
+      expect(bodies.INSERT).to.contain(`CAST(NEW.\`${column}\` AS CHAR)`);
     }
-    expect(bodies.INSERT).to.not.contain("JSON_ARRAY(NEW.`price`)");
+    expect(bodies.INSERT).to.not.contain("CAST(NEW.`price` AS CHAR)");
   });
 
   it("logs an update only when some column changed, comparing every column null-safely", () => {

@@ -93,6 +93,12 @@ export interface JsonSyntax {
   readonly emptyObject: Sql;
   readonly emptyArray: Sql;
   object(entries: readonly (readonly [string, Sql])[]): Sql;
+  /**
+   * The text of a JSON object of the entries, each value written out on its own. Built as a value,
+   * the object would nest each value one level deeper, past what the engine can write out when a
+   * value already nests to its depth limit.
+   */
+  objectText(entries: readonly (readonly [string, Sql])[]): Sql;
   array(items: readonly Sql[]): Sql;
   /**
    * A document of named members: a member that is SQL NULL is absent, a JSON-backed member keeps

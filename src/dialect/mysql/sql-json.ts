@@ -107,6 +107,14 @@ function Entries(entries: readonly (readonly [string, Sql])[]): Sql {
   );
 }
 
+function ObjectText(entries: readonly (readonly [string, Sql])[]): Sql {
+  const members = entries.map(
+    ([name, value]) =>
+      sql`${lit(`${JSON.stringify(name)}:`)}, COALESCE(CAST(${value} AS CHAR), 'null')`,
+  );
+  return sql`CONCAT('{', ${join(members, sql`, ',', `)}, '}')`;
+}
+
 /**
  * A scalar member that is SQL NULL becomes a JSON null in `JSON_OBJECT`, which `JSON_MERGE_PATCH`
  * then drops. A JSON-backed member cannot go through that merge, since it recurses and would drop
@@ -277,6 +285,7 @@ export const json: JsonSyntax = {
   emptyObject: EMPTY_OBJECT,
   emptyArray: sql`JSON_ARRAY()`,
   object: (entries) => sql`JSON_OBJECT(${Entries(entries)})`,
+  objectText: ObjectText,
   array: (items) => sql`JSON_ARRAY(${join(items, COMMA)})`,
   document: Document,
   removeKeys: RemoveKeys,

@@ -48,6 +48,7 @@ const MASKED_JSON: JsonSyntax = {
   emptyObject: Marked(),
   emptyArray: Marked(),
   object: (entries) => Marked(...entries.map(([, value]) => value)),
+  objectText: (entries) => Marked(...entries.map(([, value]) => value)),
   array: (items) => Marked(...items),
   document: (members, overflow) =>
     Marked(...members.map((member) => member.value), ...Present(overflow)),

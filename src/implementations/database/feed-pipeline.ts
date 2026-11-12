@@ -97,8 +97,9 @@ function Matches(where: readonly Sql[]): Sql {
 }
 
 /**
- * One side's select list: the document it projects beside whether it matched, as one JSON value.
- * The `where` list is read as a boolean here and emptied from the relation.
+ * One side's select list: the document it projects beside whether it matched, as the text of one
+ * JSON object, so a document nested to the engine's depth limit is still delivered. The `where`
+ * list is read as a boolean here and emptied from the relation.
  */
 function Side(folded: Relation): Relation {
   const { json } = folded.dialect.sql;
@@ -108,7 +109,7 @@ function Side(folded: Relation): Relation {
     ...folded,
     where: [],
     projection: {
-      sql: json.object([
+      sql: json.objectText([
         [DOC_KEY, document.sql],
         [MATCHED_KEY, matched],
       ]),

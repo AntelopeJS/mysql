@@ -95,13 +95,15 @@ function Bootstrap(tables: ChangeLogTables): readonly Sql[] {
 
 /**
  * A column as an image holds it. A scalar goes as the JSON value the compiler's own reading turns
- * back into it. A JSON-backed column is boxed in a one-element array, so a column holding SQL NULL
- * logs `null` and one holding a JSON null logs `[null]`.
+ * back into it. A JSON-backed column goes as its JSON text, a string, so a column holding SQL NULL
+ * logs `null` and one holding a JSON null logs `"null"`. Logged as a value, it would nest one level
+ * deeper in the image than in its column, and MySQL refuses to store a document past its depth
+ * limit, so a value the column holds would fail the write that logs it.
  */
 function Imaged(row: Sql, column: CapturedColumn): Sql {
   const value = sql`${row}.${ident(column.name)}`;
   if (IsJsonBacked(column.type)) {
-    return sql`IF(${value} IS NULL, NULL, JSON_ARRAY(${value}))`;
+    return json.text(value);
   }
   return json.of(value, column.type.kind);
 }
@@ -192,7 +194,7 @@ export const capture: CaptureSyntax = {
   lockTable: (table) => sql`LOCK TABLES ${ident(table)} WRITE`,
   unlockTables: sql`UNLOCK TABLES`,
   unbox: (member) =>
-    sql`(CASE WHEN ${json.is(member, ["array"])} THEN JSON_EXTRACT(${member}, '$[0]') END)`,
+    sql`(CASE WHEN ${json.is(member, ["string"])} THEN ${json.parse(sql`JSON_UNQUOTE(${member})`)} END)`,
   lockClock: (tables, wait) =>
     sql`SELECT ${NEXT_SEQ} AS next_seq, ${EPOCH} AS epoch FROM ${ident(tables.clock)} WHERE ${ID} = ${CLOCK_ROW} FOR UPDATE${wait ? sql`` : sql` SKIP LOCKED`}`,
   unsequenced: (tables, limit) =>

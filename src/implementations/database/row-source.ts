@@ -115,9 +115,10 @@ export function AliasedColumns(alias: string): ColumnAddress {
  * A column of a **logged** row: a physical row the change log's triggers stored as one JSON image.
  *
  * Each member is read back with the compiler's own reading of the JSON value the trigger wrote, so
- * it is the type the column holds. A JSON-backed member is unboxed: the image holds it as a
- * one-element array, which is what keeps a column holding SQL NULL apart from one holding a JSON
- * null. A key the image lacks, which a row logged before its column was added does, is SQL NULL.
+ * it is the type the column holds. A JSON-backed member is unboxed: the image holds it as its JSON
+ * text, which keeps a column holding SQL NULL apart from one holding a JSON null and nests no
+ * deeper than the column. A key the image lacks, which a row logged before its column was added
+ * does, is SQL NULL.
  */
 export function LoggedColumns(dialect: Dialect, row: Sql): ColumnAddress {
   return (column, type) => {

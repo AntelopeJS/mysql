@@ -18,7 +18,7 @@ for await (const change of table
 
 ## Capture
 
-The first feed on a table installs three `AFTER INSERT`, `AFTER UPDATE` and `AFTER DELETE` row triggers on it, named `ajs_chg_<signature>_i`, `_u` and `_d`. Each writes one row per changed table row into `__antelope_changes`, in the writer's own transaction, with an image of the row before the write, after it, or both. An image holds every stored column. A JSON column is boxed in a one-element array, so a column holding SQL NULL and one holding a JSON `null` stay apart. An `UPDATE` that leaves every column as it was logs nothing.
+The first feed on a table installs three `AFTER INSERT`, `AFTER UPDATE` and `AFTER DELETE` row triggers on it, named `ajs_chg_<signature>_i`, `_u` and `_d`. Each writes one row per changed table row into `__antelope_changes`, in the writer's own transaction, with an image of the row before the write, after it, or both. An image holds every stored column. A JSON column is logged as its JSON text, so a column holding SQL NULL and one holding a JSON `null` stay apart, and a value as deeply nested as MySQL stores still fits in the log. An `UPDATE` that leaves every column as it was logs nothing.
 
 A table with these triggers is watched, and stays watched: the adapter never removes them. From then on, every write to the table costs a log row, whoever the writer is, which makes a bulk insert into a watched table about five times slower. Writes made outside the module, with the `mysql` client or another application, are captured the same way.
 
@@ -70,5 +70,7 @@ A quiet table and an abandoned consumer look the same to the adapter. A feed hol
 ## What a feed cannot see
 
 `TRUNCATE` fires no row triggers, and neither does a destructive migration that retypes or drops a column. `destroyInstance` deletes rows with `DELETE`, so a watched table delivers a `removed` event for each of them, at the clock's next tick. An external instance has no change log, and refuses `changes()`.
+
+MySQL refuses to write out a JSON document nested more than 100 levels deep, and a feed builds each event's document in SQL. A declared `object` or `array` field nested the full 100 levels is stored and logged, but the document around it is one level deeper, so a feed cannot deliver that event. Its reads fail and are tried again until the reaper deletes the event, and the feed then ends as fallen behind. An undeclared field, which sits in `_extra`, is delivered at every depth MySQL stores.
 
 The contract has no `includeInitial`. A consumer that builds a mirror must open the feed first, then read the table, then remove duplicates. Reading first races the feed and loses every write in between.

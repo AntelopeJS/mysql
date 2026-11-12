@@ -59,8 +59,8 @@ export interface CaptureSyntax {
   bootstrap(tables: ChangeLogTables): readonly Sql[];
   /**
    * The bodies of the three triggers that log a table's writes. An image is a JSON object of
-   * `columns`, a JSON-backed column boxed so its SQL NULL stays apart from a JSON null, and an
-   * update that leaves every column as it was logs nothing.
+   * `columns`, a JSON-backed column boxed so its SQL NULL stays apart from a JSON null and the image
+   * nests no deeper than the column, and an update that leaves every column as it was logs nothing.
    */
   triggers(
     tables: ChangeLogTables,
@@ -77,7 +77,7 @@ export interface CaptureSyntax {
   /** Holds a table against every other session, so no write runs while its triggers change. */
   lockTable(table: string): Sql;
   readonly unlockTables: Sql;
-  /** A boxed member of an image, unboxed: SQL NULL where the column held SQL NULL. */
+  /** A boxed member of an image, unboxed to its JSON value: SQL NULL where the column held SQL NULL. */
   unbox(member: Sql): Sql;
   /**
    * Locks the clock row and answers `next_seq` and `epoch`. Without `wait`, answers no row while
