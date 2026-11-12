@@ -149,7 +149,10 @@ const SALES_DEFINITION: SchemaDefinition = {
 
 type SalesScalar = string | number | boolean | Date | null;
 
-type SalesValue = SalesScalar | SalesScalar[] | Record<string, SalesScalar>;
+type SalesValue =
+  | SalesScalar
+  | SalesScalar[]
+  | Record<string, SalesScalar | SalesScalar[]>;
 
 export type SalesRow = { _id?: string } & Record<string, SalesValue>;
 
