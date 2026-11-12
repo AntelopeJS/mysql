@@ -122,9 +122,9 @@ function KeyType(key: KeyColumn): Sql {
  * What a key column holds, as the generation expression the server evaluates per row. Its read is
  * the member the compiler reads the same value through, so the two cannot drift apart.
  *
- * The expression is not part of the column's signature, which says only what the column holds: an
- * earlier release read the same path one key at a time, which holds the same value on every row,
- * so its columns stay in place and serve this read.
+ * The expression is not part of the column's signature, which names only what the column holds, so
+ * a column whose expression reads the same path another way, one key at a time, is kept: it holds
+ * the same value on every row.
  */
 function KeyExpression(key: KeyColumn): Sql {
   const value = json.key(key.read, json.member(ident(key.source), ...key.path));
