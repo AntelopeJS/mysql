@@ -40,6 +40,7 @@ const MAPPINGS = new Map<number, Mapping>([
   [1292, { kind: "invalid", column: NAMED_COLUMN }],
   [1366, { kind: "invalid", column: NAMED_COLUMN }],
   [1406, { kind: "invalid", column: NAMED_COLUMN }],
+  [3854, { kind: "invalid" }],
 ]);
 
 /** The errno the server answered with; a Node socket error carries a negative one. */

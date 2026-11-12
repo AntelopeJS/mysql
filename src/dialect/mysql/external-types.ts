@@ -53,6 +53,17 @@ type Value = (column: Sql) => Sql;
 
 const Bare: Value = (column) => column;
 const AsText: Value = (column) => sql`CAST(${column} AS CHAR)`;
+
+/** The character set every value the module binds or computes is in. */
+const WIDE_CHARSET = "utf8mb4";
+
+/**
+ * Text as an expression in the wide character set, which the server converts into a column's own
+ * when it compares or stores it: a value bound bare is converted itself, and refused outright when
+ * the column's character set cannot hold it.
+ */
+const Wide: Value = (value) =>
+  sql`CONVERT(${value} USING ${ident(WIDE_CHARSET)})`;
 const AsDouble: Value = (column) => sql`CAST(${column} AS DOUBLE)`;
 const AsBoolean: Value = (column) => sql`(${column} <> 0)`;
 const DayAsInstant: Value = (column) => sql`CAST(${column} AS DATETIME(6))`;
@@ -110,9 +121,6 @@ const IntegerNumber: Conversion = (other, operator) =>
 const FloatConversion: Conversion = (other, operator) =>
   operator === "=" ? sql`CAST(${other} AS FLOAT)` : other;
 
-/** The character set every value the module binds or computes is in. */
-const WIDE_CHARSET = "utf8mb4";
-
 /**
  * Text compared with a text column, in the column's own character set and collation, which is what
  * keeps the column's index serving the comparison: a value the character set cannot hold is NULL,
@@ -125,7 +133,7 @@ function TextIn(column: CatalogColumn): Conversion {
     return Unconverted;
   }
   return (other) => {
-    const wide = sql`CONVERT(${other} USING ${ident(WIDE_CHARSET)})`;
+    const wide = Wide(other);
     if (charset === WIDE_CHARSET) {
       return sql`(${wide} COLLATE ${ident(collation)})`;
     }
@@ -167,8 +175,8 @@ const NAIVE = "a DATETIME holds no time zone and is read as UTC";
 const MICROSECONDS = "microseconds are truncated to milliseconds";
 
 const TEXT_READINGS: Partial<Record<NativeFamily, Reading>> = {
-  text: { value: Bare, writing: Bare },
-  enum: { value: Bare, writing: Bare },
+  text: { value: Bare, writing: Wide },
+  enum: { value: Bare, writing: Wide },
   set: { value: Bare },
   rendered: { value: AsText, writing: Bare },
   int: { value: AsText, conversion: IntegerText, writing: Bare },
@@ -337,7 +345,7 @@ function KeyReading(column: CatalogColumn): ColumnReading | undefined {
     value: text?.value ?? AsText,
     conversion: ConversionOf(family, column, TEXT_CONVERSIONS[family]),
     numeric: false,
-    writing: readOnly ? undefined : Bare,
+    writing: readOnly ? undefined : (text?.writing ?? Bare),
     readOnly,
     check: CheckFor(TEXT, family, column),
   };
@@ -348,6 +356,21 @@ function AsRead(kind: SqlType, value: Sql): Sql {
   return kind.kind === "timestamp"
     ? sql`TIMESTAMPADD(MICROSECOND, -(MICROSECOND(${value}) % 1000), ${value})`
     : value;
+}
+
+/** Text as its bytes in the wide character set: equal only to the same code points, whatever a collation folds. */
+function Exact(value: Sql): Sql {
+  return sql`CAST(${Wide(value)} AS BINARY)`;
+}
+
+/**
+ * Whether two values read alike, NULL included: as a read answers them, and text code point for
+ * code point, since a read answers the text itself and not what the column's collation equates.
+ */
+function SameRead(kind: SqlType, left: Sql, right: Sql): Sql {
+  return kind.kind === "text"
+    ? sql`(${Exact(left)} <=> ${Exact(right)})`
+    : sql`(${AsRead(kind, left)} <=> ${AsRead(kind, right)})`;
 }
 
 /**
@@ -384,6 +407,7 @@ export const types: ExternalTypeSyntax = {
   keyReading: KeyReading,
   proposed: (family) => PROPOSED[family],
   asRead: AsRead,
+  sameRead: SameRead,
   compositeId: (parts) =>
     sql`CAST(JSON_ARRAY(${join(parts, sql`, `)}) AS CHAR)`,
   idParts: IdParts,

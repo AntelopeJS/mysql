@@ -67,10 +67,19 @@ function GuardedAssignment(
   if (assignment.toDefault) {
     return sql`${column} = DEFAULT`;
   }
-  const read = AsRead(dialect, descriptor.value(column), descriptor);
-  const incoming = AsRead(dialect, assignment.value.sql, descriptor);
-  const same = dialect.sql.rows.nullSafeEqual(read, incoming);
+  const same = SameRead(dialect, assignment);
   return sql`${column} = (CASE WHEN ${same} THEN ${column} ELSE ${Written(descriptor, assignment.value)} END)`;
+}
+
+/** Whether the incoming value reads as the column's stored one does, which leaves the column as it is. */
+function SameRead(dialect: Dialect, assignment: ExternalAssignment): Sql {
+  const descriptor = assignment.descriptor;
+  const read = descriptor.value(WriteColumn(descriptor.column));
+  return dialect.external.types.sameRead(
+    descriptor.kind,
+    read,
+    assignment.value.sql,
+  );
 }
 
 /** Rows whose read differs from the incoming values: an unchanged write touches no row, and counts 0. */
@@ -78,14 +87,7 @@ function Changed(dialect: Dialect, assignments: ExternalAssignment[]): Sql[] {
   if (assignments.length === 0) {
     return [];
   }
-  const same = assignments.map((assignment) => {
-    const descriptor = assignment.descriptor;
-    const read = descriptor.value(WriteColumn(descriptor.column));
-    return dialect.sql.rows.nullSafeEqual(
-      AsRead(dialect, read, descriptor),
-      AsRead(dialect, assignment.value.sql, descriptor),
-    );
-  });
+  const same = assignments.map((assignment) => SameRead(dialect, assignment));
   return [sql`(NOT (${join(same, AND)}))`];
 }
 

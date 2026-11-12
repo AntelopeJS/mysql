@@ -98,6 +98,66 @@ function TextLength(column: CatalogColumn): ValueCheck | undefined {
       : undefined;
 }
 
+/**
+ * MySQL's `latin1`, which is Windows cp1252 with its five unassigned bytes read as the C1 controls
+ * of the same number, exactly as the WHATWG decoder of `windows-1252` reads them.
+ */
+const LATIN1 = new Set(
+  Array.from(
+    new TextDecoder("windows-1252").decode(
+      Uint8Array.from({ length: 256 }, (_, byte) => byte),
+    ),
+    (char) => char.codePointAt(0),
+  ),
+);
+
+const LAST_BMP = 0xffff;
+const LAST_ASCII = 0x7f;
+
+/** Whether each character set the module knows the repertoire of holds a code point. */
+const REPERTOIRES = new Map<string, (codePoint: number) => boolean>([
+  ["utf8mb3", (codePoint) => codePoint <= LAST_BMP],
+  ["utf8", (codePoint) => codePoint <= LAST_BMP],
+  ["ucs2", (codePoint) => codePoint <= LAST_BMP],
+  ["ascii", (codePoint) => codePoint <= LAST_ASCII],
+  ["latin1", (codePoint) => LATIN1.has(codePoint)],
+]);
+
+/**
+ * Text the column's character set cannot hold, refused before the write: the server refuses it
+ * too, but MySQL 9.7 does so without naming the column when the value is assigned conditionally.
+ */
+function TextRepertoire(column: CatalogColumn): ValueCheck | undefined {
+  const holds =
+    column.charset === null ? undefined : REPERTOIRES.get(column.charset);
+  if (!holds) {
+    return undefined;
+  }
+  return (value) => {
+    if (value.kind !== "text") {
+      return undefined;
+    }
+    const outside = Array.from(value.value).find(
+      (char) => !holds(char.codePointAt(0) ?? 0),
+    );
+    return outside === undefined
+      ? undefined
+      : `the column is ${column.native} in ${column.charset}, which cannot hold ${JSON.stringify(outside)}`;
+  };
+}
+
+/** A text column's checks: its length, then its character set. */
+function TextFits(column: CatalogColumn): ValueCheck | undefined {
+  const checks = [TextLength(column), TextRepertoire(column)].filter(
+    (check) => check !== undefined,
+  );
+  if (checks.length === 0) {
+    return undefined;
+  }
+  return (value) =>
+    checks.map((check) => check(value)).find((reason) => reason !== undefined);
+}
+
 function EnumLabel(column: CatalogColumn): ValueCheck {
   const labels = column.enumLabels ?? [];
   return (value) =>
@@ -189,7 +249,7 @@ const CHECKS: Partial<
   Record<SqlType["kind"], Partial<Record<NativeFamily, CheckOf>>>
 > = {
   text: {
-    text: TextLength,
+    text: TextFits,
     enum: EnumLabel,
     int: IntegerText,
     bigint: IntegerText,
