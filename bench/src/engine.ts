@@ -1,7 +1,12 @@
 import type { CaptureOutput, CaseCapture } from "./results";
 import type { Backend } from "./settings";
 
-export type EngineId = "postgres-18" | "mysql-8.4" | "mysql-9.7";
+export type EngineId =
+  | "postgres-18"
+  | "mysql-8.4"
+  | "mysql-9.7"
+  | "mariadb-11.8"
+  | "mariadb-12.3";
 
 /** A statement the server ran for one query, with the plan it explained it with. */
 export interface StatementPlan {

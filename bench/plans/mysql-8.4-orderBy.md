@@ -14,9 +14,9 @@ id | select_type | table | type | possible_keys | key | key_len | rows | filtere
 1 | SIMPLE | t0 | ref | PRIMARY | PRIMARY | 514 | 48165 | 100 | Using filesort
 
 EXPLAIN ANALYZE
--> Limit: 20 row(s)  (cost=4826 rows=20) (actual time=120..120 rows=20 loops=1)
+-> Limit: 20 row(s)  (cost=4826 rows=20) (actual time=119..119 rows=20 loops=1)
     -> Sort row IDs: (case when (json_type(json_extract(t0.title,'$."fr"')) = ('STRING' collate utf8mb4_bin)) then cast(json_unquote(json_extract(t0.title,'$."f…
-        -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4826 rows=48165) (actual time=0.00316..34 rows=100000 loops=1)
+        -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4826 rows=48165) (actual time=0.00396..34.6 rows=100000 loops=1)
 
 ```
 
@@ -33,8 +33,8 @@ id | select_type | table | type | possible_keys | key | key_len | rows | filtere
 1 | SIMPLE | t0 | ref | PRIMARY,titleFr,internalTitleFr | titleFr | 514 | 48165 | 100 | NULL
 
 EXPLAIN ANALYZE
--> Limit: 20 row(s)  (cost=4826 rows=20) (actual time=0.0139..0.0789 rows=20 loops=1)
-    -> Index lookup on t0 using titleFr (_instance='bench')  (cost=4826 rows=48165) (actual time=0.0136..0.0778 rows=20 loops=1)
+-> Limit: 20 row(s)  (cost=4826 rows=20) (actual time=0.0156..0.0837 rows=20 loops=1)
+    -> Index lookup on t0 using titleFr (_instance='bench')  (cost=4826 rows=48165) (actual time=0.0153..0.0826 rows=20 loops=1)
 
 ```
 
@@ -51,9 +51,9 @@ id | select_type | table | type | possible_keys | key | key_len | rows | filtere
 1 | SIMPLE | t0 | ref | PRIMARY | PRIMARY | 514 | 48165 | 100 | Using filesort
 
 EXPLAIN ANALYZE
--> Limit: 20 row(s)  (cost=4826 rows=20) (actual time=204..204 rows=20 loops=1)
+-> Limit: 20 row(s)  (cost=4826 rows=20) (actual time=206..206 rows=20 loops=1)
     -> Sort: (case when (json_type(json_extract(json_object('_id',cast(json_quote(t0._id) as json),'sortKey',cast(json_quote((case when (json_type(json_extract(…
-        -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4826 rows=48165) (actual time=0.00313..36.3 rows=100000 loops=1)
+        -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4826 rows=48165) (actual time=0.00378..36.9 rows=100000 loops=1)
 
 ```
 
@@ -70,9 +70,9 @@ id | select_type | table | type | possible_keys | key | key_len | rows | filtere
 1 | SIMPLE | t0 | ref | PRIMARY,titleFr,internalTitleFr | PRIMARY | 514 | 48165 | 100 | Using filesort
 
 EXPLAIN ANALYZE
--> Limit: 20 row(s)  (cost=4826 rows=20) (actual time=206..206 rows=20 loops=1)
+-> Limit: 20 row(s)  (cost=4826 rows=20) (actual time=210..210 rows=20 loops=1)
     -> Sort: (case when (json_type(json_extract(json_object('_id',cast(json_quote(t0._id) as json),'sortKey',cast(json_quote((case when (json_type(json_extract(…
-        -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4826 rows=48165) (actual time=0.005..37.7 rows=100000 loops=1)
+        -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4826 rows=48165) (actual time=0.00558..39 rows=100000 loops=1)
 
 ```
 
@@ -89,9 +89,9 @@ id | select_type | table | type | possible_keys | key | key_len | rows | filtere
 1 | SIMPLE | t0 | ref | PRIMARY | PRIMARY | 514 | 48165 | 100 | Using filesort
 
 EXPLAIN ANALYZE
--> Limit: 20 row(s)  (cost=4826 rows=20) (actual time=109..109 rows=20 loops=1)
-    -> Sort row IDs: json_extract(t0._extra,'$."_internal"."data"."title"."fr"'), limit input to 20 row(s) per chunk  (cost=4826 rows=48165) (actual time=109..1…
-        -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4826 rows=48165) (actual time=0.0049..32.3 rows=100000 loops=1)
+-> Limit: 20 row(s)  (cost=4826 rows=20) (actual time=114..114 rows=20 loops=1)
+    -> Sort row IDs: json_extract(t0._extra,'$."_internal"."data"."title"."fr"'), limit input to 20 row(s) per chunk  (cost=4826 rows=48165) (actual time=114..1…
+        -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4826 rows=48165) (actual time=0.00611..33.7 rows=100000 loops=1)
 
 ```
 
@@ -108,8 +108,8 @@ id | select_type | table | type | possible_keys | key | key_len | rows | filtere
 1 | SIMPLE | t0 | ref | PRIMARY,titleFr,internalTitleFr | internalTitleFr | 514 | 48165 | 100 | NULL
 
 EXPLAIN ANALYZE
--> Limit: 20 row(s)  (cost=4826 rows=20) (actual time=0.0215..0.0948 rows=20 loops=1)
-    -> Index lookup on t0 using internalTitleFr (_instance='bench')  (cost=4826 rows=48165) (actual time=0.0212..0.0934 rows=20 loops=1)
+-> Limit: 20 row(s)  (cost=4826 rows=20) (actual time=0.0227..0.0997 rows=20 loops=1)
+    -> Index lookup on t0 using internalTitleFr (_instance='bench')  (cost=4826 rows=48165) (actual time=0.0225..0.0983 rows=20 loops=1)
 
 ```
 
@@ -126,9 +126,9 @@ id | select_type | table | type | possible_keys | key | key_len | rows | filtere
 1 | SIMPLE | t0 | ref | PRIMARY | PRIMARY | 514 | 48165 | 100 | Using filesort
 
 EXPLAIN ANALYZE
--> Limit: 20 row(s)  (cost=4826 rows=20) (actual time=106..106 rows=20 loops=1)
+-> Limit: 20 row(s)  (cost=4826 rows=20) (actual time=107..107 rows=20 loops=1)
     -> Sort: json_extract(json_object('_id',cast(json_quote(t0._id) as json),'sortKey',json_extract(t0._extra,'$."_internal"."data"."title"."fr"')),'$."sortKey"…
-        -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4826 rows=48165) (actual time=0.00357..31.2 rows=100000 loops=1)
+        -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4826 rows=48165) (actual time=0.00322..31.6 rows=100000 loops=1)
 
 ```
 
@@ -145,9 +145,9 @@ id | select_type | table | type | possible_keys | key | key_len | rows | filtere
 1 | SIMPLE | t0 | ref | PRIMARY,titleFr,internalTitleFr | PRIMARY | 514 | 48165 | 100 | Using filesort
 
 EXPLAIN ANALYZE
--> Limit: 20 row(s)  (cost=4826 rows=20) (actual time=107..107 rows=20 loops=1)
+-> Limit: 20 row(s)  (cost=4826 rows=20) (actual time=108..108 rows=20 loops=1)
     -> Sort: json_extract(json_object('_id',cast(json_quote(t0._id) as json),'sortKey',json_extract(t0._extra,'$."_internal"."data"."title"."fr"')),'$."sortKey"…
-        -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4826 rows=48165) (actual time=0.0048..31.9 rows=100000 loops=1)
+        -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4826 rows=48165) (actual time=0.00555..32.5 rows=100000 loops=1)
 
 ```
 
@@ -164,9 +164,9 @@ id | select_type | table | type | possible_keys | key | key_len | rows | filtere
 1 | SIMPLE | t0 | ref | PRIMARY | PRIMARY | 514 | 48165 | 100 | Using filesort
 
 EXPLAIN ANALYZE
--> Limit: 20 row(s)  (cost=4826 rows=20) (actual time=132..132 rows=20 loops=1)
+-> Limit: 20 row(s)  (cost=4826 rows=20) (actual time=135..135 rows=20 loops=1)
     -> Sort: json_extract(json_object('_id',cast(json_quote(t0._id) as json),'sortKey',coalesce(nullif(json_extract(t0._extra,'$."_internal"."data"."title"."fr"…
-        -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4826 rows=48165) (actual time=0.00449..30.7 rows=100000 loops=1)
+        -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4826 rows=48165) (actual time=0.00528..31.4 rows=100000 loops=1)
 
 ```
 
@@ -183,9 +183,9 @@ id | select_type | table | type | possible_keys | key | key_len | rows | filtere
 1 | SIMPLE | t0 | ref | PRIMARY,titleFr,internalTitleFr | PRIMARY | 514 | 48165 | 100 | Using filesort
 
 EXPLAIN ANALYZE
--> Limit: 20 row(s)  (cost=4826 rows=20) (actual time=134..134 rows=20 loops=1)
+-> Limit: 20 row(s)  (cost=4826 rows=20) (actual time=137..137 rows=20 loops=1)
     -> Sort: json_extract(json_object('_id',cast(json_quote(t0._id) as json),'sortKey',coalesce(nullif(json_extract(t0._extra,'$."_internal"."data"."title"."fr"…
-        -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4826 rows=48165) (actual time=0.00518..32.2 rows=100000 loops=1)
+        -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4826 rows=48165) (actual time=0.00572..33.2 rows=100000 loops=1)
 
 ```
 

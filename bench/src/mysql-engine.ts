@@ -65,8 +65,65 @@ type ExplainColumn = (typeof EXPLAIN_COLUMNS)[number];
 
 type ExplainRow = RowDataPacket & Record<ExplainColumn, CellValue>;
 
-interface AnalyzeRow extends RowDataPacket {
-  EXPLAIN: string;
+/** How a server of the MySQL family differs from the others, as the statements and names it takes. */
+export interface Flavor {
+  readonly name: string;
+  /** The command-line client inside the image. */
+  readonly client: string;
+  readonly rootPasswordVariable: string;
+  /** The statement prefix that explains a statement with a `filtered` column. */
+  readonly explain: string;
+  /** The statement prefix that runs a statement and reports the rows it really read. */
+  readonly analyze: string;
+}
+
+export const MYSQL: Flavor = {
+  name: "MySQL",
+  client: "mysql",
+  rootPasswordVariable: "MYSQL_ROOT_PASSWORD",
+  explain: "EXPLAIN FORMAT=TRADITIONAL",
+  analyze: "EXPLAIN ANALYZE",
+};
+
+export const MARIADB: Flavor = {
+  name: "MariaDB",
+  client: "mariadb",
+  rootPasswordVariable: "MARIADB_ROOT_PASSWORD",
+  explain: "EXPLAIN EXTENDED",
+  analyze: "ANALYZE",
+};
+
+function IsCell(value: unknown): value is CellValue {
+  return (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    Buffer.isBuffer(value)
+  );
+}
+
+/** One column of a row the driver typed loosely, as text; a cell of another kind is a driver change worth failing on. */
+function CellText(row: RowDataPacket, column: string): string {
+  const value: unknown = row[column];
+  if (!IsCell(value)) {
+    throw new Error(`column ${column} holds a cell of no known kind`);
+  }
+  return Text(value);
+}
+
+/** The lines of an analysis: MySQL answers a text tree in one column, MariaDB a table with `r_rows`. */
+function AnalysisLines(rows: readonly RowDataPacket[]): string[] {
+  const first = rows[0];
+  if (first !== undefined && Object.hasOwn(first, "EXPLAIN")) {
+    return rows.flatMap((row) => CellText(row, "EXPLAIN").split("\n"));
+  }
+  const columns = first === undefined ? [] : Object.keys(first);
+  return [
+    columns.join(" | "),
+    ...rows.map((row) =>
+      columns.map((column) => CellText(row, column)).join(" | "),
+    ),
+  ];
 }
 
 interface NamedRow extends RowDataPacket {
@@ -101,7 +158,7 @@ function Logged(row: SlowLogRow): LoggedStatement {
   };
 }
 
-/** A MySQL server in a container, measured through its slow log and explained with `EXPLAIN`. */
+/** A server of the MySQL family in a container, measured through its slow log and explained by its own statements. */
 export class MySqlEngine implements Engine {
   public readonly backend = "mysql" as const;
   private port = 0;
@@ -110,6 +167,7 @@ export class MySqlEngine implements Engine {
     public readonly id: EngineId,
     public readonly image: string,
     private readonly container: string,
+    private readonly flavor: Flavor = MYSQL,
   ) {}
 
   public async start(): Promise<void> {
@@ -117,7 +175,7 @@ export class MySqlEngine implements Engine {
       this.container,
       this.image,
       PORT,
-      { MYSQL_ROOT_PASSWORD: PASSWORD },
+      { [this.flavor.rootPasswordVariable]: PASSWORD },
       [`--innodb-buffer-pool-size=${BUFFER_POOL}`],
     );
     this.port = PublishedPort(this.container, PORT);
@@ -125,7 +183,7 @@ export class MySqlEngine implements Engine {
       Exec("docker", [
         "exec",
         this.container,
-        "mysql",
+        this.flavor.client,
         "-uroot",
         `-p${PASSWORD}`,
         "-h127.0.0.1",
@@ -168,7 +226,8 @@ export class MySqlEngine implements Engine {
         connection,
         "SELECT VERSION() AS version",
       );
-      return `MySQL ${row?.version ?? "unknown"}`;
+      const [release = "unknown"] = (row?.version ?? "unknown").split("-");
+      return `${this.flavor.name} ${release}`;
     });
   }
 
@@ -275,34 +334,26 @@ export class MySqlEngine implements Engine {
     connection: Connection,
     text: string,
   ): Promise<StatementPlan> {
+    const { explain, analyze } = this.flavor;
     const traditional = await this.rows<ExplainRow>(
       connection,
-      `EXPLAIN FORMAT=TRADITIONAL ${text}`,
+      `${explain} ${text}`,
     );
-    const analyzed = await this.rows<AnalyzeRow>(
+    const analyzed = await this.rows<RowDataPacket>(
       connection,
-      `EXPLAIN ANALYZE ${text}`,
+      `${analyze} ${text}`,
     );
     const header = EXPLAIN_COLUMNS.join(" | ");
     const lines = traditional.map((row) =>
       Shortened(EXPLAIN_COLUMNS.map((column) => Text(row[column])).join(" | ")),
     );
-    const tree = analyzed
-      .flatMap((row) => row.EXPLAIN.split("\n"))
-      .map(Shortened);
+    const tree = AnalysisLines(analyzed).map(Shortened);
     const indexes = traditional
       .map((row) => Text(row.key))
       .filter((key) => DECLARED.has(key));
     return {
       text,
-      plan: [
-        "EXPLAIN FORMAT=TRADITIONAL",
-        header,
-        ...lines,
-        "",
-        "EXPLAIN ANALYZE",
-        ...tree,
-      ].join("\n"),
+      plan: [explain, header, ...lines, "", analyze, ...tree].join("\n"),
       indexes: [...new Set(indexes)],
     };
   }
