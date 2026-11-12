@@ -26,7 +26,7 @@ const sequenced = new Schema<{ rows: Row }>("feeds-sequencer", {
   rows: { fields: { label: "string", meta: "object" }, indexes: {} },
 });
 
-describe("change feeds in commit order", function () {
+describe("the order a change feed delivers in", function () {
   this.timeout(30_000);
 
   let first: PoolConnection;

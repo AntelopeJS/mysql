@@ -1,10 +1,10 @@
 ---
 title: Change feeds
-description: How the MySQL module's change feeds work, row triggers that fill one log with a commit-ordered sequencer and a pull-based reader, and what that design guarantees and cannot see.
+description: How the MySQL module's change feeds work, row triggers that fill one log, a sequencer that numbers only committed changes and a pull-based reader, and what that design guarantees and cannot see.
 mode: explanation
 ---
 
-A change feed is row triggers that fill one log, a sequencer that numbers the log in commit order, and a pull-based reader. This page covers the ordering guarantee, the retention contract, and what a feed cannot see by design.
+A change feed is row triggers that fill one log, a sequencer that numbers the changes that have committed, and a pull-based reader. This page covers the ordering guarantee, the retention contract, and what a feed cannot see by design.
 
 `table.changes()` returns an async iterable of `{ changeType, oldValue?, newValue? }`. You must iterate it, and it must be the last stage of a query.
 
@@ -37,9 +37,11 @@ The module does not read `@@log_bin`, the variable or the account's grants first
 
 ## Ordering
 
-A log row has no `seq` when it is written. A sequencer numbers the rows whose transactions have committed, in the order they were logged, under a lock on one clock row, and skips the rows of transactions still open. Those are numbered once they commit. So `seq` order is commit order, and a reader that has seen `seq = n` has seen every change numbered before it.
+A log row has no `seq` when it is written. A sequencer numbers the rows whose transactions have committed, in the order they were logged, under a lock on one clock row, and skips the rows of transactions still open. Those are numbered once they commit, by a later pass and with a larger `seq`. So a reader that has seen `seq = n` has seen every change numbered before it, and no change is ever numbered below `n` afterwards.
 
-Per-row order is guaranteed. Two writers of the same row serialize on its lock, so the second one's log row is written, and numbered, after the first one committed. A long-running transaction delays only its own events: the writes committed while it runs are delivered without waiting for it, and its own arrive after it commits.
+A change written after another change's transaction committed is numbered after it. Per-row order follows: two writers of the same row serialize on its lock, so the second one's log row is written, and numbered, after the first one committed. A long-running transaction delays only its own events: the writes committed while it runs are delivered without waiting for it, and its own arrive after it commits.
+
+Across rows, `seq` order is not commit order. Take two transactions on different rows that each wrote before the other committed. If one pass numbers both, they are numbered in the order their rows were logged, whichever committed first. MySQL gives a trigger or a statement no commit time and no commit sequence: a trigger runs inside its writer's transaction, before the commit, and the sequencer learns that a transaction committed only when a pass finds its rows unlocked. Two transactions that both committed between two passes look the same to it. Only MySQL's binary log records commit order, and reading it needs replication privileges and a binary log client that this module does not have. The PostgreSQL module gives the same guarantee: per-row order, and insert order across unrelated rows.
 
 ## Delivery
 

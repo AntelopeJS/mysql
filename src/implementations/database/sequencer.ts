@@ -95,10 +95,12 @@ async function Numbered(
  * them, in one transaction.
  *
  * A row of a transaction still open is skipped and numbered by a later pass once it commits, so a
- * `seq` is only ever given to a committed row and a later commit always gets a larger one. Two
- * writes of one row cannot swap: the second waits on the first's row lock, so its log row is
- * written, and numbered, after the first committed. Answers how many rows it numbered, or
- * `undefined` when another session's pass held the clock and `wait` is `skip`.
+ * `seq` is only ever given to a committed row, and never below one already given. A row logged
+ * after another row's transaction committed gets the larger `seq`, so two writes of one row cannot
+ * swap: the second waits on the first's row lock. Two transactions that both committed before the
+ * pass are numbered in the order their rows were logged, not the order they committed, which no
+ * statement can see. Answers how many rows it numbered, or `undefined` when another session's pass
+ * held the clock and `wait` is `skip`.
  */
 export function SequenceOnce(
   session: ConvergenceSession,
