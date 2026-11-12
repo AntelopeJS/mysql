@@ -27,7 +27,7 @@ run_suites() {
 start_server() {
   local image=$1 name=$2 tries=0 port client=mysql args=()
   [[ $image == *mariadb* ]] && client=mariadb args=(--log-bin=mariadb-bin --server-id=1)
-  docker run -d --rm --name "$name" -e MYSQL_ROOT_PASSWORD="$password" -p 127.0.0.1::3306 "$image" "${args[@]}" >/dev/null || return 1
+  docker run -d --rm --name "$name" --tmpfs /var/lib/mysql -e MYSQL_ROOT_PASSWORD="$password" -p 127.0.0.1::3306 "$image" "${args[@]}" >/dev/null || return 1
   until docker exec "$name" "$client" -uroot -p"$password" -h127.0.0.1 -e 'SELECT 1' >/dev/null 2>&1; do
     tries=$((tries + 1))
     [[ $tries -gt 180 ]] && return 1
