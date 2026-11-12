@@ -12,7 +12,7 @@ import {
   SetProjection,
   type TableOrigin,
 } from "./relation";
-import { JoinOn, Render } from "./render";
+import { FromItem, JoinOn, Render } from "./render";
 
 const COMMA = sql`, `;
 const AND = sql` AND `;
@@ -162,7 +162,7 @@ function KeyedGroup(
     ...relation,
     from: one.from,
     alias: lookup,
-    joins: [JoinOn("JOIN", sql`(${rows})`, relation.alias, on)],
+    joins: [JoinOn("JOIN", FromItem(sql`(${rows})`, relation.alias), on)],
     where: [
       ...columns.map((column, part) =>
         context.dialect.sql.rows.nullSafeEqual(column, keys.walked[part]),

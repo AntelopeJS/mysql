@@ -78,8 +78,8 @@ function ReadBack(
  * Reads a relation's rows back through a walk of the array {@link CollectedInPlace} collects them
  * into, where the engine reads no outer column inside a derived table: the walk reads the outer
  * row at any depth. The rows come back as the values they yield, in value mode, numbered in their
- * order and ordered by that number only where they had an order. A row-mode relation keeps its
- * origin.
+ * order and ordered by that number only where they had an order. Rows that are still the table's
+ * keep its origin, walked once or again, since every stage that reshapes them drops it.
  */
 export function Walked(
   relation: Relation,
@@ -87,7 +87,7 @@ export function Walked(
   context: DecodingContext,
 ): NumberedRows {
   const type = CurrentValue(relation).type;
-  const origin = relation.projection ? undefined : relation.origin;
+  const origin = relation.origin;
   const ordered = relation.orderBy.length > 0;
   const { single, absent } = relation;
   const collected = CollectedInPlace(relation, inPlace, context);

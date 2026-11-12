@@ -63,6 +63,12 @@ export interface NestedRelation {
   readonly readsOuterRow: boolean;
 }
 
+/** What {@link DecodingContext.readingOuterRow} built, and whether building it read the outer row. */
+export interface OuterRowRead<T> {
+  readonly value: T;
+  readonly readsOuterRow: boolean;
+}
+
 /**
  * State shared by every layer compiling a single statement: the dialect it is written for, the
  * table alias counter and the bindings of lambda parameters. Bound values travel inside each
@@ -161,16 +167,25 @@ export class DecodingContext {
   }
 
   /**
+   * Builds part of the subquery compiling now, and tells whether building it read the row of a
+   * query outside that subquery.
+   */
+  public readingOuterRow<T>(build: () => T): OuterRowRead<T> {
+    const before = this.outerReadCount;
+    const value = build();
+    return { value, readsOuterRow: this.outerReadCount !== before };
+  }
+
+  /**
    * Builds a fragment of the subquery compiling now, and remembers it as reading no row of a query
    * outside it when building it read none.
    */
   public fragment(build: () => Sql): Sql {
-    const before = this.outerReadCount;
-    const fragment = build();
-    if (this.outerReadCount === before) {
-      this.outerFree.add(fragment);
+    const { value, readsOuterRow } = this.readingOuterRow(build);
+    if (!readsOuterRow) {
+      this.outerFree.add(value);
     }
-    return fragment;
+    return value;
   }
 
   /**
