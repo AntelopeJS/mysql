@@ -8,6 +8,7 @@ import { IsExternal, type Options } from "../config";
 import {
   AcquireConnection,
   Connect,
+  GetDialect,
   GetSchemaPrefix,
   Read,
   type Row,
@@ -67,6 +68,11 @@ function Cells(rows: readonly Row[]): string[][] {
   );
 }
 
+/** The expression a functional key part indexes, which MariaDB's catalog has no column for. */
+export function IndexExpression(): Sql {
+  return GetDialect().id === "mysql" ? sql`EXPRESSION` : sql`NULL`;
+}
+
 /** The table's columns, indexes and every row, read on `held` when given. */
 export async function Snapshot(
   table: string,
@@ -78,7 +84,7 @@ export async function Snapshot(
     held,
   );
   const indexes = await Read(
-    sql`SELECT INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME, EXPRESSION, INDEX_COMMENT FROM information_schema.STATISTICS WHERE ${where} ORDER BY INDEX_NAME, SEQ_IN_INDEX`,
+    sql`SELECT INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME, ${IndexExpression()} AS EXPRESSION, INDEX_COMMENT FROM information_schema.STATISTICS WHERE ${where} ORDER BY INDEX_NAME, SEQ_IN_INDEX`,
     held,
   );
   const triggers = await Read(

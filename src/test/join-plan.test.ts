@@ -97,11 +97,17 @@ function Joined(table: BookTable, condition: Condition) {
     }));
 }
 
+/** A join that reads the inner table once for a buffer of outer rows, as each engine spells it. */
+const BUFFERED_JOIN = /hash join|BNL join/;
+
 function Text(row: Row, column: string): string {
   return String(row.get(column));
 }
 
-/** How the plan reads the books: its access type and index, and whether it hash joins them. */
+/**
+ * How the plan reads the books: its access type and index, and whether it reads them once for many
+ * reviews, through MySQL's hash join or MariaDB's join buffer.
+ */
 async function BooksAccess(
   table: BookTable,
   condition: Condition,
@@ -116,8 +122,8 @@ async function BooksAccess(
   );
   expect(books, "one plan row reads the books").to.have.length(1);
   const [row] = books;
-  const hashed = Text(row, "Extra").includes("hash join") ? " hash join" : "";
-  return `${Text(row, "type")} ${Text(row, "key")}${hashed}`;
+  const buffered = BUFFERED_JOIN.test(Text(row, "Extra")) ? " buffered" : "";
+  return `${Text(row, "type")} ${Text(row, "key")}${buffered}`;
 }
 
 async function Pairs(
@@ -148,8 +154,8 @@ describe("a join against a table read whole", function () {
     }
   });
 
-  it("reads the books once and hash joins them where no index serves the condition", async () => {
-    expect(await BooksAccess("bare", CONDITIONS.title)).to.match(/ hash join$/);
+  it("reads the books once and joins them through a buffer where no index serves the condition", async () => {
+    expect(await BooksAccess("bare", CONDITIONS.title)).to.match(/ buffered$/);
     expect(await Pairs("bare", CONDITIONS.title)).to.deep.equal(EXPECTED);
   });
 

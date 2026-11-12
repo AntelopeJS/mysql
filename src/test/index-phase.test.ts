@@ -89,7 +89,7 @@ async function IndexNames(schemaId: string): Promise<string[]> {
 async function IsBuilding(schemaId: string): Promise<boolean> {
   const pattern = `ALTER TABLE \`${PhysicalTable(schemaId)}\` ADD INDEX%`;
   const rows = await Read(
-    sql`SELECT ID FROM performance_schema.processlist WHERE INFO LIKE ${param(pattern)}`,
+    sql`SELECT ID FROM information_schema.PROCESSLIST WHERE INFO LIKE ${param(pattern)}`,
   );
   return rows.length > 0;
 }

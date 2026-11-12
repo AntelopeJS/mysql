@@ -44,7 +44,7 @@ describe("listing an external relation as a TableView does", () => {
       .pluck("_internal", "_id", "name", "status");
     const expected = await Native(
       sql`SELECT CAST(id AS CHAR) AS _id, name, CAST(status AS CHAR) AS status FROM sales.accounts
-       WHERE status = 'active' AND REGEXP_LIKE(name, 'acct 1', 'i') ORDER BY name DESC LIMIT 5`,
+       WHERE status = 'active' AND name REGEXP '(?i)acct 1' ORDER BY name DESC LIMIT 5`,
     );
     expect(rows).to.deep.equal(expected);
   });
@@ -56,7 +56,7 @@ describe("listing an external relation as a TableView does", () => {
       .count();
     expect(total).to.equal(
       await NativeCount(
-        sql`SELECT COUNT(*) FROM sales.accounts WHERE status = 'active' AND REGEXP_LIKE(name, 'acct 1', 'i')`,
+        sql`SELECT COUNT(*) FROM sales.accounts WHERE status = 'active' AND name REGEXP '(?i)acct 1'`,
       ),
     );
   });
@@ -120,7 +120,7 @@ describe("listing an external relation as a TableView does", () => {
       .count();
     expect(total).to.equal(
       await NativeCount(
-        sql`SELECT COUNT(*) FROM sales.accounts WHERE REGEXP_LIKE(CAST(status AS CHAR), 'churn', 'i') OR REGEXP_LIKE(external_ref, '^0', 'i')`,
+        sql`SELECT COUNT(*) FROM sales.accounts WHERE CAST(status AS CHAR) REGEXP '(?i)churn' OR external_ref REGEXP '(?i)^0'`,
       ),
     );
   });

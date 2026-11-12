@@ -14,7 +14,7 @@ import {
   Schemas,
   WaitForIndexes,
 } from "../implementations/database/schema";
-import { Numbers, PhysicalTable, Run } from "./tables";
+import { IndexExpression, Numbers, PhysicalTable, Run } from "./tables";
 
 interface CatalogIndex {
   readonly name: string;
@@ -75,7 +75,7 @@ function Text(row: Row, column: string): string {
 
 async function Catalog(schemaId: string): Promise<CatalogIndex[]> {
   const rows = await Read(
-    sql`SELECT INDEX_NAME AS name, NON_UNIQUE AS non_unique, INDEX_COMMENT AS comment, GROUP_CONCAT(COALESCE(COLUMN_NAME, EXPRESSION) ORDER BY SEQ_IN_INDEX SEPARATOR ' | ') AS parts FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${param(PhysicalTable(schemaId))} AND INDEX_NAME <> 'PRIMARY' GROUP BY INDEX_NAME, NON_UNIQUE, INDEX_COMMENT ORDER BY INDEX_NAME`,
+    sql`SELECT INDEX_NAME AS name, NON_UNIQUE AS non_unique, INDEX_COMMENT AS comment, GROUP_CONCAT(COALESCE(COLUMN_NAME, ${IndexExpression()}) ORDER BY SEQ_IN_INDEX SEPARATOR ' | ') AS parts FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${param(PhysicalTable(schemaId))} AND INDEX_NAME <> 'PRIMARY' GROUP BY INDEX_NAME, NON_UNIQUE, INDEX_COMMENT ORDER BY INDEX_NAME`,
   );
   return rows.map((row) => ({
     name: Text(row, "name"),
@@ -177,13 +177,14 @@ describe("indexes declared on a populated table", function () {
     expect(
       built.map(({ name, unique, comment }) => ({ name, unique, comment })),
     ).to.deep.equal(expected);
+    const multi = GetDialect().session.multiValuedIndex ? ["tags"] : [];
     expect(built.map((index) => index.name)).to.deep.equal([
       "color",
       "owner",
       "price",
       "sku",
       "sku__g",
-      "tags",
+      ...multi,
       "titleFr",
       "wholeTitle",
     ]);
@@ -203,7 +204,9 @@ describe("indexes declared on a populated table", function () {
       }
     }
     expect(built.get("sku__g")).to.not.contain("_instance");
-    expect(built.get("tags")).to.match(/as char\(512\) array/);
+    if (GetDialect().session.multiValuedIndex) {
+      expect(built.get("tags")).to.match(/as char\(512\) array/);
+    }
   });
 
   it("serves an equality on a key column named in the query from its index", async () => {
@@ -227,8 +230,13 @@ describe("indexes declared on a populated table", function () {
         "wholeTitle",
         sql`${scoped} ${ValueKeyEquals(schemaId, "wholeTitle", "object", '{"en": "title 7", "fr": "titre 7"}')}`,
       ],
-      ["tags", sql`${scoped} 'tag-7' MEMBER OF (JSON_EXTRACT(tags, '$'))`],
     ];
+    if (GetDialect().session.multiValuedIndex) {
+      lookups.push([
+        "tags",
+        sql`${scoped} 'tag-7' MEMBER OF (JSON_EXTRACT(tags, '$'))`,
+      ]);
+    }
     for (const [index, condition] of lookups) {
       expect(await IndexUsed(schemaId, condition), index).to.equal(index);
     }

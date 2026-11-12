@@ -123,7 +123,13 @@ const READ_TABLES: readonly string[] = [
     SELECT ELT(1 + g % 3, 'click', 'view', 'buy'), TIMESTAMPADD(SECOND, g, '2025-01-01 00:00:00') FROM seq`,
 ];
 
-const WRITE_TABLES: readonly string[] = [
+/** The accent- and case-insensitive collation each engine's `w_names.name` is declared in. */
+const ACCENT_INSENSITIVE: Record<Engine, string> = {
+  mysql: "utf8mb4_0900_ai_ci",
+  mariadb: "utf8mb4_uca1400_ai_ci",
+};
+
+const WriteTables = (engine: Engine): readonly string[] => [
   `CREATE TABLE sales.w_accounts (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     code VARCHAR(5) NOT NULL,
@@ -162,7 +168,7 @@ const WRITE_TABLES: readonly string[] = [
   )`,
   `CREATE TABLE sales.w_names (
     id INT PRIMARY KEY,
-    name VARCHAR(20) COLLATE utf8mb4_0900_ai_ci,
+    name VARCHAR(20) COLLATE ${ACCENT_INSENSITIVE[engine]},
     padded VARCHAR(20) COLLATE utf8mb4_bin,
     legacy VARCHAR(20) CHARACTER SET latin1,
     narrow VARCHAR(20) CHARACTER SET utf8mb3,
@@ -221,15 +227,27 @@ const READABLE: readonly string[] = [
 
 const VIEWS: readonly string[] = ["big_accounts", "daily_signups"];
 
-export const FIXTURE: readonly string[] = [
-  "SET SESSION cte_max_recursion_depth = 2000000",
-  ...READ_TABLES,
-  ...WRITE_TABLES,
-  ...ZERO_DATES,
-  `ANALYZE TABLE ${READABLE.filter((name) => !VIEWS.includes(name))
-    .map((name) => `sales.${name}`)
-    .join(", ")}`,
-];
+/** What the fixture spells per engine: a recursion limit no series reaches, and nothing else. */
+const RECURSION_LIMITS: Record<Engine, string> = {
+  mysql: "SET SESSION cte_max_recursion_depth = 2000000",
+  mariadb: "SET SESSION max_recursive_iterations = 2000000",
+};
+
+/** The engines the fixture is written for, as the module's dialect names them. */
+export type Engine = "mysql" | "mariadb";
+
+/** The fixture's statements for a server of `engine`. */
+export function Fixture(engine: Engine): readonly string[] {
+  return [
+    RECURSION_LIMITS[engine],
+    ...READ_TABLES,
+    ...WriteTables(engine),
+    ...ZERO_DATES,
+    `ANALYZE TABLE ${READABLE.filter((name) => !VIEWS.includes(name))
+      .map((name) => `sales.${name}`)
+      .join(", ")}`,
+  ];
+}
 
 /** The tables the external suite writes; every other relation stays readable only. */
 const WRITABLE_TABLES: readonly string[] = READABLE.filter((name) =>

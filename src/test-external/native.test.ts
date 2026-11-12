@@ -147,7 +147,7 @@ describe("numbers read from an external relation's exact types", () => {
         .count();
       expect(total).to.equal(
         await NativeCount(
-          sql`SELECT COUNT(*) FROM sales.accounts WHERE score ${operator} 5.5`,
+          sql`SELECT COUNT(*) FROM sales.accounts WHERE CAST(score AS DECIMAL(65,30)) ${operator} 5.5`,
         ),
       );
     });

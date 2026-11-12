@@ -71,7 +71,7 @@ describe("the catalog of an external instance", function () {
   it("names the connection's engine, database and account", async () => {
     const info = await Info();
     expect(info).to.include({
-      engine: "mysql",
+      engine: /mariadb/i.test(info.version) ? "mariadb" : "mysql",
       database: SALES,
       role: CLIENT_USER,
     });

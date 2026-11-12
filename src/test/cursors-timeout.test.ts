@@ -5,7 +5,7 @@ import { Schema } from "@antelopejs/interface-database/schema";
 import type { SchemaDefinition } from "@antelopejs/interface-database/schema";
 
 import { ident, param, sql } from "../statement";
-import { AcquireConnection, Read } from "../connection";
+import { AcquireConnection, GetDialect, Read } from "../connection";
 import { GetOptions, type Options } from "../config";
 import { Schemas } from "../implementations/database/schema";
 import { Numbers, PhysicalTable, Reconnect, Run } from "./tables";
@@ -43,7 +43,10 @@ async function Seeded(): Promise<Schema<Tables>> {
 }
 
 async function Cap(connection?: PoolConnection) {
-  const statement = sql`SELECT @@SESSION.max_execution_time AS cap`;
+  const statement =
+    GetDialect().id === "mysql"
+      ? sql`SELECT @@SESSION.max_execution_time AS cap`
+      : sql`SELECT @@SESSION.max_statement_time * 1000 AS cap`;
   const [row] = await Read(statement, connection);
   return Number(row.get("cap"));
 }
