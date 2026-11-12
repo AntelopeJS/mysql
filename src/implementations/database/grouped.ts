@@ -18,9 +18,8 @@ const COMMA = sql`, `;
 const AND = sql` AND `;
 
 /**
- * The rows times distinct keys of one outer row from which its groups are looked up by key. The
- * lookup materializes every row of the table its uncorrelated conjuncts keep, once per statement,
- * which costs more than reading a few small groups' rows once each.
+ * The rows times distinct keys of one outer row below which its groups are never looked up by key,
+ * so a statement of small groups never counts the rows a lookup would materialize.
  */
 const KEYED_GROUPS_FROM = 2 ** 20;
 
@@ -117,6 +116,18 @@ function FreeNames(table: TableOrigin, names: readonly string[]): string[] {
 }
 
 /**
+ * The `FROM` and `WHERE` of the relation's table, kept by the conjuncts known to read no outer
+ * row, under the relation's own alias: what a lookup by key materializes once per statement.
+ */
+function OuterFreeRows(relation: Relation, context: DecodingContext): Sql {
+  const free = relation.where.filter((conjunct) =>
+    context.readsNoOuterRow(conjunct),
+  );
+  const where = free.length > 0 ? sql` WHERE ${join(free, AND)}` : sql``;
+  return sql`FROM ${relation.from} AS ${ident(relation.alias)}${where}`;
+}
+
+/**
  * One group, looked up by key in a derived table of the relation's rows that reads no outer row:
  * the engine materializes it once per statement and keys it on the hash of the first part's text,
  * so each group reads its own rows only. The derived table keeps the relation's alias and every
@@ -135,24 +146,19 @@ function KeyedGroup(
     "h",
     ...keys.texts.map((_, part) => KeyName(part)),
   ]);
-  const free = relation.where.filter((conjunct) =>
-    context.readsNoOuterRow(conjunct),
-  );
   const correlated = relation.where.filter(
     (conjunct) => !context.readsNoOuterRow(conjunct),
   );
-  const alias = ident(relation.alias);
   const select = join(
     [
       sql`${inPlace.hash(keys.texts[0])} AS ${ident(hashed)}`,
       ...keys.texts.map((text, part) => sql`${text} AS ${ident(parts[part])}`),
-      sql`${alias}.*`,
+      sql`${ident(relation.alias)}.*`,
     ],
     COMMA,
   );
-  const where = free.length > 0 ? sql` WHERE ${join(free, AND)}` : sql``;
   const rows = inPlace.materialized(
-    sql`SELECT ${select} FROM ${relation.from} AS ${alias}${where}`,
+    sql`SELECT ${select} ${OuterFreeRows(relation, context)}`,
   );
   const lookup = context.nextAlias();
   const one = inPlace.hashRow(keys.walked[0], lookup);
@@ -175,10 +181,20 @@ function KeyedGroup(
   });
 }
 
-/** Whether one outer row's groups are many and large enough to look up by key. */
-function ManyGroups(relation: Relation, keys: WalkedKeys): Sql {
+/**
+ * Whether scanning one outer row's rows once per group costs more than materializing the rows
+ * {@link OuterFreeRows} keeps, which the engine counts once per statement and only once a group
+ * reaches {@link KEYED_GROUPS_FROM}.
+ */
+function ManyGroups(
+  relation: Relation,
+  keys: WalkedKeys,
+  context: DecodingContext,
+): Sql {
+  const scanned = sql`COUNT(*) * COUNT(DISTINCT ${join(keys.texts, COMMA)})`;
+  const materialized = sql`(SELECT COUNT(*) ${OuterFreeRows(relation, context)})`;
   const counted = SetProjection(Ungrouped(relation), {
-    sql: sql`COUNT(*) * COUNT(DISTINCT ${join(keys.texts, COMMA)}) >= ${int(KEYED_GROUPS_FROM)}`,
+    sql: sql`(CASE WHEN ${scanned} < ${int(KEYED_GROUPS_FROM)} THEN FALSE ELSE ${scanned} >= ${materialized} END)`,
     type: BOOL,
   });
   return sql`(${Render(counted)})`;
@@ -207,8 +223,8 @@ function Groups(
  * The session leaves `ONLY_FULL_GROUP_BY` off, so the mapper still reads a term.
  *
  * A relation that reads a table the adapter owns, with no join, looks each group up by key once
- * the outer row's rows times keys reach {@link KEYED_GROUPS_FROM}; below that, and for any other
- * relation, each group scans the rows.
+ * the outer row's rows times keys reach {@link KEYED_GROUPS_FROM} and the rows the lookup
+ * materializes; below that, and for any other relation, each group scans the rows.
  */
 export function GroupedInPlace(
   relation: Relation,
@@ -234,7 +250,7 @@ export function GroupedInPlace(
     context,
   );
   return {
-    sql: sql`(CASE WHEN ${ManyGroups(relation, keys)} THEN ${keyed} ELSE ${scanned} END)`,
+    sql: sql`(CASE WHEN ${ManyGroups(relation, keys, context)} THEN ${keyed} ELSE ${scanned} END)`,
     type,
   };
 }
