@@ -170,6 +170,35 @@ describe("a watched table holding JSON as deep as MySQL stores it", function () 
   });
 });
 
+const numbered = new Schema<{ rows: Row }>("feeds-numbers", {
+  rows: { fields: { label: "string", meta: "object" }, indexes: {} },
+});
+
+/** A double whose shortest spelling MySQL 8.4 reads back from JSON text as a neighbouring double. */
+const LONG_DOUBLE = 123456789.12345679;
+
+describe("a change feed's images of a JSON column", function () {
+  this.timeout(30_000);
+
+  it("deliver the doubles it holds exactly", async () => {
+    const rows = numbered.instance().table("rows");
+    const meta = { long: LONG_DOUBLE, sum: 0.1 + 0.2 };
+    await rows.insert({ _id: "exact", meta });
+    expect(await rows.get("exact")).to.have.deep.property("meta", meta);
+    const feed = await Opened(rows, "probe");
+    try {
+      await rows.get("exact").update({ label: "changed" });
+      const modified = await Delivered(feed.next());
+      expect({
+        before: modified.oldValue?.meta,
+        after: modified.newValue?.meta,
+      }).to.deep.equal({ before: meta, after: meta });
+    } finally {
+      await feed.return?.();
+    }
+  });
+});
+
 const churned = new Schema<{ quiet: Row; busy: Row }>("feeds-quiet", {
   quiet: { fields: { label: "string" }, indexes: {} },
   busy: { fields: { label: "string" }, indexes: {} },
