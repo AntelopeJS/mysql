@@ -227,12 +227,11 @@ const NO_LIMIT = sql`18446744073709551615`;
 /**
  * MariaDB's `JSON_ARRAYAGG` takes a dedup, an order and a `LIMIT`, so a nested query is aggregated in
  * the select that reads the outer row rather than in a derived table, which MariaDB cannot correlate.
- * A dedup keeps one element per text, an absent element being a JSON null.
+ * A dedup keeps one element per text and one absent element, apart from a JSON null, as a dedup at
+ * the top does.
  */
 function CollectInPlace(element: Sql, rows: CollectedRows): Sql {
-  const value = rows.distinct
-    ? sql`DISTINCT COALESCE(${element}, ${Json(lit("null"))})`
-    : element;
+  const value = rows.distinct ? sql`DISTINCT ${element}` : element;
   const order = rows.order ? sql` ORDER BY ${rows.order}` : sql``;
   const bounded = rows.offset !== undefined || rows.count !== undefined;
   const count = rows.count === undefined ? NO_LIMIT : int(rows.count);
