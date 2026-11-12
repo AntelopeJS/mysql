@@ -163,7 +163,9 @@ async function Execute(
   const dialect = target.relation.dialect;
   switch (statement.kind) {
     case "count":
-      return Write(statement.statement);
+      return InTransaction((connection) =>
+        Write(statement.statement, connection),
+      );
     case "atomic":
       return ExecuteAtomicWrite(dialect, () => Write(statement.statement));
     case "insert": {

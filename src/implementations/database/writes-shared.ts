@@ -47,7 +47,8 @@ export function WriteTargetOf(
 /**
  * What a write compiles to, and the answer it owes.
  *
- * - `count`: one statement, answered by the rows it matched.
+ * - `count`: one statement, run as a transaction that a deadlock or a lock wait runs again, answered
+ *   by the rows it matched.
  * - `insert`: statements run in one transaction, answered by the keys known before they run, in
  *   input order. None at all is an insert of no documents.
  * - `upsert`: a transaction that reads which of `ids` exist with `lock`, holding them, and then
