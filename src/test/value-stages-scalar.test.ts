@@ -163,6 +163,28 @@ describe("The date stages", () => {
     );
   });
 
+  it("read the offsets MySQL's cast takes, from -14:00 to +14:00 but not -00:00, and no instant for any other", async () => {
+    const offsets = ["-14:00", "+14:00", "-00:00", "+14:01", "+05:60"];
+    const read = await First(
+      table
+        .rows()
+        .map(() =>
+          offsets.map((offset) =>
+            ValueProxy.constant<string | Date>(
+              `2024-06-01T12:00:00${offset}`,
+            ).epoch(),
+          ),
+        ),
+    );
+    assert.deepEqual(read, [
+      Date.parse("2024-06-01T12:00:00-14:00") / 1000,
+      Date.parse("2024-06-01T12:00:00+14:00") / 1000,
+      null,
+      null,
+      null,
+    ]);
+  });
+
   it("read the parts in the zone named, a named one or an offset, and a date part after another stage in UTC again", async () => {
     assert.deepEqual(
       await First(

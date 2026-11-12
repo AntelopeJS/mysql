@@ -111,4 +111,24 @@ describe("a cursor under statementTimeoutMs", function () {
     expect(await Write(update)).to.equal(1);
     await Run(update);
   });
+
+  it("lets a table lock wait past the cap for a lock another session holds", async () => {
+    const table = ident(PhysicalTable(SCHEMA_ID, "items"));
+    const holder = await AcquireConnection();
+    const waiter = await AcquireConnection();
+    try {
+      await Run(sql`LOCK TABLES ${table} READ`, holder);
+      const locking = Run(sql`LOCK TABLES ${table} WRITE`, waiter).then(
+        () => "locked",
+        (err: unknown) => `failed: ${String(err)}`,
+      );
+      await delay(CAP_MS * 2);
+      await Run(sql`UNLOCK TABLES`, holder);
+      expect(await locking).to.equal("locked");
+      await Run(sql`UNLOCK TABLES`, waiter);
+    } finally {
+      holder.release();
+      waiter.release();
+    }
+  });
 });
