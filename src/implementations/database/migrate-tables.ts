@@ -3,7 +3,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { Logger } from "../../logger";
 import { GetDialect, type Row } from "../../connection";
 import type { MigrationMode } from "../../config";
-import type { DdlSyntax, RowKey } from "../../dialect";
+import type { DdlSyntax, Dialect, RowKey } from "../../dialect";
 import { Observe } from "./observe";
 import type { DeclaredColumn, TablePlan } from "./plan";
 import { RegistryStatements, SchemaKey } from "./registry";
@@ -50,8 +50,26 @@ function RowKeyOf(row: Row): RowKey {
  * Moves a declared field out of `_extra` into its column, one key range at a time. The ranges only
  * spare later chunks a rescan: each chunk matches only rows still holding a value the column can
  * take, so a backfill stopped anywhere is finished by running it again from the start.
+ *
+ * No document changes, so a watched table's triggers log none of the moves. The session is marked
+ * for the backfill alone, however it ends: a session left marked would leave every later update it
+ * ran unlogged, in convergence and once back in the pool.
  */
 async function Backfill(
+  session: ConvergenceSession,
+  dialect: Dialect,
+  table: string,
+  column: DeclaredColumn,
+): Promise<void> {
+  await session.apply(dialect.capture.markMoves);
+  try {
+    await BackfillChunks(session, dialect.ddl, table, column);
+  } finally {
+    await session.apply(dialect.capture.unmarkMoves);
+  }
+}
+
+async function BackfillChunks(
   session: ConvergenceSession,
   ddl: DdlSyntax,
   table: string,
@@ -78,7 +96,7 @@ async function Run(
 ): Promise<void> {
   switch (step.kind) {
     case "backfill":
-      await Backfill(session, GetDialect().ddl, plan.table, step.column);
+      await Backfill(session, GetDialect(), plan.table, step.column);
       await session.apply(step.settle);
       return;
     case "swapTriggers":

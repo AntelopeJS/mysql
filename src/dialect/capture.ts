@@ -78,6 +78,12 @@ export interface CaptureSyntax {
   lockTable(table: string): Sql;
   readonly unlockTables: Sql;
   /**
+   * Marks the session's updates as moving stored values without changing any document, so the
+   * triggers log none of them, until `unmarkMoves` runs or the session ends.
+   */
+  readonly markMoves: Sql;
+  readonly unmarkMoves: Sql;
+  /**
    * The type an image logs a column as, from the type the catalog reports for it; `undefined` for a
    * type the module never gives a column it stores.
    */

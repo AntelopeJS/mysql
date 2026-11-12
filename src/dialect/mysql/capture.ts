@@ -141,6 +141,9 @@ function LoggedType(columnType: string): SqlType | undefined {
   return BOUNDED_TEXT.test(spelled) ? TEXT : LOGGED_TYPES.get(spelled);
 }
 
+/** Set on a session whose updates move stored values without changing any document. */
+const MOVING = sql`@antelopejs_moving`;
+
 const OLD = sql`OLD`;
 const NEW = sql`NEW`;
 
@@ -171,7 +174,7 @@ function Triggers(
     },
     {
       operation: "modified",
-      body: sql`IF NOT (${Unchanged(columns)}) THEN ${head(sql`${oldImage}, ${newImage}`)} VALUES (${named}, ${instance(NEW)}, 'modified', ${Image(OLD, columns)}, ${Image(NEW, columns)}); END IF`,
+      body: sql`IF ${MOVING} IS NULL AND NOT (${Unchanged(columns)}) THEN ${head(sql`${oldImage}, ${newImage}`)} VALUES (${named}, ${instance(NEW)}, 'modified', ${Image(OLD, columns)}, ${Image(NEW, columns)}); END IF`,
     },
     {
       operation: "removed",
@@ -219,6 +222,8 @@ export const capture: CaptureSyntax = {
   triggerRefusal: TriggerRefusal,
   lockTable: (table) => sql`LOCK TABLES ${ident(table)} WRITE`,
   unlockTables: sql`UNLOCK TABLES`,
+  markMoves: sql`SET ${MOVING} = 1`,
+  unmarkMoves: sql`SET ${MOVING} = NULL`,
   loggedType: LoggedType,
   unbox: (member) =>
     sql`(CASE WHEN ${json.is(member, ["string"])} THEN ${json.parse(sql`JSON_UNQUOTE(${member})`)} END)`,

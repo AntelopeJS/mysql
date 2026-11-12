@@ -106,7 +106,7 @@ describe("the change log's triggers", () => {
     expect(bodies.INSERT).to.not.contain("CAST(NEW.`price` AS CHAR)");
   });
 
-  it("logs an update only when some column changed, comparing every column null-safely", () => {
+  it("logs an update only when some column changed, comparing every column null-safely, unless the session moves values", () => {
     for (const column of [
       "_id",
       "_instance",
@@ -119,7 +119,11 @@ describe("the change log's triggers", () => {
         `OLD.\`${column}\` <=> NEW.\`${column}\``,
       );
     }
-    expect(bodies.UPDATE).to.contain("FOR EACH ROW IF NOT (");
+    expect(bodies.UPDATE).to.contain(
+      "FOR EACH ROW IF @antelopejs_moving IS NULL AND NOT (",
+    );
+    expect(bodies.INSERT).to.not.contain("@antelopejs_moving");
+    expect(bodies.DELETE).to.not.contain("@antelopejs_moving");
   });
 
   it("names the table and the instance in every row it logs", () => {

@@ -18,7 +18,7 @@ for await (const change of table
 
 ## Capture
 
-The first feed on a table installs three `AFTER INSERT`, `AFTER UPDATE` and `AFTER DELETE` row triggers on it, named `ajs_chg_<signature>_i`, `_u` and `_d`. Each writes one row per changed table row into `__antelope_changes`, in the writer's own transaction, with an image of the row before the write, after it, or both. An image holds every stored column. A JSON column is logged as its JSON text, so a column holding SQL NULL and one holding a JSON `null` stay apart, and a value as deeply nested as MySQL stores still fits in the log. An `UPDATE` that leaves every column as it was logs nothing.
+The first feed on a table installs three `AFTER INSERT`, `AFTER UPDATE` and `AFTER DELETE` row triggers on it, named `ajs_chg_<signature>_i`, `_u` and `_d`. Each writes one row per changed table row into `__antelope_changes`, in the writer's own transaction, with an image of the row before the write, after it, or both. An image holds every stored column. A JSON column is logged as its JSON text, so a column holding SQL NULL and one holding a JSON `null` stay apart, and a value as deeply nested as MySQL stores still fits in the log. An `UPDATE` that leaves every column as it was logs nothing. Neither does the backfill that moves a newly declared field out of `_extra` into its column, since it changes no document.
 
 A table with these triggers is watched, and stays watched: the adapter never removes them. From then on, every write to the table costs a log row, whoever the writer is, which makes a bulk insert into a watched table about five times slower. Writes made outside the module, with the `mysql` client or another application, are captured the same way.
 
@@ -44,6 +44,8 @@ Per-row order is guaranteed. Two writers of the same row serialize on its lock, 
 ## Delivery
 
 A feed opens in three steps: it installs the table's triggers if they are missing, numbers every committed row still waiting for a number, and takes the highest number as its watermark. A change committed before the open is not delivered. A change whose transaction is still open is numbered after it commits, so it is delivered. When nothing has numbered the log for a while, the open waits for that backlog, about 2 s for 100,000 rows.
+
+A feed reads every event through the schema as it was registered when the feed opened. If the same process registers the schema again with a field it did not declare before, the open feed still reads that field from `_extra`, and once the backfill has moved it into its column, the feed's documents no longer show it. Re-open the feed to read the new declaration.
 
 Each process that has a feed open runs one clock. Every `changePollIntervalMs`, 100 ms by default, it reads where the log stands, numbers what has committed, and wakes the feeds of the tables that have new rows. A write committed by this process ticks the clock at once, so its feeds see it without waiting. A write from another process is seen within one interval. A woken feed reads its table's rows above its watermark, `changeBatchSize` at a time. A feed that is not woken reads the log anyway after 5 s.
 
