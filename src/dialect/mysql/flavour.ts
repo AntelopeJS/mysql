@@ -64,6 +64,11 @@ export interface Flavour {
   /** Whether a derived table can read the columns of the tables joined before it. */
   readonly lateral: boolean;
   /**
+   * Whether the engine joins on an equality no index serves by block nested loop, evaluating each
+   * operand once per pair of rows, where MySQL hash joins it.
+   */
+  readonly nestedLoopJoin: boolean;
+  /**
    * A one-row table, without its alias, holding values the enclosing row computes. MySQL reads an
    * outer column inside a derived table; MariaDB reads one only inside `JSON_TABLE`.
    */
@@ -156,6 +161,7 @@ export const MYSQL: Flavour = {
   collect: Collect,
   returning: false,
   lateral: true,
+  nestedLoopJoin: false,
   hold: (columns) =>
     sql`(SELECT ${join(
       columns.map((held) => sql`${held.value} AS ${ident(held.name)}`),

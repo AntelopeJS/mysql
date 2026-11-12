@@ -204,17 +204,42 @@ function Wrapped(
   return wrapped;
 }
 
-const ROW_NUMBER_COLUMN = "_row";
-
 /** A name for one more column, free of every name the select list gives; MySQL folds their case. */
-function FreeColumn(relation: Relation): string {
+function FreeColumn(relation: Relation, wanted: string): string {
   const selected = relation.projection ? [OUTPUT_COLUMN] : RowNames(relation);
   const taken = new Set(selected.map((name) => name.toLowerCase()));
-  let name = ROW_NUMBER_COLUMN;
+  let name = wanted;
   while (taken.has(name)) {
     name = `_${name}`;
   }
   return name;
+}
+
+/** A fresh relation over a subselect that computes one more column, and that column at its alias. */
+export interface ExtendedRows {
+  relation: Relation;
+  column: Sql;
+}
+
+/**
+ * Starts a fresh relation over a subselect of `relation` that also selects `value`, computed once
+ * per row of the subselect. `unmerged` keeps the subselect a table of its own rather than an alias
+ * of its expressions, where the engine would otherwise merge it into the statement that reads it.
+ */
+export function Extended(
+  relation: Relation,
+  value: Sql,
+  wanted: string,
+  context: DecodingContext,
+  unmerged: (select: Sql) => Sql = (select) => select,
+): ExtendedRows {
+  const column = FreeColumn(relation, wanted);
+  const select = sql`${SelectClause(relation)}, ${value} AS ${ident(column)} ${RenderClauses(relation, BODY)}`;
+  const extended = Wrapped(relation, sql`(${unmerged(select)})`, context);
+  return {
+    relation: extended,
+    column: QualifiedColumn(extended.alias, column),
+  };
 }
 
 /** A relation whose rows are numbered in the order they had, and the column holding the number. */
@@ -233,15 +258,16 @@ export function Numbered(
   relation: Relation,
   context: DecodingContext,
 ): NumberedRows {
-  const column = FreeColumn(relation);
   const terms = OrderTerms(relation);
   const order = terms === undefined ? sql`` : sql`ORDER BY ${terms}`;
-  const select = sql`${SelectClause(relation)}, ROW_NUMBER() OVER (${order}) AS ${ident(column)}`;
-  const body = RenderClauses(relation, BODY);
-  const numbered = Wrapped(relation, sql`(${select} ${body})`, context);
-  const rowNumber = QualifiedColumn(numbered.alias, column);
-  numbered.orderBy = [{ sql: rowNumber, descending: false }];
-  return { relation: numbered, rowNumber };
+  const numbered = Extended(
+    relation,
+    sql`ROW_NUMBER() OVER (${order})`,
+    "_row",
+    context,
+  );
+  numbered.relation.orderBy = [{ sql: numbered.column, descending: false }];
+  return { relation: numbered.relation, rowNumber: numbered.column };
 }
 
 export type RelationFlag =

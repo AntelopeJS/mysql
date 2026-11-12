@@ -114,7 +114,8 @@ function Comparison(
   return { sql: WherePresent(pair, compared), type: BOOL };
 }
 
-const Identical: Equality = (dialect, value, other) =>
+/** `value.eq(other)` between two operands that are both values, neither of them `null`. */
+export const Identical: Equality = (dialect, value, other) =>
   Comparison(dialect, value, other, "=");
 
 /**

@@ -257,6 +257,7 @@ const MARIADB: Flavour = {
   collectInPlace: CollectInPlace,
   returning: true,
   lateral: false,
+  nestedLoopJoin: true,
   hold: Hold,
   tabled: Json,
   instant: Instant,

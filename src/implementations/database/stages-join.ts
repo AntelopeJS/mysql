@@ -8,6 +8,7 @@ import { type Sql, ident, sql } from "../../statement";
 import { Compare, Collected } from "./json";
 import { UnifyOperands } from "./coerce";
 import { DecodeFunction, RecordedLambda } from "./value";
+import { type JoinedSide, KeyedSide } from "./join-key";
 import { AsJson, Predicate } from "./readings";
 import type { DecodingContext } from "./context";
 import { NamedField, type RowSource } from "./row-source";
@@ -73,20 +74,20 @@ function FlavourOf(stage: QueryStage): JoinFlavour {
   return OptionsOf(stage)?.innerOnly === true ? INNER_FLAVOUR : OUTER_FLAVOUR;
 }
 
-/** The query being joined as a FROM item at a fresh alias, and the condition its rows join on. */
-interface JoinedSide {
-  readonly relation: Relation;
-  readonly on: (condition: Sql) => Sql;
-}
-
-function Unscoped(condition: Sql): Sql {
-  return condition;
+/**
+ * Whether an index looks each row of a table joined as itself up: one keyed by a column the
+ * condition names right after `_instance`.
+ */
+function LooksUp(root: RootSelection, condition: Sql): boolean {
+  const { alias } = root.relation;
+  return InstanceLookupColumns(RequireOrigin(root.relation).plan).some(
+    (column) => ReadsColumn(condition, alias, column),
+  );
 }
 
 /**
- * A condition on a table joined as itself, restricted to the instance the table is read in. Only an
- * index keyed by a column the condition names right after `_instance` can look each row up; where
- * the condition names none, the restriction leaves the server free to hash join the instance.
+ * A condition on a table joined as itself, restricted to the instance the table is read in. Where
+ * no index looks each row up, the restriction leaves the server free to hash join the instance.
  */
 function InstanceScoped(
   root: RootSelection,
@@ -96,41 +97,10 @@ function InstanceScoped(
   if (root.instance === CROSS_INSTANCE) {
     return condition;
   }
-  const { alias } = root.relation;
-  const lookup = InstanceLookupColumns(RequireOrigin(root.relation).plan).some(
-    (column) => ReadsColumn(condition, alias, column),
-  );
-  const instance = QualifiedColumn(alias, INSTANCE_COLUMN);
+  const instance = QualifiedColumn(root.relation.alias, INSTANCE_COLUMN);
+  const lookup = LooksUp(root, condition);
   const scope = dialect.sql.rows.joinScope(instance, root.instance.sql, lookup);
   return sql`(${scope} AND ${condition})`;
-}
-
-/**
- * Compiles the query being joined, from its own root. A read of a whole table the adapter owns
- * joins the table itself, so the condition reads its key columns as a filter does and the instance
- * it reads is part of the condition; anything else joins its subselect.
- */
-function JoinedSide(stage: QueryStage, context: DecodingContext): JoinedSide {
-  const right: unknown = stage.args[FIRST_OPERAND];
-  assert(
-    right instanceof Query,
-    "The 'join' stage takes another query to join against",
-  );
-  const stages = right.build();
-  if (!IsTableRead(stages)) {
-    return {
-      relation: Nested(context.relation(stages), context),
-      on: Unscoped,
-    };
-  }
-  const root = BuildRoot(stages, context);
-  if (root.external) {
-    return { relation: Nested(root.relation, context), on: Unscoped };
-  }
-  return {
-    relation: root.relation,
-    on: (condition) => InstanceScoped(root, condition, context.dialect),
-  };
 }
 
 /** Binds both lambda parameters to the two row sources, which leaves the condition two columns. */
@@ -146,6 +116,46 @@ function Condition(
   );
   const matched = RequireOperand(body, stage, SECOND_OPERAND);
   return sql`(${Predicate(context.dialect, matched).sql})`;
+}
+
+/**
+ * Compiles the query being joined, from its own root, and the condition its rows join on. A read
+ * of a whole table the adapter owns joins the table itself, so the condition reads its key columns
+ * as a filter does and the instance it reads is part of the condition, unless no index serves an
+ * equality the engine would then compute once per pair of rows; anything else joins its subselect.
+ */
+function JoinedSide(
+  stage: QueryStage,
+  left: RowSource,
+  context: DecodingContext,
+): JoinedSide {
+  const right: unknown = stage.args[FIRST_OPERAND];
+  assert(
+    right instanceof Query,
+    "The 'join' stage takes another query to join against",
+  );
+  const stages = right.build();
+  const root = IsTableRead(stages) ? BuildRoot(stages, context) : undefined;
+  if (!root || root.external) {
+    const relation = Nested(
+      root?.relation ?? context.relation(stages),
+      context,
+    );
+    return {
+      relation,
+      on: Condition(stage, [left, relation.source], context),
+    };
+  }
+  const condition = Condition(stage, [left, root.relation.source], context);
+  const keyed = LooksUp(root, condition)
+    ? undefined
+    : KeyedSide(RecordedLambda(stage, SECOND_OPERAND), root, left, context);
+  return (
+    keyed ?? {
+      relation: root.relation,
+      on: InstanceScoped(root, condition, context.dialect),
+    }
+  );
 }
 
 /**
@@ -193,12 +203,9 @@ function MapperSource(right: Relation, flavour: JoinFlavour): RowSource {
 const JoinStage: PipelineStage = (relation, stage, context) => {
   const flavour = FlavourOf(stage);
   const prepared = Prepare(relation, JOIN_BLOCKERS, context);
-  const side = JoinedSide(stage, context);
+  const side = JoinedSide(stage, prepared.source, context);
   const right = side.relation;
-  const on = Condition(stage, [prepared.source, right.source], context);
-  prepared.joins.push(
-    JoinOn(flavour.kind, right.from, right.alias, side.on(on)),
-  );
+  prepared.joins.push(JoinOn(flavour.kind, right.from, right.alias, side.on));
   const mapped = DecodeFunction(
     RecordedLambda(stage, MAPPER_OPERAND),
     context,

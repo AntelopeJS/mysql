@@ -192,9 +192,9 @@ export function BuildRoot(
   return { relation, rest, instance: scope };
 }
 
-/** The ids found so far, beside the objects already walked, carried through one collection. */
-interface SchemaWalk {
-  ids: Set<string>;
+/** What one walk does with each stage, beside the objects already walked. */
+interface StageWalk {
+  visit: (stage: QueryStage) => void;
   visited: WeakSet<object>;
 }
 
@@ -202,7 +202,7 @@ interface SchemaWalk {
  * Walks a stage argument, which is caller data and may be any shape a document may be.
  * Plain objects reach every recorded lambda body; the visited set is for a caller's cyclic object.
  */
-function CollectValue(value: Member, walk: SchemaWalk): void {
+function CollectValue(value: Member, walk: StageWalk): void {
   if (!("identity" in value) || walk.visited.has(value.identity)) {
     return;
   }
@@ -226,12 +226,9 @@ function CollectValue(value: Member, walk: SchemaWalk): void {
   }
 }
 
-function CollectInto(stages: QueryStage[], walk: SchemaWalk): void {
+function CollectInto(stages: QueryStage[], walk: StageWalk): void {
   for (const stage of stages) {
-    const id: unknown = OptionsOf(stage)?.id;
-    if (stage.stage === SCHEMA_STAGE && IsString(id)) {
-      walk.ids.add(id);
-    }
+    walk.visit(stage);
     if (stage.stage === "atomicMutation") {
       continue;
     }
@@ -248,7 +245,20 @@ function CollectInto(stages: QueryStage[], walk: SchemaWalk): void {
  * converged, so the caller awaits all of these before compiling anything.
  */
 export function CollectSchemaIds(stages: QueryStage[]): string[] {
-  const walk: SchemaWalk = { ids: new Set<string>(), visited: new WeakSet() };
-  CollectInto(stages, walk);
-  return [...walk.ids];
+  const ids = new Set<string>();
+  WalkStages(stages, (stage) => {
+    const id: unknown = OptionsOf(stage)?.id;
+    if (stage.stage === SCHEMA_STAGE && IsString(id)) {
+      ids.add(id);
+    }
+  });
+  return [...ids];
+}
+
+/** Visits every stage of the tree, those of nested queries and recorded lambda bodies included. */
+export function WalkStages(
+  stages: QueryStage[],
+  visit: (stage: QueryStage) => void,
+): void {
+  CollectInto(stages, { visit, visited: new WeakSet() });
 }
