@@ -3,7 +3,7 @@ import type {
   QueryValue,
 } from "@antelopejs/interface-database/common";
 
-import { Bind, type Sql, sql } from "../../statement";
+import { Bind, type Sql, join, sql } from "../../statement";
 import { Cast, Unify } from "./coerce";
 import type { DecodingContext } from "./context";
 import { CompileExpression } from "./expression";
@@ -11,16 +11,17 @@ import { DeclaredColumns } from "./fields";
 import { ClassifyMember, StageOperand } from "./member";
 import { Predicate } from "./readings";
 import { type Relation, RequireOrigin } from "./relation";
-import { Extended } from "./render";
+import { FromItem, KeyedIdentities } from "./render";
 import type { RowSource } from "./row-source";
 import { type RootSelection, WalkStages } from "./selection";
 import { type Compiled, QualifiedColumn } from "./sql";
 import { FIRST_OPERAND } from "./stage";
 import { Identical } from "./stages-core";
 import { IsJsonBacked } from "./types";
-import { ID_COLUMN } from "./utils";
+import { ID_COLUMN, INSTANCE_COLUMN } from "./utils";
 import {
   FUNCTION_BODY,
+  IsRecordedFunction,
   ParameterKey,
   type RecordedFunction,
   WithBoundArguments,
@@ -46,23 +47,29 @@ function ChainOf(value: QueryValue): QueryStage[] | undefined {
   return member.kind === "proxy" ? member.value.build() : undefined;
 }
 
-/** The lambda parameters a chain reads, among those of the condition, by their keys. */
-function ParametersRead(stages: QueryStage[], keys: string[]): Set<string> {
+/**
+ * The lambda parameters a chain reads that no lambda inside it binds, by their keys: those of the
+ * condition, and those of any lambda the join is nested in.
+ */
+function FreeParameters(stages: QueryStage[]): Set<string> {
   const read = new Set<string>();
+  const bound = new Set<string>();
   WalkStages(stages, (stage) => {
-    if (stage.stage !== "arg") {
-      return;
+    if (stage.stage === "arg") {
+      read.add(ParameterKey(StageOperand(stage, FIRST_OPERAND)));
     }
-    const key = ParameterKey(StageOperand(stage, FIRST_OPERAND));
-    if (keys.includes(key)) {
-      read.add(key);
-    }
+    stage.args.forEach((_, index) => {
+      const operand = StageOperand(stage, index);
+      if (IsRecordedFunction(operand)) {
+        operand.args[0].forEach((id) => bound.add(ParameterKey(id)));
+      }
+    });
   });
-  return read;
+  return new Set([...read].filter((key) => !bound.has(key)));
 }
 
-function ReadsOnly(stages: QueryStage[], keys: string[], key: string): boolean {
-  const read = ParametersRead(stages, keys);
+function ReadsOnly(stages: QueryStage[], key: string): boolean {
+  const read = FreeParameters(stages);
   return read.size === 1 && read.has(key);
 }
 
@@ -83,20 +90,25 @@ function KeyedEqualityOf(
   if (!argument) {
     return undefined;
   }
-  const keys = condition.args[0].map(ParameterKey);
-  const [left, joined] = [keys[LEFT_ROW], keys[JOINED_ROW]];
-  if (ReadsOnly(receiver, keys, joined) && ReadsOnly(argument, keys, left)) {
+  const [left, joined] = [LEFT_ROW, JOINED_ROW].map((row) =>
+    ParameterKey(condition.args[0][row]),
+  );
+  if (ReadsOnly(receiver, joined) && ReadsOnly(argument, left)) {
     return { left: argument, joined: receiver, joinedFirst: true };
   }
-  if (ReadsOnly(receiver, keys, left) && ReadsOnly(argument, keys, joined)) {
+  if (ReadsOnly(receiver, left) && ReadsOnly(argument, joined)) {
     return { left: receiver, joined: argument, joinedFirst: false };
   }
   return undefined;
 }
 
-/** The query being joined as a FROM item at a fresh alias, and the condition its rows join on. */
+/**
+ * The query being joined, the FROM item that brings it in, and the condition its rows join on. The
+ * item names the relation at its alias, or more where a join needs it.
+ */
 export interface JoinedSide {
   readonly relation: Relation;
+  readonly item: Sql;
   readonly on: Sql;
 }
 
@@ -109,11 +121,15 @@ function IsStoredColumn(table: Relation, value: Sql): boolean {
   );
 }
 
+const KEY_COLUMN = "_key";
+
 /**
- * The table joined as a derived table of its rows in the instance, each with the joined row's
- * operand of the equality computed once, and the equality on that column. Answers nothing where
- * the engine computes it once per row already, where the operand is a stored column, or where the
- * operands compare as JSON, which a column of the derived table would hold as text.
+ * The table joined through a derived table of the identities of its rows in the instance, each with
+ * the joined row's operand of the equality computed once, and the equality on that column; the
+ * table itself is joined back by its primary key, so the derived table holds no document. Answers
+ * nothing where the engine computes the operand once per row already, where the operand is a
+ * stored column, or where the operands compare as JSON, which a column of the derived table would
+ * hold as text.
  */
 export function KeyedSide(
   condition: RecordedFunction,
@@ -127,10 +143,11 @@ export function KeyedSide(
   if (!unmerged || !equality) {
     return undefined;
   }
+  const table = root.relation;
   const [own, other] = WithBoundArguments(
     condition,
     context,
-    [left, root.relation.source],
+    [left, table.source],
     () => [
       CompileExpression(equality.joined, context),
       CompileExpression(equality.left, context),
@@ -138,16 +155,22 @@ export function KeyedSide(
   );
   const type = Unify(own.type, other.type);
   const key = Cast(dialect, own, type).sql;
-  if (IsJsonBacked(type) || IsStoredColumn(root.relation, key)) {
+  if (IsJsonBacked(type) || IsStoredColumn(table, key)) {
     return undefined;
   }
-  const keyed = Extended(root.relation, key, "_key", context, unmerged);
-  const column: Compiled = { sql: keyed.column, type };
+  const keys = context.nextAlias();
+  const select = KeyedIdentities(table, key, KEY_COLUMN);
+  const identity = [INSTANCE_COLUMN, ID_COLUMN].map(
+    (column) =>
+      sql`${QualifiedColumn(table.alias, column)} = ${QualifiedColumn(keys, column)}`,
+  );
+  const column: Compiled = { sql: QualifiedColumn(keys, KEY_COLUMN), type };
   const matched = equality.joinedFirst
     ? Identical(dialect, column, other)
     : Identical(dialect, other, column);
   return {
-    relation: keyed.relation,
+    relation: table,
+    item: sql`(${FromItem(sql`(${unmerged(select)})`, keys)} JOIN ${FromItem(table.from, table.alias)} ON ${join(identity, sql` AND `)})`,
     on: sql`(${Predicate(dialect, matched).sql})`,
   };
 }

@@ -104,10 +104,17 @@ function Text(row: Row, column: string): string {
   return String(row.get(column));
 }
 
+/** One plan row's access: its type and index, whether it reads a derived table, and whether through a buffer. */
+function Access(row: Row): string {
+  const derived = Text(row, "table").startsWith("<derived") ? "derived " : "";
+  const buffered = BUFFERED_JOIN.test(Text(row, "Extra")) ? " buffered" : "";
+  return `${derived}${Text(row, "type")} ${Text(row, "key")}${buffered}`;
+}
+
 /**
- * How the plan joins the books to the page of reviews it reads first: its access type and index,
- * whether it reads a derived table the books were materialized into, and whether it reads them
- * once for many reviews, through MySQL's hash join or MariaDB's join buffer.
+ * How the plan joins the books to the page of reviews it reads first, one access per plan row:
+ * whether it reads them once for many reviews, through MySQL's hash join or MariaDB's join buffer,
+ * or looks each review's book up through an index.
  */
 async function BooksAccess(
   table: BookTable,
@@ -122,22 +129,19 @@ async function BooksAccess(
   expect(Text(page, "rows"), "the page of reviews is read first").to.equal(
     String(REVIEWS),
   );
-  expect(books, "one plan row joins the books").to.have.length(1);
-  const [row] = books;
-  const derived = Text(row, "table").startsWith("<derived") ? "derived " : "";
-  const buffered = BUFFERED_JOIN.test(Text(row, "Extra")) ? " buffered" : "";
-  return `${derived}${Text(row, "type")} ${Text(row, "key")}${buffered}`;
+  return books.map(Access).join(", ");
 }
 
 /**
- * The books' access where no index serves the condition. MySQL hash joins the instance's range;
+ * The books' access where no index serves the condition. MySQL hash joins the instance's range.
  * MariaDB, whose join buffer would compute the books' side once per pair of rows, computes it once
- * per book into a derived table and joins that.
+ * per book into a derived table of identities, joins that through the buffer, and reads each
+ * matched book by its primary key.
  */
 function UnindexedAccess(): string {
   return GetDialect().id === "mysql"
     ? "range PRIMARY buffered"
-    : "derived ALL null buffered";
+    : "derived ALL null buffered, eq_ref PRIMARY";
 }
 
 async function Pairs(
@@ -213,6 +217,31 @@ describe("a join against a table read whole", function () {
         [...EXPECTED, "r-fallback b-1"].sort(),
       );
     }
+  });
+
+  it("joins inside a map on a condition that also reads the mapped row", async () => {
+    const fallback = (review: ValueProxy<Review>) =>
+      review.key("_id").eq("r-fallback");
+    const answer = await Table("reviews")
+      .filter(fallback)
+      .map((outer) => ({
+        review: outer.key("_id"),
+        books: Table("reviews")
+          .filter(fallback)
+          .joinInner(
+            Table("bare"),
+            (review, book) =>
+              book
+                .key("title")
+                .key("fr")
+                .default(outer.key("bookTitle"))
+                .eq(review.key("bookTitle")),
+            (_review, book) => book.key("_id"),
+          )
+          .slice(0, 5),
+      }))
+      .run();
+    expect(answer).to.deep.equal([{ review: "r-fallback", books: ["b-1"] }]);
   });
 
   it("keeps a review no book matches in an outer join, and reads only the review's instance", async () => {

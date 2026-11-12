@@ -65,9 +65,9 @@ describe("the join stages", () => {
       DIALECTS.mariadb,
     ).sql;
     expect(sql).to.include(
-      " END) AS `_key` FROM `directory__people` AS `t1` WHERE (`t1`.`_instance` = ?) LIMIT 18446744073709551615) AS `t2` ON (",
+      " END) AS `_key` FROM `directory__people` AS `t1` WHERE (`t1`.`_instance` = ?) LIMIT 18446744073709551615) AS `t2` JOIN `directory__people` AS `t1` ON `t1`.`_instance` = `t2`.`_instance` AND `t1`.`_id` = `t2`.`_id`) ON (",
     );
-    expect(sql.slice(sql.indexOf(" AS `t2` ON "))).to.not.include(
+    expect(sql.slice(sql.indexOf("`t2`.`_id`) ON "))).to.not.include(
       "JSON_EXTRACT",
     );
   });

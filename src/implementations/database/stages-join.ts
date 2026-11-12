@@ -34,6 +34,7 @@ import {
 import { InstanceLookupColumns } from "./plan";
 import { BuildRoot, IsTableRead, type RootSelection } from "./selection";
 import {
+  FromItem,
   HasFlag,
   type JoinKind,
   JoinOn,
@@ -143,6 +144,7 @@ function JoinedSide(
     );
     return {
       relation,
+      item: FromItem(relation.from, relation.alias),
       on: Condition(stage, [left, relation.source], context),
     };
   }
@@ -153,6 +155,7 @@ function JoinedSide(
   return (
     keyed ?? {
       relation: root.relation,
+      item: FromItem(root.relation.from, root.relation.alias),
       on: InstanceScoped(root, condition, context.dialect),
     }
   );
@@ -205,7 +208,7 @@ const JoinStage: PipelineStage = (relation, stage, context) => {
   const prepared = Prepare(relation, JOIN_BLOCKERS, context);
   const side = JoinedSide(stage, prepared.source, context);
   const right = side.relation;
-  prepared.joins.push(JoinOn(flavour.kind, right.from, right.alias, side.on));
+  prepared.joins.push(JoinOn(flavour.kind, side.item, side.on));
   const mapped = DecodeFunction(
     RecordedLambda(stage, MAPPER_OPERAND),
     context,
