@@ -134,6 +134,7 @@ const SALES_DEFINITION: SchemaDefinition = {
       legacy: "string",
       narrow: "string",
       color: "string",
+      shade: "string",
     },
     indexes: {},
   },
