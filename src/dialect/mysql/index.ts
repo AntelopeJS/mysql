@@ -25,6 +25,7 @@ export function FamilyDialect(flavour: Flavour): Dialect {
   };
   return {
     id: flavour.id,
+    name: flavour.name,
     session: SessionOf(flavour),
     sql,
     errors,

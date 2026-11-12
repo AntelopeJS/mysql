@@ -37,6 +37,8 @@ export interface EscapedKeys {
 export interface Flavour {
   /** The engine's name, as `SELECT VERSION()` tells it and external mode's catalog reports it. */
   readonly id: "mysql" | "mariadb";
+  /** The engine's name as a person reads it, in the module's log. */
+  readonly name: "MySQL" | "MariaDB";
   /** The binary, NO PAD collation of every text column, literal and bound parameter. */
   readonly binaryCollation: string;
   /** The column type of a JSON document, in the binary collation. */
@@ -167,6 +169,7 @@ const UTC_OFFSET = "+00:00";
  */
 export const MYSQL: Flavour = {
   id: "mysql",
+  name: "MySQL",
   binaryCollation: "utf8mb4_0900_bin",
   jsonType: sql`JSON`,
   maxJsonNesting: 100,

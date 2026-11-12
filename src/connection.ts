@@ -30,9 +30,9 @@ const CONNECTION_ERROR = "error";
 
 const CONNECTION_FAILED = "a pooled MySQL connection failed";
 
-const CONNECTED = "connected to MySQL";
+const CONNECTED = "connected to";
 
-const DISCONNECTED = "disconnected from MySQL";
+const DISCONNECTED = "disconnected from";
 
 const STARTED_UNCONNECTED =
   "could not connect to MySQL; the instance starts without a connection and refuses every call until the project reloads";
@@ -232,8 +232,9 @@ export async function Connect(options?: Options) {
     flags: [...MODULE_POOL_OPTIONS.flags],
   });
   created.on("connection", GuardConnection);
+  let engine: Dialect;
   try {
-    dialect = await Verify(created, resolved.dialect);
+    engine = await Verify(created, resolved.dialect);
   } catch (err) {
     await created.end();
     if (err instanceof Error && (await ToleratesConnectFailure())) {
@@ -245,8 +246,9 @@ export async function Connect(options?: Options) {
     throw err;
   }
   generation += 1;
+  dialect = engine;
   pool = created;
-  Logger.Info(CONNECTED);
+  Logger.Info(`${CONNECTED} ${engine.name}`);
 }
 
 /**
@@ -283,13 +285,14 @@ export async function SettleBeforeDisconnect(endPool: PoolTeardown) {
 
 async function EndPool() {
   const current = pool;
+  const engine = dialect;
   pool = undefined;
   dialect = undefined;
   connectFailure = undefined;
   ClearOptions();
   if (current) {
     await current.end();
-    Logger.Info(DISCONNECTED);
+    Logger.Info(`${DISCONNECTED} ${engine?.name}`);
   }
 }
 

@@ -17,6 +17,8 @@ import type { CaptureSyntax } from "./capture";
  */
 export interface Dialect {
   readonly id: string;
+  /** The engine's name as a person reads it, in the module's log. */
+  readonly name: string;
   readonly session: SessionSyntax;
   readonly sql: SqlSyntax;
   readonly errors: ErrorSyntax;
