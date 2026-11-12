@@ -20,13 +20,6 @@ interface RowKey {
 /** The rows one statement names by key: two bound values each, of the 65,535 a statement takes. */
 const KEYS_PER_STATEMENT = 1000;
 
-/**
- * How many times a write locks the rows its selection newly holds and reads the selection again.
- * A row another write moves into the selection after the last read is left out, as one committed
- * after the write would be.
- */
-const LOCK_ROUNDS = 3;
-
 const COMMA = sql`, `;
 
 /** The alias the reads here give the table or the selection, apart from every `t`-numbered one. */
@@ -112,16 +105,45 @@ function Chunks(keys: readonly RowKey[]): RowKey[][] {
 }
 
 /**
+ * Locks the rows the target's read selects, in key order, and answers their keys once this
+ * transaction holds every row its read selects.
+ *
+ * Each round reads the selection without locking any row and locks the rows of it that no earlier
+ * round named. A row another write moves into the selection meanwhile is in the next read, so the
+ * rounds end only at a read naming no row outside the held ones. The write then holds its whole
+ * selection, which no other write can change before it commits. Every round before that one names
+ * a key no earlier round named, and no lock is released before the commit, so the rounds number at
+ * most one more than the keys the table holds while the write runs.
+ */
+async function HeldSelection(
+  target: WriteTarget,
+  connection: PoolConnection,
+): Promise<RowKey[]> {
+  const named = new Set<string>();
+  let selected = await Selected(target, connection);
+  let fresh = selected;
+  while (fresh.length > 0) {
+    for (const chunk of Chunks(fresh)) {
+      await Read(Lock(target, chunk), connection);
+    }
+    for (const key of fresh) {
+      named.add(Spelled(key));
+    }
+    selected = await Selected(target, connection);
+    fresh = selected.filter((key) => !named.has(Spelled(key)));
+  }
+  return selected;
+}
+
+/**
  * Runs a write whose read nests the table's block, in the transaction `connection` holds, and
  * answers the rows it counted.
  *
  * That block locks every row it reads, in the order its sort or index reads them, the rows the
  * outer blocks then leave out included. Two writes that sort the table two ways would lock their
- * rows in two orders, and deadlock past every retry. So the write reads which rows its read selects
- * without locking any, and locks them in key order. It reads the selection again once it holds
- * them, since a row another write changed meanwhile may have left it, and locks any row that came
- * in. It then writes the rows it holds that its read still selects, read by key, skipping any row
- * another transaction holds, which none of them is, so it waits on no other write.
+ * rows in two orders, and deadlock past every retry. So the write first holds every row its read
+ * selects, locked in key order as {@link HeldSelection} does. It then writes them, read by key,
+ * skipping any row another transaction holds, which none of them is, so it waits on no other write.
  */
 export async function OrderedWrite(
   target: WriteTarget,
@@ -129,22 +151,7 @@ export async function OrderedWrite(
   context: DecodingContext,
   connection: PoolConnection,
 ): Promise<number> {
-  const locked = new Set<string>();
-  let selected = await Selected(target, connection);
-  for (let round = 0; round < LOCK_ROUNDS; round += 1) {
-    const fresh = selected.filter((key) => !locked.has(Spelled(key)));
-    if (fresh.length === 0) {
-      break;
-    }
-    for (const chunk of Chunks(fresh)) {
-      await Read(Lock(target, chunk), connection);
-    }
-    for (const key of fresh) {
-      locked.add(Spelled(key));
-    }
-    selected = await Selected(target, connection);
-  }
-  const held = selected.filter((key) => locked.has(Spelled(key)));
+  const held = await HeldSelection(target, connection);
   let written = 0;
   for (const chunk of Chunks(held)) {
     written += await Write(compile(Held(target, chunk, context)), connection);

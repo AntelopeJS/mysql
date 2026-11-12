@@ -22,6 +22,9 @@ const NESTED_ROWS = 200;
 /** The lowest `n` the nested deletes select, past every row the nested updates select. */
 const DELETED_FROM = 900;
 
+/** The rows each writer of a claim queue takes. */
+const CLAIMED = 5;
+
 /** Long enough for an update to reach the row lock it waits on. */
 const LOCK_REACHED_MS = 300;
 
@@ -233,5 +236,36 @@ describe("writes through a nested target over an indexed sort", function () {
       .filter((row) => row.key("g").eq(1))
       .count();
     expect(once).to.equal(NESTED_ROWS);
+  });
+
+  /**
+   * Every writer claims the five lowest unclaimed rows. Once it holds the five it first read,
+   * another writer has claimed them, and five more enter its selection, again and again while other
+   * writers claim them first. A write that stopped locking after a fixed number of rounds would
+   * write only the rows of its last selection it held, and answer fewer than five.
+   */
+  it("claims as many rows as a queue taken one writer at a time, through a nested target", async () => {
+    const outcomes = await Promise.allSettled(
+      Array.from({ length: WRITERS }, () =>
+        sorted()
+          .filter((row) => row.key("g").default(0).eq(0))
+          .orderBy("n")
+          .slice(0, CLAIMED)
+          .filter((row) => row.key("n").ge(0))
+          .update({ g: 1 })
+          .run(),
+      ),
+    );
+    expect(Failures(outcomes)).to.deep.equal([]);
+    const answers = outcomes.map((outcome) =>
+      outcome.status === "fulfilled" ? outcome.value : 0,
+    );
+    expect(answers).to.deep.equal(
+      Array.from({ length: WRITERS }, () => CLAIMED),
+    );
+    const claimed = await sorted()
+      .filter((row) => row.key("g").eq(1))
+      .count();
+    expect(claimed).to.equal(WRITERS * CLAIMED);
   });
 });
