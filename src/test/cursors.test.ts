@@ -31,7 +31,11 @@ type ItemsTable = ReturnType<ReturnType<Schema<Tables>["instance"]>["table"]>;
 
 const MEGABYTE = 1024 * 1024;
 const BATCH = 100;
-const IDLE_MS = 1500;
+/**
+ * The idle reclaim of the DDL tests, well past \`BLOCKED_MS\` and the wait for the \`ALTER\` to block:
+ * a cursor reclaimed while a test still holds it open would release its lock early.
+ */
+const IDLE_MS = 4000;
 const BLOCKED_MS = 1200;
 const COMPLETES_WITHIN_MS = 15_000;
 const SAMPLE_EVERY = 2000;
