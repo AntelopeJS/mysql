@@ -20,10 +20,10 @@ import {
   WithIndexesLock,
 } from "./locks";
 
-/** A running index phase: the session it builds on, once it holds the lock, and whether to stop. */
+/** A running index phase: the session it builds on while it holds the lock, and what stops it. */
 interface IndexBuild {
   session?: ConvergenceSession;
-  isStopping: boolean;
+  readonly stop: AbortController;
 }
 
 const INDEX_BUILD_STOPPED = new Error(
@@ -135,25 +135,29 @@ async function RunIndexPhase(
   plans: readonly TablePlan[],
   holdsUnique: () => void,
 ): Promise<void> {
-  const build: IndexBuild = { isStopping: false };
+  const build: IndexBuild = { stop: new AbortController() };
   builds.add(build);
-  const isStopping = () => build.isStopping;
+  const isStopping = () => build.stop.signal.aborted;
   try {
     const opened = async (session: ConvergenceSession) => {
-      build.session = session;
       if (await HoldsEveryUniqueIndex(session, plans)) {
         holdsUnique();
       }
     };
     const steps = await WithIndexesLock(
       SchemaKey(schemaId),
-      { opened, isStopping },
+      { opened, stop: build.stop.signal },
       async (session) => {
-        let total = 0;
-        for (const plan of plans) {
-          total += await ConvergeIndexes(session, plan, isStopping);
+        build.session = session;
+        try {
+          let total = 0;
+          for (const plan of plans) {
+            total += await ConvergeIndexes(session, plan, isStopping);
+          }
+          return total;
+        } finally {
+          build.session = undefined;
         }
-        return total;
       },
     );
     if (steps) {
@@ -162,7 +166,7 @@ async function RunIndexPhase(
       );
     }
   } catch (err) {
-    if (!build.isStopping) {
+    if (!isStopping()) {
       throw err;
     }
   } finally {
@@ -219,7 +223,7 @@ export function BuildIndexes(
 async function StopIndexBuilds(): Promise<void> {
   const running = [...builds];
   for (const build of running) {
-    build.isStopping = true;
+    build.stop.abort();
   }
   await Promise.allSettled(
     running.flatMap((build) =>
