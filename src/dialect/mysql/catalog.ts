@@ -58,7 +58,7 @@ export function CatalogOf(flavour: Flavour): CatalogSyntax {
     readTable: (table) =>
       sql`SELECT TABLE_TYPE AS kind, TABLE_COMMENT AS comment FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${param(table)}`,
     readColumns: (table) =>
-      sql`SELECT ${COLUMN}.COLUMN_NAME AS name, ${flavour.catalogType(COLUMN)} AS type, ${COLUMN}.EXTRA AS extra, ${COLUMN}.COLUMN_COMMENT AS comment FROM information_schema.COLUMNS AS ${COLUMN} WHERE ${COLUMN}.TABLE_SCHEMA = DATABASE() AND ${COLUMN}.TABLE_NAME = ${param(table)} ORDER BY ${COLUMN}.ORDINAL_POSITION`,
+      sql`SELECT ${COLUMN}.COLUMN_NAME AS name, ${flavour.catalogType(COLUMN, table)} AS type, ${COLUMN}.EXTRA AS extra, ${COLUMN}.COLUMN_COMMENT AS comment FROM information_schema.COLUMNS AS ${COLUMN} WHERE ${COLUMN}.TABLE_SCHEMA = DATABASE() AND ${COLUMN}.TABLE_NAME = ${param(table)} ORDER BY ${COLUMN}.ORDINAL_POSITION`,
     readIndexes: (table) =>
       sql`SELECT INDEX_NAME AS name, NON_UNIQUE AS non_unique, INDEX_COMMENT AS comment, COLUMN_NAME AS column_name FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${param(table)} AND INDEX_NAME <> 'PRIMARY' ORDER BY INDEX_NAME, SEQ_IN_INDEX`,
     readTriggers: (table) =>

@@ -64,6 +64,12 @@ const POLL_MS = 5;
 const POLL_ATTEMPTS = 2000;
 const BLOCKED_MS = 300;
 
+/**
+ * How long a write that does not wait for the index phase may take, its schema's convergence
+ * included. The phase stays held throughout, so a write that waited for it would never settle.
+ */
+const PROMPT_MS = 10_000;
+
 /** `rows` rows in the default instance, each with its own `sku` and `_extra.color`. */
 async function Seed(schemaId: string, rows: number): Promise<void> {
   await Run(
@@ -301,7 +307,7 @@ describe("the unique-index write gate", function () {
     const schema = new Schema<{ items: Item }>(schemaId, UNIQUE_PRICE_AND_SKU);
     const stored = Inserting(schema, { _id: "new", price: 1000 });
     const duplicate = Inserting(schema, { _id: "duplicate", price: 7 });
-    const isPrompt = await SettlesWithin(stored, BLOCKED_MS);
+    const isPrompt = await SettlesWithin(stored, PROMPT_MS);
     await ReleaseIndexPhase(elsewhere);
     expect(isPrompt, "the write does not wait for the other build").to.equal(
       true,

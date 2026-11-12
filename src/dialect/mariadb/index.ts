@@ -1,6 +1,15 @@
 import { type Flavour, type Held, FamilyDialect } from "../mysql";
 import type { CollectedRows } from "../sql-types";
-import { Bind, type Sql, ident, int, join, lit, sql } from "../../statement";
+import {
+  Bind,
+  type Sql,
+  ident,
+  int,
+  join,
+  lit,
+  param,
+  sql,
+} from "../../statement";
 import type { Row } from "../../connection";
 
 const BINARY_COLLATION = "utf8mb4_nopad_bin";
@@ -182,15 +191,19 @@ const DEFAULT_IS_EXPRESSION = sql`NOT (${DEFAULT_IS_NULL} OR ${DEFAULT_IS_QUOTED
  * Whether a catalog column holds JSON. MariaDB reports a JSON column as `longtext` with a
  * `json_valid` check, which is all that tells it from a text column.
  */
-function IsJsonColumn(column: Sql): Sql {
+function IsJsonColumn(column: Sql, table: string): Sql {
   const name = sql`${column}.COLUMN_NAME`;
   const check = sql`CONCAT('json_valid(\`', REPLACE(${name}, '\`', '\`\`'), '\`)')`;
-  return sql`EXISTS (SELECT 1 FROM information_schema.CHECK_CONSTRAINTS AS k WHERE k.CONSTRAINT_SCHEMA = ${column}.TABLE_SCHEMA AND k.TABLE_NAME = ${column}.TABLE_NAME AND k.CHECK_CLAUSE = ${check})`;
+  return sql`EXISTS (SELECT 1 FROM information_schema.CHECK_CONSTRAINTS AS k WHERE k.CONSTRAINT_SCHEMA = DATABASE() AND k.TABLE_NAME = ${param(table)} AND k.CHECK_CLAUSE = ${check})`;
 }
 
-/** A JSON column reads as the JSON type it was created with, collation included. */
-function CatalogType(column: Sql): Sql {
-  return sql`IF(${IsJsonColumn(column)}, CONCAT('json collate ', ${column}.COLLATION_NAME), ${column}.COLUMN_TYPE)`;
+/**
+ * A JSON column reads as the JSON type it was created with, collation included. The checks are
+ * read for the one table by name, which MariaDB opens alone, where a filter on the outer row's
+ * table would read the checks of every table in the database.
+ */
+function CatalogType(column: Sql, table: string): Sql {
+  return sql`IF(${IsJsonColumn(column, table)}, CONCAT('json collate ', ${column}.COLLATION_NAME), ${column}.COLUMN_TYPE)`;
 }
 
 const CREATE_TABLE = "Create Table";

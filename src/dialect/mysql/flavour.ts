@@ -87,8 +87,11 @@ export interface Flavour {
   readonly indexVisible: Sql;
   /** External mode's catalog member naming a relation's JSON columns, where its columns cannot tell. */
   readonly jsonColumns?: ExternalCatalogSyntax["jsonColumns"];
-  /** A catalog column's type as the catalog reads it, from `information_schema.COLUMNS` at `column`. */
-  catalogType(column: Sql): Sql;
+  /**
+   * A catalog column's type as the catalog reads it, from `information_schema.COLUMNS` at `column`,
+   * for a column of `table` in the connection's database.
+   */
+  catalogType(column: Sql, table: string): Sql;
 }
 
 /** The digits of the largest row number, to which an ordinal is padded so its text sorts as it does. */
