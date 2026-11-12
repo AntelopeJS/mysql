@@ -83,12 +83,6 @@ export interface Relation {
   absent: AbsentValue;
   aggregated: boolean;
   crossInstance: boolean;
-  /**
-   * Whether this block locks the rows it reads exclusively, as the read a write targets does. Only
-   * the block that reads the table carries it: a wrap starts a fresh block over a derived table,
-   * which has no rows to lock.
-   */
-  locked: boolean;
   source: RowSource;
   projection?: Compiled;
   origin?: TableOrigin;
@@ -113,7 +107,6 @@ function NewRelation(seed: RelationSeed): Relation {
     absent: null,
     aggregated: false,
     crossInstance: false,
-    locked: false,
   };
 }
 

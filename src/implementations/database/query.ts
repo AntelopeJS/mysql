@@ -1,3 +1,4 @@
+import assert from "node:assert";
 import type { QueryStage } from "@antelopejs/interface-database/common";
 import type { AtomicMutationOutcome } from "@antelopejs/interface-database";
 import { ValidateAtomicMutationTable } from "@antelopejs/interface-database/atomic";
@@ -23,6 +24,7 @@ import {
 } from "./writes-shared";
 import { CompileWrite, SplitWrite, type WriteSplit } from "./writes";
 import { ATOMIC_MUTATION, ExecuteAtomicWrite } from "./writes-atomic";
+import { OrderedWrite } from "./writes-ordered";
 import { InTransaction } from "./transaction";
 import { ID_COLUMN, OptionsOf } from "./utils";
 import { CloseOneCursor, type CursorRequest, ReadCursorRow } from "./cursors";
@@ -196,9 +198,32 @@ async function Execute(
 }
 
 /**
+ * Runs a write whose read nests the table's block as {@link OrderedWrite} does, compiling it again
+ * over the rows it holds, as the one counted statement `update`, `replace` and `delete` compile to.
+ */
+function ExecuteNested(
+  target: WriteTarget,
+  stage: QueryStage,
+  context: DecodingContext,
+): Promise<number> {
+  const compile = (held: WriteTarget) => {
+    const statement = CompileWrite(held, stage, context);
+    assert(
+      statement.kind === "count",
+      `The '${stage.stage}' stage writes through a nested read as one counted statement`,
+    );
+    return statement.statement;
+  };
+  return InTransaction((connection) =>
+    OrderedWrite(target, compile, context, connection),
+  );
+}
+
+/**
  * Executes a terminal write and answers what its stage promised: `insert` its keys in input order,
  * an atomic mutation its outcome, everything else the rows it matched. A failure the server reports
- * against a unique key is answered as the interface's error for it.
+ * against a unique key is answered as the interface's error for it. The write is compiled before
+ * anything runs, so a stage that refuses its arguments refuses them before any statement.
  */
 async function RunWrite(
   target: WriteTarget,
@@ -211,7 +236,10 @@ async function RunWrite(
   const statement = CompileWrite(target, stage, context);
   await WaitForUniqueIndexes(target.origin.schemaId);
   try {
-    const answer = await Execute(statement, target);
+    const answer =
+      target.reach === "nested"
+        ? await ExecuteNested(target, stage, context)
+        : await Execute(statement, target);
     NudgeChanges();
     return answer;
   } catch (err) {
@@ -243,25 +271,8 @@ function CompileQuery(
   }
   const root = BuildRoot(stages, context);
   const split = SplitWrite(root.rest);
-  const relation = ApplyStages(
-    TargetRead(root, split),
-    split.pipeline,
-    context,
-  );
+  const relation = ApplyStages(root.relation, split.pipeline, context);
   return { context, root, split, relation };
-}
-
-/**
- * The table read a query starts from. An owned table's write locks each row exclusively as its read
- * reaches it, in the block that reads the table however deep a stage nests that block: a read
- * nested in a write statement otherwise takes shared locks, and two writers that each hold one and
- * wait to upgrade it deadlock however often they run again.
- */
-function TargetRead(root: RootSelection, split: WriteSplit): Relation {
-  const owned = !RequireOrigin(root.relation).model.external;
-  return split.write !== undefined && owned
-    ? { ...root.relation, locked: true }
-    : root.relation;
 }
 
 /** Awaits every schema the stage tree reads, then compiles it in one synchronous pass. */

@@ -20,6 +20,19 @@ import {
 } from "./member";
 
 /**
+ * How a write's read reaches the rows it changes, which decides the order it locks them in.
+ *
+ * - `flat`: the read is one block over the table, which locks each row as it reaches it.
+ * - `nested`: a stage nested the table's block in another, such as a `filter` after a `slice`. Its
+ *   block reads in whatever order its own sort or index takes, and locks rows the outer blocks then
+ *   leave out, so two writers sorting it two ways lock in two orders. Such a write locks the rows
+ *   it selects in key order first.
+ * - `held`: the read names rows by key that this transaction already holds, and skips any row
+ *   another holds, which cannot be one of them.
+ */
+type WriteReach = "flat" | "nested" | "held";
+
+/**
  * The rows a write changes, and everything it may know about them.
  *
  * `relation` is the read pipeline the write targets, joined as a derived table by the stages that
@@ -30,9 +43,13 @@ export interface WriteTarget {
   relation: Relation;
   origin: TableOrigin;
   instance: InstanceScope;
+  reach: WriteReach;
 }
 
-/** The rows a query's terminal write targets, assembled the one way. */
+/**
+ * The rows a query's terminal write targets, assembled the one way. A fold that nested the root's
+ * block answers another relation than the root's, since only a wrap makes a new one.
+ */
 export function WriteTargetOf(
   root: RootSelection,
   relation: Relation,
@@ -41,6 +58,7 @@ export function WriteTargetOf(
     relation,
     origin: RequireOrigin(relation),
     instance: root.instance,
+    reach: relation === root.relation ? "flat" : "nested",
   };
 }
 
