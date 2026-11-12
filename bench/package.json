@@ -1,0 +1,11 @@
+{
+  "name": "@antelopejs/mysql-nested-bench",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Nested-field benchmark of @antelopejs/mysql against @antelopejs/postgres, run by `pnpm run bench` at the repository root.",
+  "license": "Apache-2.0",
+  "main": "dist/index.js",
+  "antelopeJs": {
+    "test": "src/antelope.bench.ts"
+  }
+}
