@@ -128,9 +128,15 @@ export function ParseRow(cells: Iterable<readonly [string, unknown]>): Row {
   return parsed;
 }
 
-/** A statement as it runs under the connected dialect's read timeout. */
+/**
+ * A statement as it runs under the connected dialect's read timeout. Without `statementTimeoutMs`
+ * no statement is bounded, and every statement goes as it was written.
+ */
 export function Uncapped(statement: Sql): Sql {
-  return dialect ? dialect.session.uncapped(statement) : statement;
+  if (!dialect || !GetOptions().statementTimeoutMs) {
+    return statement;
+  }
+  return dialect.session.uncapped(statement);
 }
 
 async function ReadOn(
