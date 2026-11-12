@@ -101,9 +101,11 @@ export interface CaptureSyntax {
    */
   lockClock(tables: ChangeLogTables, wait: boolean): Sql;
   /**
-   * Locks up to `limit` rows still without a `seq`, in the order they were logged, and answers
-   * their `id`s. A row whose transaction is still open is skipped, so only committed rows are
-   * numbered.
+   * Answers the `id`s of up to `limit` rows still without a `seq`, in the order they were logged,
+   * read as of one moment: the rows whose transactions had committed when the read began, without
+   * waiting on any other transaction. A read that judged each row as it reached it could pass a
+   * row whose transaction was still open, then take a later write of the same document, which
+   * committed after that row's, and the two would be numbered out of order.
    */
   unsequenced(tables: ChangeLogTables, limit: number): Sql;
   /** Numbers the rows `ids`, in that order, from `first`, and stamps them with the time. */

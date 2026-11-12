@@ -90,17 +90,19 @@ async function Numbered(
 }
 
 /**
- * One sequencer pass: lock the clock row, lock the rows still without a number whose transactions
- * have committed, number them from the clock in the order they were logged, and move the clock past
- * them, in one transaction.
+ * One sequencer pass: lock the clock row, read the rows still without a number that had committed
+ * when the read began, number them from the clock in the order they were logged, and move the clock
+ * past them, in one transaction.
  *
- * A row of a transaction still open is skipped and numbered by a later pass once it commits, so a
- * `seq` is only ever given to a committed row, and never below one already given. A row logged
- * after another row's transaction committed gets the larger `seq`, so two writes of one row cannot
- * swap: the second waits on the first's row lock. Two transactions that both committed before the
- * pass are numbered in the order their rows were logged, not the order they committed, which no
- * statement can see. Answers how many rows it numbered, or `undefined` when another session's pass
- * held the clock and `wait` is `skip`.
+ * A row of a transaction still open when the read began is left to a later pass, which numbers it
+ * once it has committed, so a `seq` is only ever given to a committed row, and never below one
+ * already given. A row logged after another row's transaction committed gets the larger `seq`: the
+ * read that finds it began after that transaction committed, so it finds that row too, earlier in
+ * log order, unless a pass numbered it before. Two writes of one row are such a pair, since the
+ * second waits on the first's row lock. Two transactions that both committed before the read are
+ * numbered in the order their rows were logged, not the order they committed, which no statement
+ * can see. Answers how many rows it numbered, or `undefined` when another session's pass held the
+ * clock and `wait` is `skip`.
  */
 export function SequenceOnce(
   session: ConvergenceSession,

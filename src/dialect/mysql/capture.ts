@@ -259,7 +259,7 @@ export const capture: CaptureSyntax = {
   lockClock: (tables, wait) =>
     sql`SELECT ${NEXT_SEQ} AS next_seq, ${EPOCH} AS epoch FROM ${ident(tables.clock)} WHERE ${ID} = ${CLOCK_ROW} FOR UPDATE${wait ? sql`` : sql` SKIP LOCKED`}`,
   unsequenced: (tables, limit) =>
-    sql`SELECT ${ID} AS id FROM ${ident(tables.log)} WHERE ${SEQ} IS NULL ORDER BY ${ID} LIMIT ${int(limit)} FOR UPDATE SKIP LOCKED`,
+    sql`SELECT ${ID} AS id FROM ${ident(tables.log)} WHERE ${SEQ} IS NULL ORDER BY ${ID} LIMIT ${int(limit)}`,
   stamp: (tables, ids, first) =>
     sql`UPDATE ${ident(tables.log)} AS c JOIN JSON_TABLE(${param(JSON.stringify(ids))}, '$[*]' COLUMNS (n FOR ORDINALITY, id BIGINT UNSIGNED PATH '$')) AS v ON c.${ID} = v.id SET c.${SEQ} = ${Seq(first)} + v.n - 1, c.${SEQUENCED_AT} = UTC_TIMESTAMP(6)`,
   advance: (tables, count) =>
