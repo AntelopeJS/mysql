@@ -166,6 +166,7 @@ const WRITE_TABLES: readonly string[] = [
     padded VARCHAR(20) COLLATE utf8mb4_bin,
     legacy VARCHAR(20) CHARACTER SET latin1,
     narrow VARCHAR(20) CHARACTER SET utf8mb3,
+    color ENUM('Red', 'Green'),
     INDEX w_names_legacy (legacy),
     INDEX w_names_narrow (narrow)
   )`,

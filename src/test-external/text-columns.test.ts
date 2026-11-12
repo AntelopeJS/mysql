@@ -21,7 +21,7 @@ const CJK = "日本";
 async function Reset(): Promise<void> {
   await NativeWrite(sql`DELETE FROM ${Rows("w_names")}`);
   await NativeWrite(
-    sql`INSERT INTO ${Rows("w_names")} VALUES (1, 'Abc', 'b  ', 'b  ', 'abc'), (2, 'cafe', NULL, NULL, NULL)`,
+    sql`INSERT INTO ${Rows("w_names")} VALUES (1, 'Abc', 'b  ', 'b  ', 'abc', 'Red'), (2, 'cafe', NULL, NULL, NULL, NULL)`,
   );
   await NativeWrite(sql`DELETE FROM ${Rows("w_codes")}`);
   await NativeWrite(
@@ -84,6 +84,39 @@ describe("a write to a text column compared in a collation that folds case, acce
         .update({ name: "Abc", padded: "b  " })
         .run(),
     ).to.equal(0);
+  });
+
+  it("answers 0 for an ENUM write of the stored label, in its own case or in another, which stores that label", async () => {
+    const changed = [];
+    for (const color of ["Red", "red"]) {
+      changed.push(await Table("w_names").get("1").update({ color }).run());
+    }
+    const stored = (await Table("w_names").get("1").run())?.color;
+    expect({ changed, stored }).to.deep.equal({
+      changed: [0, 0],
+      stored: "Red",
+    });
+  });
+
+  it("answers 1 for an ENUM write of another label", async () => {
+    const changed = await Table("w_names")
+      .get("1")
+      .update({ color: "Green" })
+      .run();
+    const stored = (await Table("w_names").get("1").run())?.color;
+    expect({ changed, stored }).to.deep.equal({ changed: 1, stored: "Green" });
+  });
+
+  it("refuses an ENUM write that names no label, a label's position included", async () => {
+    for (const color of ["Blue", "1"]) {
+      const refused = await Refusal(() =>
+        Table("w_names").get("1").update({ color }).run(),
+      );
+      expect(refused, color).to.deep.equal({
+        kind: "invalid",
+        fields: ["color"],
+      });
+    }
   });
 });
 
