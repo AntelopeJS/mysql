@@ -1,8 +1,8 @@
 import { expect } from "chai";
 import { Schema } from "@antelopejs/interface-database/schema";
 
-import { ident, sql } from "../statement";
-import { AcquireConnection } from "../connection";
+import { ident, int, sql } from "../statement";
+import { AcquireConnection, Read } from "../connection";
 import { WaitForSchemaReady } from "../implementations/database/schema";
 import { Numbers, PhysicalTable, Run } from "./tables";
 import { Pause } from "./watch";
@@ -16,6 +16,9 @@ interface Item {
 const SCHEMA_ID = "write-contention";
 const WRITERS = 20;
 
+/** The rows a table holds once seeded, unless a test asks for more. */
+const SEEDED = 1000;
+
 /** The rows the nested target selects out of the thousand the table holds. */
 const NESTED_ROWS = 200;
 
@@ -24,6 +27,9 @@ const DELETED_FROM = 900;
 
 /** The rows each writer of a claim queue takes. */
 const CLAIMED = 5;
+
+/** More rows than one statement named by key at a time before a write named them all in one. */
+const PAST_ONE_STATEMENT = 1500;
 
 /** Long enough for an update to reach the row lock it waits on. */
 const LOCK_REACHED_MS = 300;
@@ -49,16 +55,38 @@ function Failures(outcomes: PromiseSettledResult<unknown>[]): string[] {
 function SortedBy(i: number) {
   return sorted()
     .orderBy("n", i % 2 === 0 ? "asc" : "desc")
-    .slice(0, 1000);
+    .slice(0, SEEDED);
 }
 
-/** Fills `name` with a thousand rows, `n` from 0 to 999, and no `g`. */
-async function Seeded(name: string): Promise<void> {
+/** Fills `name` with `rows` rows, `n` from 0 up, and no `g`. */
+async function Seeded(name: string, rows = SEEDED): Promise<void> {
   await WaitForSchemaReady(SCHEMA_ID);
   await Run(sql`DELETE FROM ${table(name)}`);
   await Run(
-    sql`INSERT INTO ${table(name)} (_id, _instance, n) SELECT LPAD(n, 4, '0'), '', n FROM ${Numbers(3)} AS numbers`,
+    sql`INSERT INTO ${table(name)} (_id, _instance, n) SELECT LPAD(n, 4, '0'), '', n FROM ${Numbers(4)} AS numbers WHERE n < ${int(rows)}`,
   );
+}
+
+/** A write's answer and the rows per `g` it left, or the errno the server refused it with. */
+type WriteOutcome =
+  | { readonly answer: number; readonly groups: readonly string[][] }
+  | { readonly refused: string };
+
+async function Outcome(write: () => Promise<number>): Promise<WriteOutcome> {
+  try {
+    const answer = await write();
+    const rows = await Read(
+      sql`SELECT g, COUNT(*) AS c FROM ${table()} GROUP BY g ORDER BY g`,
+    );
+    const groups = rows.map((row) => [
+      String(row.get("g")),
+      String(row.get("c")),
+    ]);
+    return { answer, groups };
+  } catch (err) {
+    const errno = err instanceof Error && "errno" in err ? err.errno : err;
+    return { refused: String(errno) };
+  }
 }
 
 describe("writes that contend for rows", function () {
@@ -120,7 +148,7 @@ describe("writes that contend for rows", function () {
       Array.from({ length: WRITERS }, (_, i) =>
         items()
           .orderBy("n", i % 2 === 0 ? "asc" : "desc")
-          .slice(0, 1000)
+          .slice(0, SEEDED)
           .filter((row) => row.key("n").lt(NESTED_ROWS))
           .update((row) => ({ g: row.key("g").default(0).add(1) }))
           .run(),
@@ -267,5 +295,39 @@ describe("writes through a nested target over an indexed sort", function () {
       .filter((row) => row.key("g").eq(1))
       .count();
     expect(claimed).to.equal(WRITERS * CLAIMED);
+  });
+});
+
+describe("a write through a nested target of many rows", function () {
+  this.timeout(60_000);
+
+  beforeEach(() => Seeded("items", PAST_ONE_STATEMENT));
+
+  /**
+   * Each row is set to how many rows have no `g` yet, which is every row before the write. A write
+   * that changed the rows in several statements would give the rows of each later statement the
+   * count left after the earlier ones. MySQL refuses a write that reads the table it changes, and
+   * must refuse it through either target.
+   */
+  it("writes what the same write through a flat target writes", async () => {
+    const unset = () =>
+      items()
+        .filter((row) => row.key("g").default(0).eq(0))
+        .count();
+    const flat = await Outcome(() =>
+      items()
+        .update(() => ({ g: unset() }))
+        .run(),
+    );
+    await Seeded("items", PAST_ONE_STATEMENT);
+    const nested = await Outcome(() =>
+      items()
+        .orderBy("n")
+        .slice(0, 2 * PAST_ONE_STATEMENT)
+        .filter((row) => row.key("n").ge(0))
+        .update(() => ({ g: unset() }))
+        .run(),
+    );
+    expect(nested).to.deep.equal(flat);
   });
 });

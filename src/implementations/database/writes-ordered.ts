@@ -2,13 +2,19 @@ import assert from "node:assert";
 import type { PoolConnection } from "mysql2/promise";
 
 import { Read, type Row, Write } from "../../connection";
+import type { ListedColumn } from "../../dialect/sql-types";
 import { type Sql, ident, join, param, sql } from "../../statement";
 import type { DecodingContext } from "./context";
 import { IsString } from "./guards";
 import { TableRelation } from "./relation";
-import { Render } from "./render";
+import { JoinOn, Render } from "./render";
 import { QualifiedColumn } from "./sql";
-import { ID_COLUMN, INSTANCE_COLUMN } from "./utils";
+import {
+  ID_COLUMN,
+  INSTANCE_COLUMN,
+  MAX_INSTANCE_ID_CHARS,
+  MAX_KEY_CHARS,
+} from "./utils";
 import type { WriteTarget } from "./writes-shared";
 
 /** One row's primary key, in the order the key declares its columns. */
@@ -17,16 +23,26 @@ interface RowKey {
   readonly id: string;
 }
 
-/** The rows one statement names by key: two bound values each, of the 65,535 a statement takes. */
-const KEYS_PER_STATEMENT = 1000;
+/**
+ * The rows one locking read names by key: two bound values each, of the 65,535 a statement takes.
+ * The reads run in key order, so the rows are locked in key order all the same.
+ */
+const KEYS_PER_LOCK = 1000;
 
 const COMMA = sql`, `;
+const AND = sql` AND `;
 
 /** The alias the reads here give the table or the selection, apart from every `t`-numbered one. */
 const KEY_ALIAS = "k";
 
 const INSTANCE_KEY = "i";
 const ID_KEY = "d";
+
+/** The key columns a held write lists its rows by, each as wide as the table's own. */
+const KEY_COLUMNS: readonly ListedColumn[] = [
+  { name: INSTANCE_KEY, chars: MAX_INSTANCE_ID_CHARS },
+  { name: ID_KEY, chars: MAX_KEY_CHARS },
+];
 
 function KeyText(row: Row, name: string): string {
   const value = row.get(name);
@@ -59,14 +75,6 @@ async function Selected(
   }));
 }
 
-/** Whether the row of the table at `alias` is one of `keys`. */
-function Named(alias: string, keys: readonly RowKey[]): Sql {
-  const pairs = keys.map(
-    (key) => sql`(${param(key.instance)}, ${param(key.id)})`,
-  );
-  return sql`(${QualifiedColumn(alias, INSTANCE_COLUMN)}, ${QualifiedColumn(alias, ID_COLUMN)}) IN (${join(pairs, COMMA)})`;
-}
-
 /**
  * Locks the rows `keys` names. The table is read through its primary key, so every write takes its
  * locks in key order: given many keys, the optimizer would otherwise read through whichever index
@@ -75,31 +83,16 @@ function Named(alias: string, keys: readonly RowKey[]): Sql {
 function Lock(target: WriteTarget, keys: readonly RowKey[]): Sql {
   const instance = QualifiedColumn(KEY_ALIAS, INSTANCE_COLUMN);
   const id = QualifiedColumn(KEY_ALIAS, ID_COLUMN);
-  return sql`SELECT ${id} FROM ${ident(target.origin.plan.table)} AS ${ident(KEY_ALIAS)} FORCE INDEX (PRIMARY) WHERE ${Named(KEY_ALIAS, keys)} ORDER BY ${instance}, ${id} FOR UPDATE`;
-}
-
-/** The target narrowed to the rows `keys` names, which this transaction holds. */
-function Held(
-  target: WriteTarget,
-  keys: readonly RowKey[],
-  context: DecodingContext,
-): WriteTarget {
-  const alias = context.nextAlias();
-  const relation = TableRelation(
-    target.relation.dialect,
-    ident(target.origin.plan.table),
-    alias,
-    target.origin,
+  const pairs = keys.map(
+    (key) => sql`(${param(key.instance)}, ${param(key.id)})`,
   );
-  relation.where.push(Named(alias, keys));
-  relation.single = target.relation.single;
-  return { ...target, relation, reach: "held" };
+  return sql`SELECT ${id} FROM ${ident(target.origin.plan.table)} AS ${ident(KEY_ALIAS)} FORCE INDEX (PRIMARY) WHERE (${instance}, ${id}) IN (${join(pairs, COMMA)}) ORDER BY ${instance}, ${id} FOR UPDATE`;
 }
 
 function Chunks(keys: readonly RowKey[]): RowKey[][] {
   const chunks: RowKey[][] = [];
-  for (let start = 0; start < keys.length; start += KEYS_PER_STATEMENT) {
-    chunks.push(keys.slice(start, start + KEYS_PER_STATEMENT));
+  for (let start = 0; start < keys.length; start += KEYS_PER_LOCK) {
+    chunks.push(keys.slice(start, start + KEYS_PER_LOCK));
   }
   return chunks;
 }
@@ -136,14 +129,51 @@ async function HeldSelection(
 }
 
 /**
+ * The target narrowed to the rows `keys` names, which this transaction holds. The keys are joined as
+ * one bound list, so one statement writes them however many there are.
+ */
+function Held(
+  target: WriteTarget,
+  keys: readonly RowKey[],
+  context: DecodingContext,
+): WriteTarget {
+  const dialect = target.relation.dialect;
+  const alias = context.nextAlias();
+  const listed = context.nextAlias();
+  const relation = TableRelation(
+    dialect,
+    ident(target.origin.plan.table),
+    alias,
+    target.origin,
+  );
+  const on = [
+    sql`${QualifiedColumn(alias, INSTANCE_COLUMN)} = ${QualifiedColumn(listed, INSTANCE_KEY)}`,
+    sql`${QualifiedColumn(alias, ID_COLUMN)} = ${QualifiedColumn(listed, ID_KEY)}`,
+  ];
+  const rows = keys.map((key) => [key.instance, key.id]);
+  relation.joins.push(
+    JoinOn(
+      "JOIN",
+      dialect.sql.rows.listed(rows, KEY_COLUMNS),
+      listed,
+      join(on, AND),
+    ),
+  );
+  relation.single = target.relation.single;
+  return { ...target, relation, reach: "held" };
+}
+
+/**
  * Runs a write whose read nests the table's block, in the transaction `connection` holds, and
  * answers the rows it counted.
  *
  * That block locks every row it reads, in the order its sort or index reads them, the rows the
  * outer blocks then leave out included. Two writes that sort the table two ways would lock their
  * rows in two orders, and deadlock past every retry. So the write first holds every row its read
- * selects, locked in key order as {@link HeldSelection} does. It then writes them, read by key,
- * skipping any row another transaction holds, which none of them is, so it waits on no other write.
+ * selects, locked in key order as {@link HeldSelection} does. It then writes them in one statement
+ * that reads them by key, skipping any row another transaction holds, which none of them is, so it
+ * waits on no other write. A value that statement computes from other rows reads them as they were
+ * before it, as the same write through one block would.
  */
 export async function OrderedWrite(
   target: WriteTarget,
@@ -152,9 +182,8 @@ export async function OrderedWrite(
   connection: PoolConnection,
 ): Promise<number> {
   const held = await HeldSelection(target, connection);
-  let written = 0;
-  for (const chunk of Chunks(held)) {
-    written += await Write(compile(Held(target, chunk, context)), connection);
+  if (held.length === 0) {
+    return 0;
   }
-  return written;
+  return Write(compile(Held(target, held, context)), connection);
 }

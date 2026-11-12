@@ -310,8 +310,23 @@ export interface RowSyntax {
    * selecting the value would, which MariaDB cannot correlate.
    */
   hold(value: Sql, alias: string): { readonly from: Sql; readonly value: Sql };
+  /**
+   * A derived table, without its alias, of `rows` bound as one value: each of `columns` reads the
+   * text at its position in a row, in the binary collation every table compares in. It names any
+   * number of rows, where a value bound per row stops at the most a statement binds.
+   */
+  listed(
+    rows: readonly (readonly string[])[],
+    columns: readonly ListedColumn[],
+  ): Sql;
   /** Whether an `INSERT` can answer values of the row it wrote, by a `RETURNING` clause. */
   readonly returning: boolean;
+}
+
+/** A text column of {@link RowSyntax.listed}, at most `chars` characters wide. */
+export interface ListedColumn {
+  readonly name: string;
+  readonly chars: number;
 }
 
 /** The expression members the compiler and the writes reach. */

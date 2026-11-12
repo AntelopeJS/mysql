@@ -126,6 +126,7 @@ const MASKED_ROWS: RowSyntax = {
   lookup: (subselect) => ({ join: Marked(subselect), value: Marked() }),
   joinScope: (column, value) => Marked(column, value),
   hold: (value) => ({ from: Marked(value), value: Marked() }),
+  listed: () => Marked(),
   returning: false,
 };
 

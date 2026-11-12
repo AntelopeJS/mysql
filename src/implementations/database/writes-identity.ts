@@ -68,20 +68,29 @@ interface Targeted {
  * The read locks the rows it selects exclusively as it reads them. Without the lock, the server
  * reads them shared, or from a snapshot: two writes of one row then each wait to upgrade the other's
  * shared lock, which deadlocks however often it is run again, or each compute from the same old
- * value and lose all but one change, answering 0 for the rest. A read of rows the transaction
- * already holds skips the rows other transactions hold, so a scan past its keys waits on no one.
+ * value and lose all but one change, answering 0 for the rest.
+ *
+ * A read of rows the transaction already holds skips the rows other transactions hold, so a scan
+ * past its keys waits on no one. The table is then read after it, by key: MariaDB otherwise reads a
+ * small table whole to join it to the read, and waits on the rows other transactions hold.
  */
 function TargetedRows(target: WriteTarget, alias: string): Targeted {
-  const on = IDENTITY.map(
-    (column) =>
-      sql`${QualifiedColumn(WRITE_ALIAS, column)} = ${QualifiedColumn(alias, column)}`,
+  const on = join(
+    IDENTITY.map(
+      (column) =>
+        sql`${QualifiedColumn(WRITE_ALIAS, column)} = ${QualifiedColumn(alias, column)}`,
+    ),
+    sql` AND `,
   );
-  const lock =
-    target.reach === "held" ? sql`FOR UPDATE SKIP LOCKED` : sql`FOR UPDATE`;
+  const read = Render(target.relation);
+  const from =
+    target.reach === "held"
+      ? sql`(${read} FOR UPDATE SKIP LOCKED) AS ${ident(alias)} STRAIGHT_JOIN ${WriteTable(target.origin)} FORCE INDEX (PRIMARY) ON ${on}`
+      : sql`${WriteTable(target.origin)} JOIN (${read} FOR UPDATE) AS ${ident(alias)} ON ${on}`;
   return {
     alias,
     hint: target.relation.dialect.sql.rows.materialize(alias),
-    from: sql`${WriteTable(target.origin)} JOIN (${Render(target.relation)} ${lock}) AS ${ident(alias)} ON ${join(on, sql` AND `)}`,
+    from,
   };
 }
 
