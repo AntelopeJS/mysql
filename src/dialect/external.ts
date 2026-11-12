@@ -41,6 +41,9 @@ export interface CatalogColumn {
   readonly comment: string | null;
   /** An enum's labels, in their sort order. */
   readonly enumLabels: readonly string[] | null;
+  /** A text column's character set and collation, which a value compared with it or written to it is converted into. */
+  readonly charset: string | null;
+  readonly collation: string | null;
 }
 
 /** An index of a relation; `columns` is empty when any part is an expression. */

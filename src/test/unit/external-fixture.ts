@@ -18,6 +18,8 @@ export function Column(
     autoIncrement: false,
     comment: null,
     enumLabels: null,
+    charset: null,
+    collation: null,
     ...extra,
   };
 }

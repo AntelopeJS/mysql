@@ -68,9 +68,9 @@ The module reads each column as the type that its field declares, the same way w
 
 - `DATETIME` reads as UTC, and `DATE` as midnight UTC.
 - A `BIGINT` or `DECIMAL` declared `string` reads as its exact text.
-- Comparisons, `get`, `getAll`, `lookup` and `orderBy` compare the column in its own type, so the database's indexes serve them. A value that is not valid for the column, such as an unknown `ENUM` label or a fraction for an integer, matches nothing. It does not fail the query.
+- Comparisons, `get`, `getAll`, `lookup` and `orderBy` compare the column in its own type, so the database's indexes serve them. A value that is not valid for the column, such as an unknown `ENUM` label, a fraction for an integer, or text its character set cannot hold, such as an emoji against a `utf8mb3` or `latin1` column, matches nothing. It does not fail the query.
 - Sorting follows the column's own order. An `ENUM` sorts in its declared order but compares by its label, and a `BIGINT` declared `string` sorts numerically.
-- A column with a case-insensitive collation, such as one ending in `_ci`, compares in that collation, as the column does.
+- A text column compares in its own collation, as the column does, and so does each text part of a composite `_id`. One ending in `_ci` ignores case.
 - MySQL has no `uuid` type. A `CHAR(36)` key accepts any 36 characters.
 
 ## `_id`
@@ -78,7 +78,7 @@ The module reads each column as the type that its field declares, the same way w
 Every row of a table with a key answers `_id`, the key as a string, beside the key columns under their own names. Declare it as `@Field("string") declare _id: string`.
 
 - With a single-column primary key, `_id` is its value: `"42"`. A date or a time key reads as the server spells it in UTC, such as `"2026-01-01 10:00:00.123456"`.
-- With a composite primary key, `_id` is its parts as a JSON array of strings: `["42", "3"]`. Only the `\"` and `\\` escapes are understood in it.
+- With a composite primary key, `_id` is its parts as a JSON array of strings: `["42", "3"]`. It is read as JSON, so every escape JSON defines is understood in it, such as `\n` for a part that holds a newline. An `_id` that is not such an array names no row.
 - With no primary key but a unique index over `NOT NULL` columns, that index is the key. If several qualify, the one with the fewest columns wins, then the first by name. A prefix index and an invisible index never count. A `FLOAT`, `DOUBLE`, `SET` or `JSON` column is never part of a key.
 
 The module reads a relation with no key at all without `_id`: a table without a primary key or such an index, and every view. Queries, counts and aggregations work. `get`, `getAll` without an index, and `_id` itself are refused, and declaring `_id` on such a relation fails registration.
