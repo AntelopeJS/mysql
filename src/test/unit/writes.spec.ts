@@ -15,7 +15,7 @@ const SELECTED_ROW =
 
 /** The derived read an identity write joins, at the alias the counter hands it after the root's. */
 function Joined(read: string): string {
-  return `UPDATE /*+ NO_MERGE(\`t1\`) */ \`directory__people\` AS \`w0\` JOIN (${read}) AS \`t1\` ON \`w0\`.\`_instance\` = \`t1\`.\`_instance\` AND \`w0\`.\`_id\` = \`t1\`.\`_id\``;
+  return `UPDATE /*+ NO_MERGE(\`t1\`) */ \`directory__people\` AS \`w0\` JOIN (${read} FOR UPDATE) AS \`t1\` ON \`w0\`.\`_instance\` = \`t1\`.\`_instance\` AND \`w0\`.\`_id\` = \`t1\`.\`_id\``;
 }
 
 describe("An insert", () => {
@@ -219,7 +219,7 @@ describe("A delete", () => {
       Written(Root().orderBy("age").slice(0, 1).delete()),
     );
     expect(bound).to.deep.equal({
-      sql: "DELETE /*+ NO_MERGE(`t1`) */ `w0` FROM `directory__people` AS `w0` JOIN (SELECT `t0`.`_id`, `t0`.`_instance`, `t0`.`name`, `t0`.`age`, `t0`.`isActive`, `t0`.`joined`, `t0`.`meta`, `t0`.`_extra` FROM `directory__people` AS `t0` WHERE (`t0`.`_instance` = ?) ORDER BY `t0`.`age` ASC LIMIT ? OFFSET ?) AS `t1` ON `w0`.`_instance` = `t1`.`_instance` AND `w0`.`_id` = `t1`.`_id`",
+      sql: "DELETE /*+ NO_MERGE(`t1`) */ `w0` FROM `directory__people` AS `w0` JOIN (SELECT `t0`.`_id`, `t0`.`_instance`, `t0`.`name`, `t0`.`age`, `t0`.`isActive`, `t0`.`joined`, `t0`.`meta`, `t0`.`_extra` FROM `directory__people` AS `t0` WHERE (`t0`.`_instance` = ?) ORDER BY `t0`.`age` ASC LIMIT ? OFFSET ? FOR UPDATE) AS `t1` ON `w0`.`_instance` = `t1`.`_instance` AND `w0`.`_id` = `t1`.`_id`",
       args: ["", 1, 0],
     });
   });

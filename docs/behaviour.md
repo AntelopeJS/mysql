@@ -57,6 +57,7 @@ These queries answer instead of throwing, and the answer may not be the one you 
 | A write that changes nothing answers `0`                                                                   | `update` and `replace` count the rows they changed, not the rows they matched                                                                                                           |
 | `update(fn)` with an _expression_ body answers rows matched, where every other write answers rows modified | The modified test cannot be spelled for that one shape without evaluating the mapper twice per row                                                                                      |
 | A write that hits a deadlock or a lock-wait timeout runs again                                             | Each write unit runs at READ COMMITTED and is retried up to three times in all, since it reads what it writes against inside its transaction                                            |
+| `update`, `replace` and `delete` lock the rows they select as they read them                               | Concurrent writes of one row queue on its lock. An `update(fn)` reads the row it changes, so twenty concurrent `n + 1` updates add twenty                                               |
 
 ## Atomic single-record mutations
 
