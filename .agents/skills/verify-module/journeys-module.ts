@@ -82,6 +82,13 @@ export const configOptions = (engine: Engine): Journey => ({
       `SELECT JSON_ARRAYAGG(TABLE_NAME) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'verify' AND TABLE_NAME LIKE '%verify-config%'`,
     );
     context.expect(stored.folder, [same("the table is stored as <schemaPrefix><schemaId>__<tableId> in the url's database, and only there", stored.value, ["app_verify-config__notes"])]);
+    const dialect = await sql(
+      context,
+      engine,
+      "read the collation and the _extra column type the dialect chose",
+      `SELECT JSON_ARRAY((SELECT TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'verify' AND TABLE_NAME = 'app_verify-config__notes'), (SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'verify' AND TABLE_NAME = 'app_verify-config__notes' AND COLUMN_NAME = '_extra'))`,
+    );
+    context.expect(dialect.folder, [same(`the module detected ${engine.name}: the table is ${engine.collation} and _extra ${engine.documentType}`, dialect.value, [engine.collation, engine.documentType])]);
     if (engine.performanceSchema) {
       const pinned = await sql(context, engine, "read the session variables of the module's connections", PIN);
       context.expect(pinned.folder, [
