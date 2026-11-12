@@ -243,8 +243,25 @@ function CompileQuery(
   }
   const root = BuildRoot(stages, context);
   const split = SplitWrite(root.rest);
-  const relation = ApplyStages(root.relation, split.pipeline, context);
+  const relation = ApplyStages(
+    TargetRead(root, split),
+    split.pipeline,
+    context,
+  );
   return { context, root, split, relation };
+}
+
+/**
+ * The table read a query starts from. An owned table's write locks each row exclusively as its read
+ * reaches it, in the block that reads the table however deep a stage nests that block: a read
+ * nested in a write statement otherwise takes shared locks, and two writers that each hold one and
+ * wait to upgrade it deadlock however often they run again.
+ */
+function TargetRead(root: RootSelection, split: WriteSplit): Relation {
+  const owned = !RequireOrigin(root.relation).model.external;
+  return split.write !== undefined && owned
+    ? { ...root.relation, locked: true }
+    : root.relation;
 }
 
 /** Awaits every schema the stage tree reads, then compiles it in one synchronous pass. */

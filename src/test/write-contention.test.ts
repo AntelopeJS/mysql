@@ -10,16 +10,20 @@ import { Pause } from "./watch";
 interface Item {
   _id: string;
   n?: number;
+  g?: number;
 }
 
 const SCHEMA_ID = "write-contention";
 const WRITERS = 20;
 
+/** The rows the nested target selects out of the thousand the table holds. */
+const NESTED_ROWS = 200;
+
 /** Long enough for an update to reach the row lock it waits on. */
 const LOCK_REACHED_MS = 300;
 
 const contended = new Schema<{ items: Item }>(SCHEMA_ID, {
-  items: { fields: { n: "number" }, indexes: {} },
+  items: { fields: { n: "number", g: "number" }, indexes: {} },
 });
 const items = () => contended.instance().table("items");
 const table = () => ident(PhysicalTable(SCHEMA_ID, "items"));
@@ -84,6 +88,28 @@ describe("writes that contend for rows", function () {
     ]);
     expect(Failures(outcomes)).to.deep.equal([]);
     expect(await items().count()).to.equal(0);
+  });
+
+  /**
+   * A filter after a slice reads the table in a block nested inside the write's own read. A block
+   * that read shared would leave every writer holding a shared lock that another waits to upgrade.
+   */
+  it("applies every write through a target nested in the read, from writers ordering it either way", async () => {
+    const outcomes = await Promise.allSettled(
+      Array.from({ length: WRITERS }, (_, i) =>
+        items()
+          .orderBy("n", i % 2 === 0 ? "asc" : "desc")
+          .slice(0, 1000)
+          .filter((row) => row.key("n").lt(NESTED_ROWS))
+          .update((row) => ({ g: row.key("g").default(0).add(1) }))
+          .run(),
+      ),
+    );
+    expect(Failures(outcomes)).to.deep.equal([]);
+    const written = await items()
+      .filter((row) => row.key("g").eq(WRITERS))
+      .count();
+    expect(written).to.equal(NESTED_ROWS);
   });
 
   it("applies every increment that concurrent mapper updates of one row answer", async () => {
