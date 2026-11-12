@@ -72,6 +72,7 @@ export function SessionOf(flavour: Flavour): SessionSyntax {
   return {
     pin: (settings) => Pin(flavour, settings),
     statementTimeout: (ms) => sql`SET SESSION ${flavour.readTimeout(ms)}`,
+    uncapped: (statement) => flavour.uncapped(statement),
     binaryCollation: flavour.binaryCollation,
     keyBudgetBytes: KEY_BUDGET_BYTES,
     maxKeyColumns: MAX_KEY_COLUMNS,

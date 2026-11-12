@@ -28,6 +28,8 @@ export interface Flavour {
   readonly pinned: readonly Sql[];
   /** The session assignment that stops a read after `ms`, where 0 leaves reads unbounded. */
   readTimeout(ms: number): Sql;
+  /** The statement, free of {@link Flavour.readTimeout} where it writes or changes a table. */
+  uncapped(statement: Sql): Sql;
   /** The errnos a read stopped by {@link Flavour.readTimeout} answers. */
   readonly readTimeoutErrnos: readonly number[];
   /** The errno and message pattern of a violated `CHECK` constraint, the constraint's name its group. */
@@ -136,6 +138,7 @@ export const MYSQL: Flavour = {
   multiValuedIndex: true,
   pinned: [],
   readTimeout: (ms) => sql`max_execution_time = ${int(ms)}`,
+  uncapped: (statement) => statement,
   readTimeoutErrnos: [3024],
   checkViolation: {
     errno: 3819,

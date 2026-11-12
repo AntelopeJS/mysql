@@ -128,11 +128,16 @@ export function ParseRow(cells: Iterable<readonly [string, unknown]>): Row {
   return parsed;
 }
 
+/** A statement as it runs under the connected dialect's read timeout. */
+export function Uncapped(statement: Sql): Sql {
+  return dialect ? dialect.session.uncapped(statement) : statement;
+}
+
 async function ReadOn(
   connection: PoolConnection,
   statement: Sql,
 ): Promise<Row[]> {
-  const bound = Bind(statement);
+  const bound = Bind(Uncapped(statement));
   const [rows] = await connection.execute<RowDataPacket[]>(bound.sql, [
     ...bound.args,
   ]);
@@ -402,7 +407,7 @@ async function WriteOn(
   connection: PoolConnection,
   statement: Sql,
 ): Promise<number> {
-  const bound = Bind(statement);
+  const bound = Bind(Uncapped(statement));
   const [result] = await connection.execute<ResultSetHeader>(bound.sql, [
     ...bound.args,
   ]);

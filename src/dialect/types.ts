@@ -42,6 +42,11 @@ export interface SessionSyntax {
   pin(settings: SessionSettings): Sql;
   /** Sets the session's read timeout to `ms`, where 0 leaves reads unbounded. */
   statementTimeout(ms: number): Sql;
+  /**
+   * The statement, free of the read timeout where it writes or changes a table: MySQL's timeout
+   * bounds `SELECT` alone, and MariaDB's bounds every statement unless one lifts it for itself.
+   */
+  uncapped(statement: Sql): Sql;
   /** The binary, NO PAD collation of every text column, literal and bound parameter. */
   readonly binaryCollation: string;
   /** The most bytes an index key may span, `_instance` included. */
