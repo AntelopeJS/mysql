@@ -9,7 +9,7 @@ import { UnifyOperands } from "./coerce";
 import { DecodeFunction, RecordedLambda } from "./value";
 import { AsJson, Predicate } from "./readings";
 import type { DecodingContext } from "./context";
-import { JsonRowSource, type RowSource } from "./row-source";
+import { NamedField, type RowSource } from "./row-source";
 import type { PipelineStage, PipelineStageMap } from "./pipeline";
 import { FIRST_OPERAND, RequireOperand, SECOND_OPERAND } from "./stage";
 import { type Compiled, QualifiedColumn } from "./sql";
@@ -245,28 +245,10 @@ const PUSHDOWN_BLOCKERS: readonly RelationFlag[] = WHERE_BLOCKERS.filter(
   (flag) => flag !== "projection",
 );
 
-const PATH_SEPARATOR = ".";
-
 /**
- * Reads the other key as an index field is read: a member by its exact name where the row declares
- * one, and otherwise a dotted name as a path below its first segment. So the correlation reaches
- * the key column an index over `title.fr` holds, and that index serves the lookup.
- */
-function OtherKey(source: RowSource, key: string, dialect: Dialect): Compiled {
-  const [head, ...rest] = key.split(PATH_SEPARATOR);
-  const declared = source.keyTypes();
-  if (rest.length === 0 || (declared && Object.hasOwn(declared, key))) {
-    return source.field(key);
-  }
-  return rest.reduce(
-    (value, segment) => new JsonRowSource(dialect, value).field(segment),
-    source.field(head),
-  );
-}
-
-/**
- * Pushes the correlation onto the looked-up relation. A scalar key against a list on the other
- * side matches a row whose list holds it.
+ * Pushes the correlation onto the looked-up relation. The other key is a {@link NamedField}, so the
+ * correlation reaches the key column an index over `title.fr` holds. A scalar key against a list on
+ * the other side matches a row whose list holds it.
  */
 function Correlate(
   right: Relation,
@@ -276,7 +258,7 @@ function Correlate(
   form: LookupForm,
 ): void {
   const dialect = right.dialect;
-  const other = OtherKey(source, keys.otherKey, dialect);
+  const other = NamedField(dialect, source, keys.otherKey);
   if (IsArray(other.type) && !IsArray(local.type)) {
     const element = AsJson(dialect, local).sql;
     right.where.push(dialect.sql.json.includes(other.sql, element));

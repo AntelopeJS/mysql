@@ -12,6 +12,7 @@ import {
   type IndexedValue,
   JsonRowSource,
   LoggedColumns,
+  NamedField,
   type RowSource,
 } from "./row-source";
 import { ExternalRowSource } from "./external-row-source";
@@ -126,7 +127,8 @@ export interface IndexedMember extends IndexedValue {
  * A declared index on a relation that reads its table is read through the index's own key parts,
  * so a comparison names the key column its index is built on and a sort orders by it. Anything
  * else — a name that is not an index, or a relation that no longer knows its table — reads each
- * field by name, which is what keeps `map(…).orderBy("age")` working.
+ * field as a {@link NamedField}, which is what keeps `map(…).orderBy("age")` working and sorts
+ * `orderBy("title.fr")` by the nested value.
  */
 export function IndexColumns(
   relation: Relation,
@@ -146,7 +148,7 @@ export function IndexColumns(
   }
   const fields = origin ? origin.index(name) : [name];
   return fields.map((field) => {
-    const value = source.field(field);
+    const value = NamedField(relation.dialect, source, field);
     return { name: field, value, order: value.sql };
   });
 }

@@ -70,6 +70,29 @@ export function BuildDocument(
   };
 }
 
+const PATH_SEPARATOR = ".";
+
+/**
+ * Reads a field by the name an index, a sort or a lookup takes: a member by its exact name where the
+ * row declares one, and otherwise a dotted name as a path below its first segment, as an index field
+ * is read. So `title.fr` names the key column an index over it holds, and sorts by the nested value.
+ */
+export function NamedField(
+  dialect: Dialect,
+  source: RowSource,
+  name: string,
+): Compiled {
+  const [head, ...rest] = name.split(PATH_SEPARATOR);
+  const declared = source.keyTypes();
+  if (rest.length === 0 || (declared && Object.hasOwn(declared, name))) {
+    return source.field(name);
+  }
+  return rest.reduce(
+    (value, segment) => new JsonRowSource(dialect, value).field(segment),
+    source.field(head),
+  );
+}
+
 /** Names a key in the message {@link Defaulted} raises for a default the column cannot hold. */
 export function KeySubject(name: string): string {
   return `The default for key '${name}'`;
