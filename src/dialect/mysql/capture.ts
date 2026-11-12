@@ -139,8 +139,9 @@ const IMAGE_LEVELS = 2;
  * back into it. A JSON-backed column is boxed in a one-element array, so a column holding SQL NULL
  * logs `null` and one holding a JSON null logs `[null]`. A value too deep for the box and the image
  * around it goes as its JSON text, a string, since the engine refuses to store a document past its
- * depth limit and the write that logs it would fail. Only such a value goes as text, because a feed parses
- * text back, and MySQL 8.4's parser reads some doubles of 17 significant digits as a neighbour.
+ * depth limit and the write that logs it would fail. Only such a value goes as text, because a feed
+ * parses text back, and MySQL 8.4's parser reads some doubles of 17 significant digits as a
+ * neighbour.
  */
 function Imaged(engine: ImageSyntax, row: Sql, column: CapturedColumn): Sql {
   const { json } = engine;

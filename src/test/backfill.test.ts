@@ -36,12 +36,12 @@ const ROWS = sql`('typed', '', '{"s": "x", "n": 1.5, "b": true, "d": "2024-01-02
   ('nulls', '', '{"s": null, "n": null, "b": null, "d": null, "o": null, "l": null}'),
   ('impossible', '', '{"d": "2024-02-30T00:00:00.000Z"}')`;
 
+const EMPTY_COLUMNS = ["null", "null", "null", "null", "null", "null"];
+
 /**
  * The declared columns as text, and `_extra` as the server prints it: MySQL prints a document's keys
  * by length and then name, MariaDB in the order they were written, so a test reads it parsed.
  */
-const EMPTY_COLUMNS = ["null", "null", "null", "null", "null", "null"];
-
 interface Stored {
   readonly columns: readonly string[];
   readonly extra: string;

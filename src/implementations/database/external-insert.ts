@@ -230,9 +230,10 @@ function InsertRow(
 /**
  * Inserts each document as its own statement, in one transaction, and answers the keys in input
  * order: the insert answers each row's `_id` where the engine has `RETURNING`, and on MySQL it is
- * read back right after the insert, by the key the payload gave or the one the server generated. A column a document leaves out takes its
- * `DEFAULT`. An upsert finds the row by its key, locking it, and updates it instead; a clash on
- * any other unique index still fails, as it would without the upsert.
+ * read back right after the insert, by the key the payload gave or the one the server generated. A
+ * column a document leaves out takes its `DEFAULT`. An upsert finds the row by its key, locking it,
+ * and updates it instead; a clash on any other unique index still fails, as it would without the
+ * upsert.
  */
 export function ExternalInsert(
   target: WriteTarget,
