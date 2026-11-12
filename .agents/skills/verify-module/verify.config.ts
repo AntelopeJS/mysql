@@ -17,6 +17,8 @@ const RESET = [
   `CREATE DATABASE \`${DATABASE}\``,
 ].join("; ");
 
+const FORMAL_CHANGE_FEED_DELIVERY = ".agents/skills/formal-change-feed-delivery";
+
 const config: VerifyConfig = {
   doors: {
     data: {
@@ -100,6 +102,24 @@ const config: VerifyConfig = {
     "catalog-describe": catalogDescribe,
     "catalog-refused": catalogRefused,
   },
+  formal: [
+    {
+      name: "formal-change-feed-delivery",
+      covers: [
+        "src/implementations/database/feeds.ts",
+        "src/implementations/database/feed-poll.ts",
+        "src/implementations/database/sequencer.ts",
+        "src/implementations/database/reaper.ts",
+        "src/dialect/mysql/capture.ts",
+      ],
+      files: [`${FORMAL_CHANGE_FEED_DELIVERY}/**`],
+      command: ["node", `${FORMAL_CHANGE_FEED_DELIVERY}/check.mjs`, "--full"],
+      baseCommand: ["node", `${FORMAL_CHANGE_FEED_DELIVERY}/check.mjs`],
+      violation: /^(?:finding|BROKEN|HOLDS) +(\w+)/gm,
+      passing: /(?<=^holds +(?:\w+, )*)(\w+)(?=,| \()/gm,
+      behaviour: { kind: "emit" },
+    },
+  ],
 };
 
 export default config;
