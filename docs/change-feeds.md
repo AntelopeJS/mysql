@@ -57,7 +57,12 @@ Retention is a contract. Every owned instance runs a reaper that numbers the log
 
 The reaper records, per table, the highest `seq` it deleted. A feed whose watermark is below its own table's high-water has lost events, and it ends with an error that names the range it lost, so it never falls out of sync without a signal. A feed on a table nobody writes is never ended because another table's rows went.
 
-The log is an InnoDB table, so it survives a server restart, and a restart ends no feed. A feed ends with a loss only if the log itself is created again, for example after someone dropped it. The log carries an identity it gets when it is created, and the clock row records the identity of the log it numbers. The next registration that finds the log created again gives the clock a new epoch, and every feed's next read refuses. Emptying the log with `TRUNCATE` keeps its identity, so a feed does not notice that.
+The log is an InnoDB table, so it survives a server restart, and a restart ends no feed. A feed ends with a loss only if the log itself is created again, for example after someone dropped it. The clock row records the identity of the log it numbers. The next registration that finds the log created again gives the clock a new epoch, and every feed's next read refuses. The identity is a digest of two things. One is the comment the module gives the log when it creates it. The other is the time, to the second, that `information_schema.TABLES` reports in `CREATE_TIME`, which every account that can read the log can read. The comment tells apart two logs the module created in one second. The time tells apart a log created from a dump or from `SHOW CREATE TABLE`, which carries the old log's comment. That has two costs:
+
+- MySQL also moves `CREATE_TIME` when someone alters the log or runs `OPTIMIZE TABLE` on it. Every open feed then ends with a loss, although no event went. The module never alters the log itself.
+- A log created again from a dump within the same second as the old log's last creation or alteration keeps its identity, and a feed reads on past what went with the old log.
+
+Emptying the log with `TRUNCATE` keeps its identity, so a feed does not notice that.
 
 ## Filtered feeds
 

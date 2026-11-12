@@ -66,18 +66,26 @@ function Seq(value: bigint): Sql {
   return sql`CAST(${param(value.toString())} AS UNSIGNED)`;
 }
 
-/** The identity of the log as it stands: the comment it was created with. */
+/** How many characters of a log's identity the clock records. */
+const LOG_ID_CHARS = 36;
+
+/**
+ * The identity of the log as it stands: a digest of the comment it was created with and of the
+ * second the server last created or altered it in. A dump or a copy of its definition carries the
+ * comment, but the server stamps the table it creates from one with a time of its own.
+ */
 function CurrentLogId(tables: ChangeLogTables): Sql {
-  return sql`(SELECT TABLE_COMMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${lit(tables.log)})`;
+  return sql`(SELECT LEFT(SHA2(CONCAT_WS(':', TABLE_COMMENT, UNIX_TIMESTAMP(CREATE_TIME)), 256), ${int(LOG_ID_CHARS)}) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${lit(tables.log)})`;
 }
 
 /**
  * The clock is seeded with `INSERT IGNORE`, which only reads the row it finds: an upsert would take
  * that row's lock shared and then exclusive, and two registrations doing so at once deadlock.
  *
- * The log carries an identity in its comment, chosen when it is created, and the clock records the
- * identity of the log it numbers. A log dropped and created again has another, and the first
- * bootstrap that sees it renews the epoch, once: the update matches only while the two differ.
+ * The log carries an identity, from a comment chosen when the module creates it and the time the
+ * server created it at, and the clock records the identity of the log it numbers. A log dropped and
+ * created again has another, and the first bootstrap that sees it renews the epoch, once: the
+ * update matches only while the two differ.
  */
 function Bootstrap(tables: ChangeLogTables, logId: string): readonly Sql[] {
   const log = [
@@ -98,7 +106,7 @@ function Bootstrap(tables: ChangeLogTables, logId: string): readonly Sql[] {
     sql`${ID} TINYINT UNSIGNED NOT NULL`,
     sql`${NEXT_SEQ} BIGINT UNSIGNED NOT NULL`,
     sql`${EPOCH} CHAR(36) NOT NULL`,
-    sql`${LOG_ID} CHAR(36) NOT NULL`,
+    sql`${LOG_ID} CHAR(${int(LOG_ID_CHARS)}) NOT NULL`,
     sql`PRIMARY KEY (${ID})`,
   ];
   const reaped = [
