@@ -18,6 +18,7 @@ jobs:
         README.md
         docs
       renovate-sync: false
+      extra-commands: node .agents/skills/formal-change-feed-delivery/check.mjs
       test-job: true
     permissions:
       contents: read
