@@ -357,6 +357,7 @@ function ReadingOf(kind: SqlType, column: CatalogColumn) {
   return {
     family,
     value: reading.value,
+    unchanged: UnchangedOf(kind, family, column),
     present: reading.present,
     lossy: InstantLoss(kind, family, column, reading.lossy),
     conversion: ConversionOf(family, column, reading.conversion),
@@ -377,6 +378,7 @@ function KeyReading(column: CatalogColumn): ColumnReading | undefined {
   return {
     family,
     value: text?.value ?? AsText,
+    unchanged: UnchangedOf(TEXT, family, column),
     conversion: ConversionOf(family, column, TEXT_CONVERSIONS[family]),
     numeric: false,
     writing: readOnly ? undefined : (text?.writing ?? Bare),
@@ -397,14 +399,28 @@ function Exact(value: Sql): Sql {
   return sql`CAST(${Wide(value)} AS BINARY)`;
 }
 
+type Unchanged = ColumnReading["unchanged"];
+
 /**
- * Whether two values read alike, NULL included: as a read answers them, and text code point for
- * code point, since a read answers the text itself and not what the column's collation equates.
+ * Whether a write leaves the column's read as it stands, NULL included: as a read answers it, and
+ * text code point for code point, since a read answers the text itself and not what the column's
+ * collation equates. An enum stores the label its collation equates with the text written, so it
+ * compares in that collation, and a write of the stored label in another case changes nothing.
  */
-function SameRead(kind: SqlType, left: Sql, right: Sql): Sql {
-  return kind.kind === "text"
-    ? sql`(${Exact(left)} <=> ${Exact(right)})`
-    : sql`(${AsRead(kind, left)} <=> ${AsRead(kind, right)})`;
+function UnchangedOf(
+  kind: SqlType,
+  family: NativeFamily,
+  column: CatalogColumn,
+): Unchanged {
+  if (family === "enum") {
+    const label = TextIn(column);
+    return (stored, incoming) => sql`(${stored} <=> ${label(incoming, "=")})`;
+  }
+  if (kind.kind === "text") {
+    return (stored, incoming) => sql`(${Exact(stored)} <=> ${Exact(incoming)})`;
+  }
+  return (stored, incoming) =>
+    sql`(${AsRead(kind, stored)} <=> ${AsRead(kind, incoming)})`;
 }
 
 /**
@@ -441,7 +457,6 @@ export const types: ExternalTypeSyntax = {
   keyReading: KeyReading,
   proposed: (family) => PROPOSED[family],
   asRead: AsRead,
-  sameRead: SameRead,
   compositeId: (parts) =>
     sql`CAST(JSON_ARRAY(${join(parts, sql`, `)}) AS CHAR)`,
   idParts: IdParts,

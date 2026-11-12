@@ -58,36 +58,29 @@ function AsRead(dialect: Dialect, value: Sql, descriptor: ColumnDescriptor) {
  * One guarded assignment: the column keeps its stored value when the incoming value equals what a
  * read of it answers, so a whole row written back damages nothing a lossy reading could not spell.
  */
-function GuardedAssignment(
-  dialect: Dialect,
-  assignment: ExternalAssignment,
-): Sql {
+function GuardedAssignment(assignment: ExternalAssignment): Sql {
   const descriptor = assignment.descriptor;
   const column = WriteColumn(descriptor.column);
   if (assignment.toDefault) {
     return sql`${column} = DEFAULT`;
   }
-  const same = SameRead(dialect, assignment);
+  const same = SameRead(assignment);
   return sql`${column} = (CASE WHEN ${same} THEN ${column} ELSE ${Written(descriptor, assignment.value)} END)`;
 }
 
 /** Whether the incoming value reads as the column's stored one does, which leaves the column as it is. */
-function SameRead(dialect: Dialect, assignment: ExternalAssignment): Sql {
+function SameRead(assignment: ExternalAssignment): Sql {
   const descriptor = assignment.descriptor;
   const read = descriptor.value(WriteColumn(descriptor.column));
-  return dialect.external.types.sameRead(
-    descriptor.kind,
-    read,
-    assignment.value.sql,
-  );
+  return descriptor.unchanged(read, assignment.value.sql);
 }
 
 /** Rows whose read differs from the incoming values: an unchanged write touches no row, and counts 0. */
-function Changed(dialect: Dialect, assignments: ExternalAssignment[]): Sql[] {
+function Changed(assignments: ExternalAssignment[]): Sql[] {
   if (assignments.length === 0) {
     return [];
   }
-  const same = assignments.map((assignment) => SameRead(dialect, assignment));
+  const same = assignments.map(SameRead);
   return [sql`(NOT (${join(same, AND)}))`];
 }
 
@@ -226,21 +219,14 @@ function ChangeStatement(
   if (assignments.length === 0) {
     return { kind: "count" };
   }
-  const dialect = context.dialect;
   const conditions = [
     ...[...payload.asserted.values()].map((asserted) =>
       Assertion(asserted, context),
     ),
     ...payload.keyFields.map((claim) => KeyFieldAssertion(claim, context)),
-    ...Changed(
-      dialect,
-      assignments.filter((assignment) => !assignment.toDefault),
-    ),
+    ...Changed(assignments.filter((assignment) => !assignment.toDefault)),
   ];
-  const sets = join(
-    assignments.map((assignment) => GuardedAssignment(dialect, assignment)),
-    COMMA,
-  );
+  const sets = join(assignments.map(GuardedAssignment), COMMA);
   return {
     kind: "count",
     statement: UpdateOf(

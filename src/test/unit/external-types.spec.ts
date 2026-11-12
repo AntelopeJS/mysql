@@ -257,6 +257,19 @@ describe("what a written value is checked against before an external write runs"
       ),
     ).to.equal(undefined);
   });
+
+  it("takes a label in another case only where the column's collation ignores case, as MySQL then stores the label", () => {
+    const labels = { enumLabels: ["Red", "Green"], charset: "utf8mb4" };
+    const red = { kind: "text", value: "red" } as const;
+    const refusals = ["utf8mb4_0900_ai_ci", "utf8mb4_bin"].map((collation) =>
+      Refusal("enum('Red','Green')", "string", red, {
+        ...labels,
+        collation,
+      }),
+    );
+    expect(refusals[0]).to.equal(undefined);
+    expect(refusals[1]).to.contain("labels");
+  });
 });
 
 describe("what a refused external write means", () => {

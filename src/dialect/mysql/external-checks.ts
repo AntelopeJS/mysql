@@ -158,10 +158,27 @@ function TextFits(column: CatalogColumn): ValueCheck | undefined {
     checks.map((check) => check(value)).find((reason) => reason !== undefined);
 }
 
+/** A collation that compares without case, which every `_ci` collation does. */
+const CASE_INSENSITIVE = /_ci$/;
+
+/**
+ * A value that names one of the labels: the label itself, or under a collation without case the
+ * label in another case, which MySQL stores as the label. Any other value is refused, a label's
+ * position included, which MySQL would store as that label without a word.
+ */
 function EnumLabel(column: CatalogColumn): ValueCheck {
   const labels = column.enumLabels ?? [];
+  const isCaseInsensitive = CASE_INSENSITIVE.test(column.collation ?? "");
+  const names = (text: string) =>
+    labels.some(
+      (label) =>
+        label === text ||
+        (isCaseInsensitive &&
+          label.localeCompare(text, undefined, { sensitivity: "accent" }) ===
+            0),
+    );
   return (value) =>
-    value.kind === "text" && !labels.includes(value.value)
+    value.kind === "text" && !names(value.value)
       ? `it is not one of the labels of ${column.native}`
       : undefined;
 }

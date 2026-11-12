@@ -132,6 +132,12 @@ export interface ColumnReading {
   readonly family: NativeFamily;
   readonly value: (column: Sql) => Sql;
   /**
+   * Whether writing `incoming` over the column leaves what a read of it answers as `stored` reads,
+   * NULL equal to NULL: at the precision a read answers, text code point for code point, and an
+   * enum by the label the column would store.
+   */
+  readonly unchanged: (stored: Sql, incoming: Sql) => Sql;
+  /**
    * Where the column holds a value its read answers, for a column that can hold one it reads as
    * absent: a comparison through the bare column holds only there.
    */
@@ -155,11 +161,6 @@ export interface ExternalTypeSyntax {
   proposed(family: NativeFamily): SqlType;
   /** A value at the precision a read of `kind` answers it, which is what "unchanged" means. */
   asRead(kind: SqlType, value: Sql): Sql;
-  /**
-   * Whether two values of `kind` read alike, NULL equal to NULL: at the precision a read answers,
-   * and text code point for code point, whatever the column's collation equates.
-   */
-  sameRead(kind: SqlType, left: Sql, right: Sql): Sql;
   /** A composite key's `_id`: its parts' texts, as the text of one JSON array. */
   compositeId(parts: readonly Sql[]): Sql;
   /**

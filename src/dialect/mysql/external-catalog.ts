@@ -120,8 +120,12 @@ function EnumLabels(native: string, dataType: string): string[] | null {
   );
 }
 
+/**
+ * A column as the catalog describes it. `native` is `COLUMN_TYPE` as the server spells it, its
+ * keywords in lower case and an enum's labels in their own.
+ */
 function ParseColumn(row: Row): CatalogColumn {
-  const native = Text(row, "native").toLowerCase();
+  const native = Text(row, "native");
   const dataType = Text(row, "data_type").toLowerCase();
   const extra = Text(row, "extra");
   const fallback = OptionalText(row, "default_value");
