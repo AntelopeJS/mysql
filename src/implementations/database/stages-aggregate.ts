@@ -8,7 +8,8 @@ import type { SqlType } from "./types";
 import { AsFloat, Numeric } from "./readings";
 import type { PipelineStage, PipelineStageMap } from "./pipeline";
 import { CurrentValue, type Relation, SetProjection } from "./relation";
-import { AbsorbOrder, HasFlag, Prepare, type RelationFlag } from "./render";
+import { AbsorbOrder, HasFlag, type RelationFlag } from "./render";
+import { Prepare } from "./wrap";
 import { IsString } from "./guards";
 import { OptionsOf } from "./utils";
 

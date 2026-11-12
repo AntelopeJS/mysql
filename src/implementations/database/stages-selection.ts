@@ -39,7 +39,8 @@ import {
   ScanColumns,
   type TableOrigin,
 } from "./relation";
-import { Prepare, SINGLE_ROW, WHERE_BLOCKERS } from "./render";
+import { SINGLE_ROW, WHERE_BLOCKERS } from "./render";
+import { Prepare } from "./wrap";
 import { IsString } from "./guards";
 import { ClassifyMember, IsList, StageOperand } from "./member";
 

@@ -241,7 +241,10 @@ function FreeColumn(relation: Relation, base = ROW_NUMBER_COLUMN): string {
  * nothing outside it, and MariaDB reads its rows in another order. The subselect keeps its own
  * `ORDER BY`, row bounds and lock, so a bounded relation keeps the rows its order chose.
  */
-function NestedInOrder(relation: Relation, context: DecodingContext): Relation {
+export function NestedInOrder(
+  relation: Relation,
+  context: DecodingContext,
+): Relation {
   if (relation.orderBy.length === 0) {
     return Nested(relation, context);
   }
@@ -328,25 +331,4 @@ export function HasFlag(
   flags: readonly RelationFlag[],
 ): boolean {
   return flags.some((flag) => FLAG_PREDICATES[flag](relation));
-}
-
-/**
- * The one place a *conditional* wrap is decided: every stage continuing its own relation opens by
- * naming the flags that block it, and reaches {@link Nested} through nothing else.
- *
- * A stage blocked by `ordered`, such as `group` or `distinct`, drops the order ahead of it. Every
- * other stage keeps it across the wrap, since a derived table's own `ORDER BY` orders nothing the
- * statement around it reads.
- */
-export function Prepare(
-  relation: Relation,
-  blockedBy: readonly RelationFlag[],
-  context: DecodingContext,
-): Relation {
-  if (!HasFlag(relation, blockedBy)) {
-    return relation;
-  }
-  return blockedBy.includes("ordered")
-    ? Nested(relation, context)
-    : NestedInOrder(relation, context);
 }

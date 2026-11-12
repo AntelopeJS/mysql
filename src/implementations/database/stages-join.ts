@@ -39,12 +39,12 @@ import {
   type JoinKind,
   JoinOn,
   Nested,
-  Prepare,
   type RelationFlag,
   Render,
   SINGLE_ROW,
   WHERE_BLOCKERS,
 } from "./render";
+import { Prepare } from "./wrap";
 import { IsString } from "./guards";
 import { ID_COLUMN, INSTANCE_COLUMN, OptionsOf } from "./utils";
 
