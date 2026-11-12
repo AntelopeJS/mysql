@@ -154,9 +154,6 @@ const JS_DOT = "[^\\n\\r\\u2028\\u2029]";
 /** JavaScript's `$` is the end of the input alone; ICU's also matches before a final line terminator. */
 const END_OF_INPUT = "\\z";
 
-/** ICU reads these inside a class as a nested set and as an intersection, which JavaScript does not. */
-const CLASS_METACHARACTERS = new Set([CLASS_OPEN, "&"]);
-
 const OUTSIDE_CLASS = new Map([
   [".", JS_DOT],
   ["$", END_OF_INPUT],
@@ -209,26 +206,109 @@ const INSIDE_CLASS_ESCAPES = new Map([
 ]);
 
 /**
- * The escapes that stand for a set of characters. JavaScript never reads one as the end of a range,
- * so a hyphen beside one inside a class is a hyphen; spelled out as ICU members, the escape would
- * make that hyphen a range with its first or last member.
+ * The escapes that stand for a set of characters. JavaScript never reads one as an end of a range:
+ * `\\d-a` inside a class is three members, the hyphen and `a` included.
  */
 const SET_ESCAPES = new Set(["d", "D", "w", "W", "s", "S"]);
 
-const HYPHEN = "-";
-const LITERAL_HYPHEN = ESCAPE + HYPHEN;
+/**
+ * The characters ICU reads otherwise than JavaScript inside a class, each escaped where it stands
+ * for itself: a nested set, an intersection, and the hyphen, which ICU reads doubled as a set
+ * difference.
+ */
+const CLASS_SYNTAX = new Set(["[", "&", "-"]);
 
-function IsSetEscapeAt(pattern: string, at: number): boolean {
-  return pattern[at] === ESCAPE && SET_ESCAPES.has(pattern[at + 1] ?? "");
+const HYPHEN = "-";
+const NEGATION = "^";
+
+/** The escapes of one character that run past the character after the backslash, by their length. */
+const LONG_ESCAPES = [
+  { letter: "x", pattern: /^[0-9A-Fa-f]{2}/u, length: 2 },
+  { letter: "u", pattern: /^[0-9A-Fa-f]{4}/u, length: 4 },
+  { letter: "c", pattern: /^[A-Za-z]/u, length: 1 },
+];
+
+/** How many characters the escape at `at` spans, the backslash included. */
+function EscapeLength(pattern: string, at: number): number {
+  const letter = pattern[at + 1];
+  const rest = pattern.slice(at + 2);
+  const long = LONG_ESCAPES.find(
+    (escape) => escape.letter === letter && escape.pattern.test(rest),
+  );
+  return 2 + (long?.length ?? 0);
 }
 
-/** A character inside a class, other than an escape, as ICU reads it the JavaScript way. */
-function InClass(pattern: string, at: number): string {
-  const char = pattern[at];
-  if (char === HYPHEN && IsSetEscapeAt(pattern, at + 1)) {
-    return LITERAL_HYPHEN;
+/**
+ * One member of a class as JavaScript reads it, spelled for ICU. A set escape stands for many
+ * characters, so it never ends a range; an unescaped hyphen is the one member that can join the two
+ * beside it into one.
+ */
+interface ClassAtom {
+  readonly icu: string;
+  readonly isSet: boolean;
+  readonly isRangeHyphen: boolean;
+}
+
+function ClassAtoms(body: string): ClassAtom[] {
+  const atoms: ClassAtom[] = [];
+  for (let at = 0; at < body.length; at++) {
+    const char = body[at];
+    if (char === ESCAPE && at + 1 < body.length) {
+      const length = EscapeLength(body, at);
+      const escaped = body[at + 1];
+      atoms.push({
+        icu: INSIDE_CLASS_ESCAPES.get(escaped) ?? body.slice(at, at + length),
+        isSet: SET_ESCAPES.has(escaped),
+        isRangeHyphen: false,
+      });
+      at += length - 1;
+      continue;
+    }
+    atoms.push({
+      icu: CLASS_SYNTAX.has(char) ? ESCAPE + char : char,
+      isSet: false,
+      isRangeHyphen: char === HYPHEN,
+    });
   }
-  return CLASS_METACHARACTERS.has(char) ? ESCAPE + char : char;
+  return atoms;
+}
+
+/**
+ * A class body as ICU reads it the JavaScript way. JavaScript reads the members left to right, and
+ * a member, a hyphen and a member are one range, or three members where either end is a set escape.
+ * Every other hyphen stands for itself, and so does every member after a range.
+ */
+function TranslateClass(body: string): string {
+  const negated = body.startsWith(NEGATION);
+  const atoms = ClassAtoms(negated ? body.slice(1) : body);
+  let out = negated ? NEGATION : "";
+  for (let at = 0; at < atoms.length; at++) {
+    const low = atoms[at];
+    const hyphen = atoms.at(at + 1);
+    const high = atoms.at(at + 2);
+    if (!hyphen?.isRangeHyphen || !high) {
+      out += low.icu;
+      continue;
+    }
+    out +=
+      low.isSet || high.isSet
+        ? low.icu + hyphen.icu + high.icu
+        : low.icu + HYPHEN + high.icu;
+    at += 2;
+  }
+  return out;
+}
+
+/** Where the class opened at `open` closes: its first unescaped `]`, or the end of the pattern. */
+function ClassEnd(pattern: string, open: number): number {
+  for (let at = open + 1; at < pattern.length; at++) {
+    if (pattern[at] === ESCAPE) {
+      at++;
+    } else if (pattern[at] === CLASS_CLOSE) {
+      return at;
+    }
+  }
+  return pattern.length;
 }
 
 /**
@@ -237,27 +317,21 @@ function InClass(pattern: string, at: number): string {
  */
 function TranslatePattern(pattern: string): string {
   let out = "";
-  let inClass = false;
   for (let at = 0; at < pattern.length; at++) {
     const char = pattern[at];
     if (char === ESCAPE && at + 1 < pattern.length) {
       const escaped = pattern[at + 1];
-      const escapes = inClass ? INSIDE_CLASS_ESCAPES : OUTSIDE_CLASS_ESCAPES;
-      out += escapes.get(escaped) ?? char + escaped;
+      out += OUTSIDE_CLASS_ESCAPES.get(escaped) ?? char + escaped;
       at++;
-      if (inClass && SET_ESCAPES.has(escaped) && pattern[at + 1] === HYPHEN) {
-        out += LITERAL_HYPHEN;
-        at++;
-      }
       continue;
     }
-    if (inClass) {
-      out += InClass(pattern, at);
-      inClass = char !== CLASS_CLOSE;
+    if (char === CLASS_OPEN) {
+      const end = ClassEnd(pattern, at);
+      out += `${CLASS_OPEN}${TranslateClass(pattern.slice(at + 1, end))}${pattern.slice(end, end + 1)}`;
+      at = end;
       continue;
     }
     out += OUTSIDE_CLASS.get(char) ?? char;
-    inClass = char === CLASS_OPEN;
   }
   return out;
 }

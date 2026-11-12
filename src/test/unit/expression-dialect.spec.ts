@@ -40,6 +40,14 @@ describe("The MySQL regular expression translation", () => {
     expect(translate("[a-z]")).to.equal("[a-z]");
     expect(translate("[\\b-z]")).to.equal("[\\x{08}-z]");
   });
+
+  it("leaves the member after a set escape's hyphen free of the next hyphen, and escapes every hyphen that is no range", () => {
+    expect(translate("[\\d-a-f]")).to.equal("[0-9\\-a\\-f]");
+    expect(translate("[.-\\w-a-c]")).to.equal("[.\\-A-Za-z0-9_\\-a-c]");
+    expect(translate("[--e]")).to.equal("[\\--e]");
+    expect(translate("[a-]")).to.equal("[a\\-]");
+    expect(translate("[\\x41-\\x5A-]")).to.equal("[\\x41-\\x5A\\-]");
+  });
 });
 
 describe("The MySQL int32 members", () => {
