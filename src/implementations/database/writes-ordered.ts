@@ -164,16 +164,16 @@ function Held(
 }
 
 /**
- * Runs a write whose read nests the table's block, in the transaction `connection` holds, and
- * answers the rows it counted.
+ * Runs a write whose read reaches the table's rows in an order of its own, in the transaction
+ * `connection` holds, and answers the rows it counted.
  *
- * That block locks every row it reads, in the order its sort or index reads them, the rows the
- * outer blocks then leave out included. Two writes that sort the table two ways would lock their
- * rows in two orders, and deadlock past every retry. So the write first holds every row its read
- * selects, locked in key order as {@link HeldSelection} does. It then writes them in one statement
- * that reads them by key, skipping any row another transaction holds, which none of them is, so it
- * waits on no other write. A value that statement computes from other rows reads them as they were
- * before it, as the same write through one block would.
+ * Such a read locks the rows it reads in the order its sort or index reads them, and a nested block
+ * also the rows the outer blocks then leave out. Two writes that sort the table two ways would lock
+ * their rows in two orders, and deadlock past every retry. So the write first holds every row its
+ * read selects, locked in key order as {@link HeldSelection} does. It then writes them in one
+ * statement that reads them by key, skipping any row another transaction holds, which none of them
+ * is, so it waits on no other write. A value that statement computes from other rows reads them as
+ * they were before it, as the same write through one block would.
  */
 export async function OrderedWrite(
   target: WriteTarget,

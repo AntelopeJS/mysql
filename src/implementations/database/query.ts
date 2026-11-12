@@ -198,10 +198,10 @@ async function Execute(
 }
 
 /**
- * Runs a write whose read nests the table's block as {@link OrderedWrite} does, compiling it again
+ * Runs a write whose read orders the table's rows as {@link OrderedWrite} does, compiling it again
  * over the rows it holds, as the one counted statement `update`, `replace` and `delete` compile to.
  */
-function ExecuteNested(
+function ExecuteOrdered(
   target: WriteTarget,
   stage: QueryStage,
   context: DecodingContext,
@@ -210,7 +210,7 @@ function ExecuteNested(
     const statement = CompileWrite(held, stage, context);
     assert(
       statement.kind === "count",
-      `The '${stage.stage}' stage writes through a nested read as one counted statement`,
+      `The '${stage.stage}' stage writes through an ordered read as one counted statement`,
     );
     return statement.statement;
   };
@@ -237,8 +237,8 @@ async function RunWrite(
   await WaitForUniqueIndexes(target.origin.schemaId);
   try {
     const answer =
-      target.reach === "nested"
-        ? await ExecuteNested(target, stage, context)
+      target.reach === "ordered"
+        ? await ExecuteOrdered(target, stage, context)
         : await Execute(statement, target);
     NudgeChanges();
     return answer;

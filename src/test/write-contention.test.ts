@@ -296,6 +296,26 @@ describe("writes through a nested target over an indexed sort", function () {
       .count();
     expect(claimed).to.equal(WRITERS * CLAIMED);
   });
+
+  /**
+   * `orderBy` and `slice` fold into the table's own block, so the write reads it in one block, in
+   * index order, ascending for one writer and descending for the next. A write that locked the rows
+   * as that block reached them would deadlock past its retries.
+   */
+  it("applies every write through a sorted and sliced target, from writers sorting it either way", async () => {
+    const outcomes = await Promise.allSettled(
+      Array.from({ length: WRITERS }, (_, i) =>
+        SortedBy(i)
+          .update((row) => ({ g: row.key("g").default(0).add(1) }))
+          .run(),
+      ),
+    );
+    expect(Failures(outcomes)).to.deep.equal([]);
+    const written = await sorted()
+      .filter((row) => row.key("g").eq(WRITERS))
+      .count();
+    expect(written).to.equal(SEEDED);
+  });
 });
 
 describe("a write through a nested target of many rows", function () {
