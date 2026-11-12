@@ -290,9 +290,12 @@ async function EndPool() {
   dialect = undefined;
   connectFailure = undefined;
   ClearOptions();
-  if (current) {
-    await current.end();
-    Logger.Info(`${DISCONNECTED} ${engine?.name}`);
+  if (!current) {
+    return;
+  }
+  await current.end();
+  if (engine) {
+    Logger.Info(`${DISCONNECTED} ${engine.name}`);
   }
 }
 

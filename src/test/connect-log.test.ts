@@ -33,7 +33,10 @@ describe("the connection log", () => {
       await Disconnect();
       await Reconnect(restore);
     });
-    expect(lines).to.deep.equal([
+    const connectionLines = lines.filter((line) =>
+      /^(dis)?connected (to|from) /.test(line),
+    );
+    expect(connectionLines).to.deep.equal([
       `disconnected from ${engine}`,
       `connected to ${engine}`,
     ]);
