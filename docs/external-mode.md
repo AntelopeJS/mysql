@@ -67,6 +67,7 @@ The module reads each column as the type that its field declares, the same way w
 | `object`, `any`, a list | `JSON`                                                                                              |
 
 - `DATETIME` reads as UTC, and `DATE` as midnight UTC.
+- A zero date, `0000-00-00`, or one with a zero month or day, which a server without `NO_ZERO_DATE` may hold, reads as absent on every server version. It satisfies no comparison but `ne`, as an absent value does, and sorts before every real date. A profile leaves it out of the column's range and months.
 - A `BIGINT` or `DECIMAL` declared `string` reads as its exact text.
 - Comparisons, `get`, `getAll`, `lookup` and `orderBy` compare the column in its own type, so the database's indexes serve them. A value that is not valid for the column, such as an unknown `ENUM` label, a fraction for an integer, or text its character set cannot hold, such as an emoji against a `utf8mb3` or `latin1` column, matches nothing. It does not fail the query.
 - Sorting follows the column's own order. An `ENUM` sorts in its declared order but compares by its label, and a `BIGINT` declared `string` sorts numerically.

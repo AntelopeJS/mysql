@@ -163,6 +163,7 @@ interface Reading {
   readonly lossy?: string;
   readonly conversion?: Conversion;
   readonly writing?: Value;
+  readonly present?: Value;
 }
 
 const LOSSY_BIGINT =
@@ -208,10 +209,42 @@ const FLOAT_READINGS: Partial<Record<NativeFamily, Reading>> = {
   double: { value: Bare, writing: Bare },
 };
 
+/**
+ * Whether a date or a time names a day that exists. A server without `NO_ZERO_DATE` or
+ * `NO_ZERO_IN_DATE` may have stored `0000-00-00` or a zero month or day, which is no instant.
+ */
+const RealDay: Value = (column) =>
+  sql`(MONTH(${column}) <> 0 AND DAYOFMONTH(${column}) <> 0)`;
+
+/** A reading that answers NULL, an absent value, where the column holds no real day, on every server version. */
+function OnRealDays(value: Value): Value {
+  return (column) => sql`IF(${RealDay(column)}, ${value(column)}, NULL)`;
+}
+
+/**
+ * Instants read as absent where they name no real day, and compared through the bare column, so its
+ * index serves the comparison, only where they do.
+ */
 const TIMESTAMP_READINGS: Partial<Record<NativeFamily, Reading>> = {
-  timestamp: { value: Bare, writing: Bare },
-  datetime: { value: Bare, lossy: NAIVE, writing: Bare },
-  date: { value: DayAsInstant, conversion: Unconverted, writing: AsDay },
+  timestamp: {
+    value: OnRealDays(Bare),
+    conversion: Unconverted,
+    writing: Bare,
+    present: RealDay,
+  },
+  datetime: {
+    value: OnRealDays(Bare),
+    lossy: NAIVE,
+    conversion: Unconverted,
+    writing: Bare,
+    present: RealDay,
+  },
+  date: {
+    value: OnRealDays(DayAsInstant),
+    conversion: Unconverted,
+    writing: AsDay,
+    present: RealDay,
+  },
 };
 
 /**
@@ -324,6 +357,7 @@ function ReadingOf(kind: SqlType, column: CatalogColumn) {
   return {
     family,
     value: reading.value,
+    present: reading.present,
     lossy: InstantLoss(kind, family, column, reading.lossy),
     conversion: ConversionOf(family, column, reading.conversion),
     numeric: kind.kind === "float" && NUMERIC_FAMILIES.includes(family),

@@ -110,7 +110,9 @@ export interface Compiled {
  * into the column's own type for `operator`, so that a value the type cannot hold matches nothing
  * rather than failing the statement. `numeric` says an aggregate may read the column directly,
  * which an exact type such as `DECIMAL` or `BIGINT` needs to sum without drifting. `type` is the
- * column's native type: two operands of one type compare bare.
+ * column's native type: two operands of one type compare bare. `present` is where the column holds
+ * a value a read answers, for a column that may hold one a read answers as absent, such as a zero
+ * date: a comparison through the bare column holds only there.
  */
 export interface NativeOperand {
   readonly sql: Sql;
@@ -118,6 +120,7 @@ export interface NativeOperand {
   readonly bind: Conversion;
   readonly numeric: boolean;
   readonly type: string;
+  readonly present?: Sql;
 }
 
 /** References a column of an aliased relation; the single spelling every compiled fragment uses. */

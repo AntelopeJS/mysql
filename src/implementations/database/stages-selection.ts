@@ -398,6 +398,10 @@ const BetweenStage: PipelineStage = (relation, stage, context) => {
     "<",
   );
   const where = selection.relation.where;
+  const present = part.value.native?.present;
+  if (present) {
+    where.push(present);
+  }
   if (part.ranked && low.ranked && high.ranked) {
     where.push(
       RankedRange(context.dialect, part.ranked, low.ranked, high.ranked),

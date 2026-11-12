@@ -1,5 +1,5 @@
 import type { Dialect } from "../../dialect";
-import { sql } from "../../statement";
+import { type Sql, join, sql } from "../../statement";
 import type { Compiled, NativeOperand } from "./sql";
 import { type Ordering, PathReference } from "./json";
 import {
@@ -19,6 +19,8 @@ export interface CompiledPair {
   type: SqlType;
   /** One side is a native column and the other was converted to its type, NULL where it cannot be. */
   converted?: boolean;
+  /** Where the native columns compared bare hold a value a read answers, which the comparison holds only on. */
+  present?: Sql;
 }
 
 /**
@@ -180,6 +182,14 @@ function NativeSide(native: NativeOperand, type: SqlType): Compiled {
   return { sql: native.sql, type };
 }
 
+/** Where every native column a pair compares bare holds a value a read answers, if any may not. */
+function Present(...natives: readonly NativeOperand[]): Sql | undefined {
+  const present = natives.flatMap((native) =>
+    native.present ? [native.present] : [],
+  );
+  return present.length === 0 ? undefined : sql`(${join(present, sql` AND `)})`;
+}
+
 function NativePair(
   left: Compiled,
   right: Compiled,
@@ -195,6 +205,7 @@ function NativePair(
       left: NativeSide(left.native, type),
       right: NativeSide(right.native, type),
       type,
+      present: Present(left.native, right.native),
     };
   }
   if (left.native && type.kind === left.type.kind) {
@@ -203,6 +214,7 @@ function NativePair(
       right: { sql: left.native.bind(pair.right.sql, operator), type },
       type,
       converted: true,
+      present: Present(left.native),
     };
   }
   if (right.native && type.kind === right.type.kind) {
@@ -212,6 +224,7 @@ function NativePair(
       right: NativeSide(right.native, type),
       type,
       converted: true,
+      present: Present(right.native),
     };
   }
   return pair;

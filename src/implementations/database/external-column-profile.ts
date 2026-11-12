@@ -59,28 +59,27 @@ export interface ProfiledColumn {
   family: NativeFamily;
   kind: SqlType;
   quoted: Sql;
+  /** The column read as its proposed kind, as registration reads it. */
+  read: Sql;
 }
 
 export function Profiled(column: CatalogColumn): ProfiledColumn | undefined {
   const dialect = GetDialect();
   const family = dialect.external.types.family(column);
   const [proposed] = AcceptedDeclarations(dialect, column);
-  if (!family || !proposed) {
+  const reading =
+    proposed && dialect.external.types.reading(proposed.kind, column);
+  if (!family || !proposed || !reading) {
     return undefined;
   }
+  const quoted = QualifiedColumn(SOURCE_ALIAS, column.name);
   return {
     name: column.name,
     family,
     kind: proposed.kind,
-    quoted: QualifiedColumn(SOURCE_ALIAS, column.name),
+    quoted,
+    read: reading.value(quoted),
   };
-}
-
-/** An instant as registration reads the column: a `DATE` at midnight, the others as they are. */
-function InstantExpression(column: ProfiledColumn): Sql {
-  return column.family === "date"
-    ? GetDialect().sql.scalar.cast(column.quoted, "timestamp")
-    : column.quoted;
 }
 
 /** A date read as the instant registration reads it, an enum by its label, a number as one. */
@@ -89,7 +88,7 @@ function RangeExpression(column: ProfiledColumn): Sql | undefined {
     return column.quoted;
   }
   if (column.kind.kind === "timestamp") {
-    return InstantExpression(column);
+    return column.read;
   }
   return column.kind.kind === "float"
     ? GetDialect().sql.scalar.cast(column.quoted, "float")
@@ -253,10 +252,10 @@ async function MeasureMonths(
   if (column.kind.kind !== "timestamp") {
     return undefined;
   }
-  const month = GetDialect().external.measures.month(InstantExpression(column));
+  const month = GetDialect().external.measures.month(column.read);
   const measured = await session.measure(
     sql`SELECT ${month} AS month, COUNT(*) AS month_rows FROM ${source.from}
-      WHERE ${column.quoted} IS NOT NULL GROUP BY 1 ORDER BY 1 DESC LIMIT ${int(MONTH_LIMIT)}`,
+      WHERE ${column.read} IS NOT NULL GROUP BY 1 ORDER BY 1 DESC LIMIT ${int(MONTH_LIMIT)}`,
   );
   return Mapped(measured, (rows) =>
     rows

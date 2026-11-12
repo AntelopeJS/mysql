@@ -131,6 +131,11 @@ export type ValueCheck = (value: CheckedValue) => string | undefined;
 export interface ColumnReading {
   readonly family: NativeFamily;
   readonly value: (column: Sql) => Sql;
+  /**
+   * Where the column holds a value its read answers, for a column that can hold one it reads as
+   * absent: a comparison through the bare column holds only there.
+   */
+  readonly present?: (column: Sql) => Sql;
   readonly lossy?: string;
   readonly conversion?: Conversion;
   readonly numeric: boolean;
