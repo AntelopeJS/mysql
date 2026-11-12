@@ -28,10 +28,23 @@ const EMPTY_OBJECT = sql`JSON_OBJECT()`;
 /** The JavaScript falsy values a JSON value can hold; `NaN` and `undefined` have no spelling. */
 const FALSY = sql`CAST('[null, false, 0, ""]' AS JSON)`;
 
-/** A path to one key, quoted so any key text is one member name. */
-function KeyPath(key: string): Sql {
-  const escaped = key.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
-  return lit(`$."${escaped}"`);
+/** A path through keys, each quoted so any key text is one member name. */
+function KeyPath(...keys: readonly string[]): Sql {
+  const members = keys.map(
+    (key) => `."${key.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`,
+  );
+  return lit(`$${members.join("")}`);
+}
+
+/**
+ * One `JSON_EXTRACT` for the whole path. A chain of one per key builds each intermediate value, a
+ * subdocument for every key but the last, which the server then reads once more.
+ */
+function Member(document: Sql, ...keys: readonly string[]): Sql {
+  if (keys.length === 0) {
+    return document;
+  }
+  return sql`JSON_EXTRACT(${document}, ${KeyPath(...keys)})`;
 }
 
 /**
@@ -129,7 +142,8 @@ function RemoveKeys(document: Sql, keys: readonly string[]): Sql {
   if (keys.length === 0) {
     return document;
   }
-  return sql`JSON_REMOVE(${document}, ${join(keys.map(KeyPath), COMMA)})`;
+  const paths = keys.map((key) => KeyPath(key));
+  return sql`JSON_REMOVE(${document}, ${join(paths, COMMA)})`;
 }
 
 function SetKeys(
@@ -250,7 +264,7 @@ function Split(
 }
 
 export const json: JsonSyntax = {
-  member: (document, key) => sql`JSON_EXTRACT(${document}, ${KeyPath(key)})`,
+  member: Member,
   dynamicMember: (document, key) =>
     sql`JSON_EXTRACT(${document}, ${DynamicPath(key)})`,
   is: Is,

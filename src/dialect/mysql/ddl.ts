@@ -120,14 +120,14 @@ function KeyType(key: KeyColumn): Sql {
 
 /**
  * What a key column holds, as the generation expression the server evaluates per row. Its read is
- * the members the compiler reads the same value through, so the two cannot drift apart.
+ * the member the compiler reads the same value through, so the two cannot drift apart.
+ *
+ * The expression is not part of the column's signature, which says only what the column holds: an
+ * earlier release read the same path one key at a time, which holds the same value on every row,
+ * so its columns stay in place and serve this read.
  */
 function KeyExpression(key: KeyColumn): Sql {
-  const source = key.path.reduce(
-    (document, segment) => json.member(document, segment),
-    ident(key.source),
-  );
-  const value = json.key(key.read, source);
+  const value = json.key(key.read, json.member(ident(key.source), ...key.path));
   return "fit" in key && key.fit.kind === "prefix"
     ? scalar.left(value, key.fit.width)
     : value;

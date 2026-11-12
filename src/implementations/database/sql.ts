@@ -24,18 +24,27 @@ export interface KeyReference {
 }
 
 /**
- * Where a value read from a table's row comes from: a physical column and the JSON path below it.
- * Carried while the value is still that read, so a read that lands on what a key column holds can
- * name the key column instead. `keys` are the table's key columns at the row's alias, present only
- * where the row is the table itself and not a subselect that left them out. `elements` are the
- * columns a multi-valued index is built over.
+ * The physical column of a table's own row a JSON read starts from, as the key columns see it.
+ * `keys` are the table's key columns at the row's alias, which only the table itself has, not a
+ * subselect that left them out. `elements` are the columns a multi-valued index is built over.
  */
-export interface ValuePath {
+export interface RowColumn {
   readonly alias: string;
   readonly keys: readonly KeyColumn[];
   readonly elements: readonly string[];
   readonly source: string;
+}
+
+/**
+ * Where a value read out of JSON comes from: a document and the path of keys below it. Carried while
+ * the value is still that read, so a read of one more key reads the longer path from the document
+ * in one step, and a read of a table's own `column` that lands on what a key column holds can name
+ * the key column instead.
+ */
+export interface ValuePath {
+  readonly document: Sql;
   readonly path: readonly string[];
+  readonly column?: RowColumn;
 }
 
 export interface Compiled {
@@ -43,11 +52,11 @@ export interface Compiled {
   type: SqlType;
   /** The key column holding this value, where a declared index keys on it. */
   key?: KeyReference;
-  /** The row column and JSON path this value reads, while it is still exactly that read. */
+  /** The document and JSON path this value reads, while it is still exactly that read. */
   path?: ValuePath;
   /**
-   * The row column and JSON path a default stands in for: this value is that read on every row
-   * where the read is present, and the default elsewhere.
+   * The document and JSON path a default stands in for: this value is that read on every row where
+   * the read is present, and the default elsewhere.
    */
   defaulted?: ValuePath;
   /** The column underneath, in its own type, where `sql` reads it converted (external relations only). */

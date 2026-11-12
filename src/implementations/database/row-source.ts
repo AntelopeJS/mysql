@@ -188,10 +188,11 @@ export class ColumnRowSource implements RowSource {
         KeySubject(name),
       );
     }
+    const overflow = this.overflow();
     const member: Compiled = {
-      sql: this.dialect.sql.json.member(this.overflow(), name),
+      sql: this.dialect.sql.json.member(overflow, name),
       type: OPAQUE,
-      path: this.path(EXTRA_COLUMN, [name]),
+      path: this.path(EXTRA_COLUMN, overflow, [name]),
     };
     return WithDefault(this.dialect, member, def);
   }
@@ -210,7 +211,7 @@ export class ColumnRowSource implements RowSource {
   private declared(column: string, type: SqlType): Compiled {
     const value = this.address(column, type);
     if (IsJsonBacked(type)) {
-      return { ...value, path: this.path(column, []) };
+      return { ...value, path: this.path(column, value.sql, []) };
     }
     if (type.kind !== "text" || !this.keys) {
       return value;
@@ -219,17 +220,16 @@ export class ColumnRowSource implements RowSource {
     return key ? { ...value, key } : value;
   }
 
-  private path(source: string, path: string[]): ValuePath | undefined {
-    if (!this.keys) {
-      return undefined;
-    }
-    return {
-      alias: this.keys.alias,
-      keys: this.keys.columns,
-      elements: this.keys.elements,
+  /** A read of `path` below the physical column `source`, which `document` reads. */
+  private path(source: string, document: Sql, path: string[]): ValuePath {
+    const keys = this.keys;
+    const column = keys && {
+      alias: keys.alias,
+      keys: keys.columns,
+      elements: keys.elements,
       source,
-      path,
     };
+    return { document, path, column };
   }
 
   /**
@@ -291,10 +291,9 @@ export class ColumnRowSource implements RowSource {
       return { value, order: value.sql };
     }
     const key = part.key;
-    const json = this.dialect.sql.json;
-    const read = key.path.reduce(
-      (document, segment) => json.member(document, segment),
+    const read = this.dialect.sql.json.member(
       this.address(key.source, OPAQUE).sql,
+      ...key.path,
     );
     const value = this.keyRead(key.read, read);
     if (!this.keys) {
@@ -315,14 +314,14 @@ export class JsonRowSource implements RowSource {
     private readonly value: Compiled,
   ) {}
 
+  /** A member, read from the document the value itself was read from where it still is a read. */
   public field(name: string, def?: Compiled): Compiled {
     const parent = this.toJson();
-    const path = parent.path && {
-      ...parent.path,
-      path: [...parent.path.path, name],
-    };
+    const path: ValuePath = parent.path
+      ? { ...parent.path, path: [...parent.path.path, name] }
+      : { document: parent.sql, path: [name] };
     const raw: Compiled = {
-      sql: this.dialect.sql.json.member(parent.sql, name),
+      sql: this.dialect.sql.json.member(path.document, ...path.path),
       type: OPAQUE,
       path,
     };

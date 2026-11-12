@@ -58,7 +58,10 @@ export function KeyAt(
 }
 
 function KeyOfPath(path: ValuePath, read: KeyRead): KeyReference | undefined {
-  return KeyAt(path.alias, path.keys, path.source, path.path, read);
+  const column = path.column;
+  return (
+    column && KeyAt(column.alias, column.keys, column.source, path.path, read)
+  );
 }
 
 /**
@@ -92,10 +95,12 @@ export function PathReference(
  */
 export function Contains(dialect: Dialect, array: Compiled, element: Sql): Sql {
   const path = array.path;
+  const column = path?.column;
   const isIndexed =
     path !== undefined &&
+    column !== undefined &&
     path.path.length === 0 &&
-    path.elements.includes(path.source);
+    column.elements.includes(column.source);
   const operand = isIndexed
     ? dialect.sql.json.indexedElements(array.sql)
     : array.sql;

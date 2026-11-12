@@ -65,8 +65,11 @@ export interface Walk {
  * member says it reads or takes a scalar; SQL NULL stays SQL NULL throughout.
  */
 export interface JsonSyntax {
-  /** The value under a static key of a document; SQL NULL when absent or not an object. */
-  member(document: Sql, key: string): Sql;
+  /**
+   * The value under a path of static keys below a document, read in one step however deep: SQL
+   * NULL when a key is absent or the value above it is not an object. No key is the document.
+   */
+  member(document: Sql, ...keys: readonly string[]): Sql;
   /** The value under a key the statement computes as text. */
   dynamicMember(document: Sql, key: Sql): Sql;
   /** Whether a value is of the kind: SQL NULL for SQL NULL, and never an error. */
