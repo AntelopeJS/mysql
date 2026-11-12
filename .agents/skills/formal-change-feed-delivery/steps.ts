@@ -152,10 +152,33 @@ function visit(db: InnoDb, scan: Scan, after: bigint | undefined, taken: number)
   };
 }
 
+/**
+ * A plain `unsequenced`. At READ COMMITTED, InnoDB reads it as a consistent read: one read view,
+ * taken as the statement starts reading, judges every row it visits, so the whole read is one step.
+ */
+function snapshot(db: InnoDb, scan: Scan): Op {
+  return {
+    label: `select unnumbered rows as of one moment${scan.descending ? ", newest first" : ""}`,
+    local: () => false,
+    footprint: reads(UNNUMBERED, "ids"),
+    blocked: () => false,
+    run: (txn) => {
+      const rows = scan.descending ? db.rows().reverse() : db.rows();
+      const taken = rows.filter((each) => db.visible(each, txn)?.seq === null).slice(0, scan.limit);
+      return answer(
+        taken.map((each) => row({ id: each.id.toString() })),
+        0,
+        ` -> ids ${ids(taken.map((each) => each.id))}`,
+      );
+    },
+  };
+}
+
 /** `unsequenced`: the rows still without a `seq`, in log order, read as InnoDB reads them. */
 export function unsequenced(db: InnoDb, descending: boolean, limit: number, mode: string | undefined): Op {
   const locking = mode !== undefined;
-  return visit(db, { descending, limit, locking, skip: mode === " FOR UPDATE SKIP LOCKED" }, undefined, 0);
+  const scan = { descending, limit, locking, skip: mode === " FOR UPDATE SKIP LOCKED" };
+  return locking ? visit(db, scan, undefined, 0) : snapshot(db, scan);
 }
 
 export function stamp(db: InnoDb, list: readonly string[], first: bigint): Op {

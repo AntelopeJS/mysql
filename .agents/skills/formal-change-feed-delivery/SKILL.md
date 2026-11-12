@@ -5,13 +5,13 @@ description: Interleaving check, with fast-check and a partial-order-reduced ste
 
 # Formal check: change-feed delivery
 
-A row trigger writes each change to `__antelope_changes` without a `seq`, in the writer's transaction. A sequencer pass locks the clock row, takes the rows still without a `seq` whose transactions have committed (`FOR UPDATE SKIP LOCKED`), numbers them from the clock in log order, and moves the clock, in one transaction. A feed opens by running a pass and taking the clock's frontier as its watermark, then polls the rows numbered above it. The reaper numbers, then deletes the numbered rows past retention, and raises each table's high-water so a feed that missed them ends with a loss error. `docs/change-feeds.md` states the promise this check guards.
+A row trigger writes each change to `__antelope_changes` without a `seq`, in the writer's transaction. A sequencer pass locks the clock row, reads the rows still without a `seq` that had committed when the read began (one snapshot), numbers them from the clock in log order, and moves the clock, in one transaction. A feed opens by running a pass and taking the clock's frontier as its watermark, then polls the rows numbered above it. The reaper numbers, then deletes the numbered rows past retention, and raises each table's high-water so a feed that missed them ends with a loss error. `docs/change-feeds.md` states the promise this check guards.
 
 **The property.** A feed delivers every change committed on its table and instance after its open read the frontier, exactly once, two changes of one document in the order they committed, and nothing else, unless it ends with a loss error that names the range that went.
 
 **The harm.** A break loses, repeats or reorders an order, a payment or an audit event for every consumer that mirrors a table from its feed, and nothing fails: the feed keeps running.
 
-The check runs the real `ReadFeedEvent`, `Sequence` and `ReapOnce` of `src/`, compiled with this folder, against `server.ts`, a fake server. `innodb.ts` holds the log, the clock and the reaped table under READ COMMITTED: a transaction's changes stay pending until it commits, a plain read sees the committed version, and a locking read or a write of a row another transaction holds waits or skips it. `statements.ts` recognises each statement of `capture.ts` by its SQL text, and `steps.ts` runs it as InnoDB does: one indivisible step per statement, except the sequencer's locking scan, which InnoDB reads row by row against the latest data, so each row it visits is a step of its own. A statement the table does not know stops the check with exit 2, so an edit to the SQL cannot pass unread. fast-check draws the scenarios with a fixed seed, and `explore.ts` runs each one under the orders of its steps that can change an outcome.
+The check runs the real `ReadFeedEvent`, `Sequence` and `ReapOnce` of `src/`, compiled with this folder, against `server.ts`, a fake server. `innodb.ts` holds the log, the clock and the reaped table under READ COMMITTED: a transaction's changes stay pending until it commits, a plain read sees the committed version, and a locking read or a write of a row another transaction holds waits or skips it. `statements.ts` recognises each statement of `capture.ts` by its SQL text, and `steps.ts` runs it as InnoDB does: one indivisible step per statement. A plain `SELECT` at READ COMMITTED reads one snapshot taken as it starts, so the sequencer's read of unnumbered rows is one step. A locking scan, which InnoDB reads row by row against the latest data, would be a step per row it visits; `steps.ts` keeps that model for the scratch change that restores `FOR UPDATE SKIP LOCKED`. A statement the table does not know stops the check with exit 2, so an edit to the SQL cannot pass unread. fast-check draws the scenarios with a fixed seed, and `explore.ts` runs each one under the orders of its steps that can change an outcome.
 
 - `check.mjs` refuses to run when the code `check.ts` and `server.ts` copy has changed (see Scope), compiles this folder and the `src/` it imports into a scratch folder with the repository's `tsc`, runs `check.ts` there, and deletes the folder.
 - `check.ts` runs a scenario: seeded changes, then writers, change-clock ticks, reaper passes and one feed, all started at once. Once every step has run, a last pass numbers what is left and the feed reads to the frontier. Then the rules judge the run.
@@ -31,8 +31,8 @@ node .agents/skills/formal-change-feed-delivery/check.mjs --full   # full bounds
 
 | Bounds | Scenario size | Scenarios | Orders per scenario, at most | Orders run | Cut short as covered | Scenarios cut at the cap | Wall time |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| CI (default) | 0 to 1 seed, 1 to 2 writers of 1 write, 0 to 1 tick, 0 to 1 reaper | 100 | 20,000 | 313,460 | 143,391 | 16 | 65 s |
-| Full (`--full`) | 0 to 2 seeds, 1 to 2 writers of 1 to 2 writes, 0 to 2 ticks, 0 to 2 reapers | 100 | 20,000 | 752,200 | 328,228 | 45 | 2 min 21 s |
+| CI (default) | 0 to 1 seed, 1 to 2 writers of 1 write, 0 to 1 tick, 0 to 1 reaper | 100 | 20,000 | 270,941 | 108,437 | 12 | 56 s |
+| Full (`--full`) | 0 to 2 seeds, 1 to 2 writers of 1 to 2 writes, 0 to 2 ticks, 0 to 2 reapers | 100 | 20,000 | 679,984 | 287,553 | 39 | 2 min 7 s |
 
 Every scenario also draws a `changeBatchSize` of 1 to 3 and a retention of 0 or 30 steps. Times are with the default `--jobs` (4) on a shared 16-core machine, `tsc` included.
 
@@ -61,18 +61,11 @@ A change that commits while the open runs, after the feed's first read began and
 
 ## Findings
 
-`KeepsRowOrder` breaks at the sync commit. A sequencer pass's scan can number a document's later change before its earlier one, and the feed then delivers them in that order.
+None at the sync commit. Every rule holds under both bounds.
 
-The counterexample under the CI bounds, as the check prints it, cut to its steps:
+`KeepsRowOrder` broke before PR #1 merged, and this check found it. The sequencer then read the unnumbered rows with `FOR UPDATE SKIP LOCKED`, which InnoDB reads row by row. A scan skipped a row whose transaction was still open. That transaction committed, and another writer changed the same document while the scan ran. The scan then numbered the later change first, and a feed delivered the two out of order. On MySQL 8.4.13 with the statements of `capture.ts`, the scan numbered w2 `seq` 1 and w1, which committed first, `seq` 2.
 
-1. Writer w1 writes document a and logs id 2. Its transaction stays open.
-2. The feed opens: its pass numbers the seeded row and reads frontier 1.
-3. A change-clock tick locks the clock and starts `unsequenced`. It reaches id 2, which w1 holds, and skips it.
-4. w1 commits. Writer w2 writes document a, which w1 no longer locks, logs id 3, and commits.
-5. The tick's scan goes on, takes id 3, and numbers w2's change `seq` 2.
-6. The feed delivers w2's change. The next pass numbers w1's change `seq` 3, and the feed delivers it after w2's, though w1 committed first.
-
-`docs/change-feeds.md` promises the opposite: "A change written after another change's transaction committed is numbered after it." The same order happens on MySQL 8.4.13 with the statements of `capture.ts`, when a scan is slow enough for w1 to commit and w2 to write while it runs. In that run, w1 holds id 1, an open bulk transaction holds a million rows, and the scan that skipped id 1 numbered w2's id 1048562 `seq` 1 and w1's `seq` 2. The window is the time one scan takes, so a large backlog of rows still to number widens it. A fix belongs in the sequencer, not here: for example, a pass could stop numbering at the first row it skips.
+PR #1, merged as `0631d5f`, reads the unnumbered rows as one snapshot instead. The same run on MySQL 8.4.13 numbers w1 `seq` 1 and w2 `seq` 2: the snapshot taken before w1 committed sees neither row, and the next pass sees both. The first row of "Confirm the check can fail" restores the old scan and shows the check still catches it. With the CI scenarios run to 400,000 orders each, every rule still holds and 4 of the 100 scenarios reach that cap.
 
 ## Read a result
 
@@ -85,7 +78,7 @@ Then decide whether the code or the model is wrong:
 3. Ask whether the scenario could happen: the writers, ticks, reapers and feed are concurrent in production, and `check.ts` starts them as production does. A run that only a wrong scenario reaches is a modelling error too.
 4. Otherwise the code breaks the promise. Report it with the trace, and do not weaken a rule or the model to make it pass. To record it as a known finding, add the rule to `FINDINGS` in `check.ts` and describe it under Findings.
 
-A footprint that is too small in `steps.ts`, `server.ts` or `check.ts` makes the explorer skip orders, and the check then passes on code it would fail. When you add or change a step, give it every resource its outcome depends on, and its blocked check every lock it waits on. Then compare the explorer with full enumeration: make `dependent` in `explore.ts` answer `true` in a scratch copy, run both on scenarios small enough to finish, and compare the outcomes each reaches. At the sync commit, 17 drawn scenarios that finish without reduction reached the same outcomes both ways, and so did a two-writer scenario of one document: 34 outcomes, in 82,598 orders without reduction and under a thousand with it.
+A footprint that is too small in `steps.ts`, `server.ts` or `check.ts` makes the explorer skip orders, and the check then passes on code it would fail. When you add or change a step, give it every resource its outcome depends on, and its blocked check every lock it waits on. Then compare the explorer with full enumeration: make `dependent` in `explore.ts` answer `true` in a scratch copy, run both on scenarios small enough to finish, and compare the outcomes each reaches. At the sync commit, 19 drawn scenarios that finish without reduction reached the same outcomes both ways, and so did a two-writer scenario of one document: 34 outcomes, in 82,598 orders without reduction and under a thousand with it.
 
 ## Scope and assumptions
 
@@ -108,7 +101,7 @@ The real `LIVE.open` and `Look` take a pooled connection, so the check runs a co
 The model assumes:
 
 - InnoDB at READ COMMITTED with record locks only. Every statement of the log uses its primary key, its unique `seq` key or `tbl_seq`, and the sequencer and the reaper set READ COMMITTED first. A `DELETE` waits on a locked row whose committed or pending `seq` is in its range.
-- A locking scan visits rows in `id` order and judges each row when it reaches it. It passes over a row that committed with a `seq` without a step, since only a pass, which holds the clock the scan holds, numbers a row.
+- A plain `SELECT` reads one snapshot of the committed rows, taken as it starts. A locking scan visits rows in `id` order and judges each row when it reaches it, passing over a row that committed with a `seq` without a step, since only a pass, which holds the clock the scan holds, numbers a row.
 - One tick of the fake clock per step. With a retention of 0, any numbered row can go at the reaper's next step. With a retention of 30, whether a row is old enough depends on how many steps ran, which the reduction ignores: those scenarios run some of the timings, not all.
 - A writer locks its documents in one order, so writers never deadlock each other. InnoDB would roll one back, and a writer that rolls back is drawn already.
 
@@ -123,10 +116,11 @@ Left out, each covered by its own tests or not at all:
 
 ## Confirm the check can fail
 
-Each scratch change was applied to `src/` in a scratch worktree at the sync commit and run under the CI bounds. With the change dropped, the check exits 0 and prints `finding KeepsRowOrder`.
+Each scratch change was applied to `src/` in a scratch worktree at the sync commit and run under the CI bounds. With the change dropped, the check exits 0 and every rule holds.
 
 | Scratch change in the code | Result, CI bounds |
 | --- | --- |
+| `unsequenced` reads with `FOR UPDATE SKIP LOCKED` again, as before the fix (capture.ts:262) | `BROKEN KeepsRowOrder` |
 | `Poll` moves the watermark to the frontier after a full batch (feeds.ts:289-290) | `BROKEN DeliversEveryChange` |
 | `Poll` moves the watermark to one below the last row of a full batch (feeds.ts:290) | `BROKEN DeliversOnce` |
 | `Poll` ends the feed when its watermark equals the high-water (feeds.ts:277) | `BROKEN LapsesOnlyOnLoss` |
@@ -135,7 +129,7 @@ Each scratch change was applied to `src/` in a scratch worktree at the sync comm
 | `ReapBatch` deletes without raising the high-water (reaper.ts:48) | `BROKEN DeliversEveryChange` |
 | `ReapBatch` passes a retention of 0 whatever it is given (reaper.ts:41) | `BROKEN KeepsRetention` |
 | `unsequenced` numbers the newest row first (`ORDER BY id DESC`, capture.ts:262) | `BROKEN NumbersEachPassInLogOrder` |
-| `SequenceOnce` runs its statements outside a transaction (sequencer.ts:110) | `BROKEN LapsesOnlyOnLoss`, `BROKEN Settles` |
+| `SequenceOnce` runs its statements outside a transaction (sequencer.ts:112) | `BROKEN LapsesOnlyOnLoss`, `BROKEN Settles` |
 | `Numbered` skips a busy clock even when the feed's open asks to wait (sequencer.ts:77) | `BROKEN SkipsChangesBeforeOpen` |
 | `Numbered` moves the clock one short of the rows it numbered (sequencer.ts:87) | `BROKEN DeliversEveryChange`, `BROKEN LapsesOnlyOnLoss`, `BROKEN Settles` |
 | `LIVE.open` skips a busy clock (feeds.ts:83) | exit 2: the copied open no longer matches |
@@ -146,15 +140,14 @@ Each `BROKEN` run exited 1.
 
 The rules a run reports depend on the first scenario that breaks one, so a row lists what that scenario broke.
 
-Dropping `SKIP LOCKED` from `unsequenced` changes no outcome: under READ COMMITTED a plain read never sees another transaction's uncommitted rows, and the clock lock already serialises the passes.
 
 ## Keep it in step
 
-Sync commit: `9417068`. At that commit the model and the covered files above describe the same code.
+Sync commit: `0631d5f`. At that commit the model and the covered files above describe the same code.
 
 When a change touches a covered file:
 
-1. Run both bounds. A `BROKEN` rule is a bug in the change until the steps in "Read a result" show it is the model's. A `HOLDS KeepsRowOrder` means no explored order breaks it any more. When the line says unconfirmed, scenarios were cut at the cap, and a change that only moves the counterexample past the cap reads the same: rerun with a larger `--orders`, 400,000 or more, until the finding returns or no scenario is cut. Only then remove it from `FINDINGS` and from Findings.
+1. Run both bounds. A `BROKEN` rule is a bug in the change until the steps in "Read a result" show it is the model's. A `HOLDS <rule>` for a recorded finding means no explored order breaks it any more. When the line says unconfirmed, scenarios were cut at the cap, and a change that only moves the counterexample past the cap reads the same: rerun with a larger `--orders`, 400,000 or more, until the finding returns or no scenario is cut. Only then remove it from `FINDINGS` and from Findings.
 2. If the change is intended and changes what a statement says or what a covered function does, update `statements.ts`, `steps.ts`, `server.ts`, `check.ts` or the copied text in `check.mjs` to match, and the coverage table above.
 3. Apply each row of "Confirm the check can fail" again, and update a row whose code moved.
 4. Move the sync commit forward only once you have confirmed that the model describes the code at the new commit.

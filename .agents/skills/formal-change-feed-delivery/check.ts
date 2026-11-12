@@ -46,7 +46,7 @@ const STEP_BUDGET = 500;
 const LAPSED = /events (\d+) through (\d+) were reaped/;
 
 /** Rules the code breaks today; SKILL.md records each one. */
-const FINDINGS: ReadonlySet<string> = new Set<keyof typeof RULES>(["KeepsRowOrder"]);
+const FINDINGS: ReadonlySet<string> = new Set<keyof typeof RULES>([]);
 
 interface Options {
   size: Size;
