@@ -32,6 +32,14 @@ describe("The MySQL regular expression translation", () => {
   it("ends a class at its closing bracket, so what follows is outside it", () => {
     expect(translate("[a].")).to.equal("[a][^\\n\\r\\u2028\\u2029]");
   });
+
+  it("escapes a hyphen beside a set escape in a class, which would otherwise bound a range with the escape's first or last member", () => {
+    expect(translate("[\\d-.]")).to.equal("[0-9\\-.]");
+    expect(translate("[.-\\d]")).to.equal("[.\\-0-9]");
+    expect(translate("[\\d-\\d]")).to.equal("[0-9\\-0-9]");
+    expect(translate("[a-z]")).to.equal("[a-z]");
+    expect(translate("[\\b-z]")).to.equal("[\\x{08}-z]");
+  });
 });
 
 describe("The MySQL int32 members", () => {

@@ -146,6 +146,29 @@ const INSIDE_CLASS_ESCAPES = new Map([
 ]);
 
 /**
+ * The escapes that stand for a set of characters. JavaScript never reads one as the end of a range,
+ * so a hyphen beside one inside a class is a hyphen; spelled out as ICU members, the escape would
+ * make that hyphen a range with its first or last member.
+ */
+const SET_ESCAPES = new Set(["d", "D", "w", "W", "s", "S"]);
+
+const HYPHEN = "-";
+const LITERAL_HYPHEN = ESCAPE + HYPHEN;
+
+function IsSetEscapeAt(pattern: string, at: number): boolean {
+  return pattern[at] === ESCAPE && SET_ESCAPES.has(pattern[at + 1] ?? "");
+}
+
+/** A character inside a class, other than an escape, as ICU reads it the JavaScript way. */
+function InClass(pattern: string, at: number): string {
+  const char = pattern[at];
+  if (char === HYPHEN && IsSetEscapeAt(pattern, at + 1)) {
+    return LITERAL_HYPHEN;
+  }
+  return CLASS_METACHARACTERS.has(char) ? ESCAPE + char : char;
+}
+
+/**
  * Rewrites a JavaScript pattern into ICU's flavour, following escapes and classes. Only a literal
  * pattern reaches it: a pattern the statement computes is bound as it is.
  */
@@ -159,10 +182,14 @@ function TranslatePattern(pattern: string): string {
       const escapes = inClass ? INSIDE_CLASS_ESCAPES : OUTSIDE_CLASS_ESCAPES;
       out += escapes.get(escaped) ?? char + escaped;
       at++;
+      if (inClass && SET_ESCAPES.has(escaped) && pattern[at + 1] === HYPHEN) {
+        out += LITERAL_HYPHEN;
+        at++;
+      }
       continue;
     }
     if (inClass) {
-      out += CLASS_METACHARACTERS.has(char) ? ESCAPE + char : char;
+      out += InClass(pattern, at);
       inClass = char !== CLASS_CLOSE;
       continue;
     }
