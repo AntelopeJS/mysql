@@ -110,6 +110,7 @@ const config: VerifyConfig = {
         "src/implementations/database/feed-poll.ts",
         "src/implementations/database/sequencer.ts",
         "src/implementations/database/reaper.ts",
+        "src/implementations/database/change-loop.ts",
         "src/dialect/mysql/capture.ts",
       ],
       files: [`${FORMAL_CHANGE_FEED_DELIVERY}/**`],
