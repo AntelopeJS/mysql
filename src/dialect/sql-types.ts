@@ -38,12 +38,31 @@ export interface BindSyntax {
   json(value: ConstantJson): Sql;
 }
 
-/** What a select that {@link JsonSyntax.collectInPlace} aggregates in place answers of its rows. */
+/** What a select that {@link InPlaceSyntax.collect} aggregates in place answers of its rows. */
 export interface CollectedRows {
   readonly distinct: boolean;
   readonly order?: Sql;
   readonly offset?: number;
   readonly count?: number;
+}
+
+/**
+ * How an engine that reads no outer column inside a derived table answers a nested query without
+ * one: its rows are aggregated in the select that reads the outer row, and read back as rows only
+ * through a walk, which reads the outer row where a derived table cannot.
+ */
+export interface InPlaceSyntax {
+  /**
+   * Aggregates JSON elements into an array, empty rather than SQL NULL over no row, with the rows
+   * the select it is in would answer: deduplicated, in the order of its sort terms, and bounded by
+   * its offset and count.
+   */
+  collect(element: Sql, rows: CollectedRows): Sql;
+  /**
+   * Text two JSON values share exactly when they are equal as JSON, whatever the order of an
+   * object's keys or the spelling of a number; SQL NULL stays SQL NULL.
+   */
+  canonical(json: Sql): Sql;
 }
 
 /** One member of a document assembled from columns. `container` marks a JSON-backed member. */
@@ -61,6 +80,8 @@ export type WalkKind = "elements" | "keys" | "members";
  * aggregates them. A non-container yields no row; a JSON null element reads as SQL NULL.
  */
 export interface Walk {
+  /** The rows as a FROM item, without the alias the walk was given. */
+  readonly from: Sql;
   /** The 1-based place of a row in the container's order. */
   readonly ordinal: Sql;
   /** An element, a key as a JSON string, or a member's value. */
@@ -154,12 +175,10 @@ export interface JsonSyntax {
    */
   collect(element: Sql, ordinal: Sql | undefined, distinct: boolean): Sql;
   /**
-   * Aggregates JSON elements into an array, empty rather than SQL NULL over no row, with the rows
-   * the select it is in would answer: deduplicated, in the order of its sort terms, and bounded by
-   * its offset and count. Absent where the engine's aggregate takes none of these, and the select
-   * is a derived table that {@link JsonSyntax.collect} aggregates instead.
+   * How a nested query is answered without a derived table. Absent where a derived table reads the
+   * outer row, and {@link JsonSyntax.collect} aggregates one instead.
    */
-  readonly collectInPlace?: (element: Sql, rows: CollectedRows) => Sql;
+  readonly inPlace?: InPlaceSyntax;
   /** The number of elements of an array, or of members of an object. */
   length(container: Sql): Sql;
   /**

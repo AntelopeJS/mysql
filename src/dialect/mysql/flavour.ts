@@ -57,8 +57,8 @@ export interface Flavour {
     distinct: boolean,
     textOf: (value: Sql) => Sql,
   ): Sql;
-  /** The JSON syntax's `collectInPlace`, where the engine's aggregate takes an order and bounds. */
-  readonly collectInPlace?: JsonSyntax["collectInPlace"];
+  /** The JSON syntax's `inPlace`, where a derived table reads no outer column. */
+  readonly inPlace?: JsonSyntax["inPlace"];
   /** Whether an `INSERT` can answer values of the row it wrote, by a `RETURNING` clause. */
   readonly returning: boolean;
   /** Whether a derived table can read the columns of the tables joined before it. */

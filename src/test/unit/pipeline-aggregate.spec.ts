@@ -66,15 +66,15 @@ describe("the distinct stage", () => {
     expect(relation.single).to.equal(false);
   });
 
-  it("sorts inside a subselect, since DISTINCT refuses an order term outside its select list", () => {
-    const sql = Compile(Root().orderBy("age").distinct("name")).sql;
-    expect(sql).to.match(/^SELECT DISTINCT `t1`\.`name` AS `value` FROM \(/);
-    expect(sql).to.match(/ORDER BY `t0`\.`age` ASC\) AS `t1`$/);
+  it("drops the order ahead of it in the select that dedups, since DISTINCT refuses an order term outside its select list", () => {
+    expect(Compile(Root().orderBy("age").distinct("name")).sql).to.equal(
+      `SELECT DISTINCT \`t0\`.\`name\` AS \`value\` ${FROM_PEOPLE}`,
+    );
   });
 
-  it("counts the distinct rows by wrapping them, not by counting every row", () => {
-    expect(Compile(Root().distinct("name").count()).sql).to.match(
-      /^SELECT CAST\(COUNT\(\*\) AS DOUBLE\) AS `value` FROM \(SELECT DISTINCT /,
+  it("counts the distinct values in the select that dedups them, a SQL NULL counted as one", () => {
+    expect(Compile(Root().distinct("name").count()).sql).to.equal(
+      `SELECT CAST(COUNT(DISTINCT \`t0\`.\`name\`) + (COUNT(*) > COUNT(\`t0\`.\`name\`)) AS DOUBLE) AS \`value\` ${FROM_PEOPLE}`,
     );
   });
 });

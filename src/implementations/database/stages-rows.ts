@@ -6,11 +6,12 @@ import type { Dialect } from "../../dialect";
 import { type Sql, int, sql } from "../../statement";
 import type { Compiled } from "./sql";
 import { Cast, Widen } from "./coerce";
-import type { SqlType } from "./types";
+import { ArrayOf, OPAQUE, type SqlType } from "./types";
+import type { InPlaceSyntax } from "../../dialect/sql-types";
 import type { DecodingContext } from "./context";
 import { DecodeFunction, DecodeValue, RecordedLambda } from "./value";
 import type { PipelineStage, PipelineStageMap } from "./pipeline";
-import { Numeric, Predicate } from "./readings";
+import { AsJson, Numeric, Predicate } from "./readings";
 import { FIRST_OPERAND, RequireOperand, SECOND_OPERAND } from "./stage";
 import {
   CurrentValue,
@@ -22,6 +23,8 @@ import {
 } from "./relation";
 import {
   Numbered,
+  type NumberedRows,
+  OrderTerms,
   Prepare,
   type RelationFlag,
   Render,
@@ -120,13 +123,50 @@ function RowRange(
 }
 
 /**
+ * Numbers the rows through a walk of their aggregate in place, deduplicated and ordered as the
+ * relation asks, where the engine reads no outer row inside the derived table {@link Numbered}
+ * numbers them in. The walk reads it, so a nested query bounded by a count it computes reads its
+ * outer row as well. The rows come back as the values they yield, in value mode.
+ */
+function NumberedInPlace(
+  relation: Relation,
+  inPlace: InPlaceSyntax,
+  context: DecodingContext,
+): NumberedRows {
+  const dialect = context.dialect;
+  const value = CurrentValue(relation);
+  const rows = { distinct: relation.distinct, order: OrderTerms(relation) };
+  relation.orderBy = [];
+  relation.distinct = false;
+  const collected = SetProjection(relation, {
+    sql: inPlace.collect(AsJson(dialect, value).sql, rows),
+    type: ArrayOf(value.type),
+  });
+  const alias = context.nextAlias();
+  const walk = dialect.sql.json.walk(
+    "elements",
+    sql`(${Render(collected)})`,
+    alias,
+  );
+  const numbered = SetProjection(
+    ValueRelation(dialect, walk.from, alias, value.type),
+    Cast(dialect, { sql: walk.value, type: OPAQUE }, value.type),
+  );
+  numbered.orderBy = [{ sql: walk.ordinal, descending: false }];
+  return { relation: numbered, rowNumber: walk.ordinal };
+}
+
+/**
  * Bounds the rows: a known count as a bound `LIMIT` and `OFFSET`, and a count the statement
- * computes as a range of the rows' numbers, since the engine takes only a constant there.
+ * computes as a range of the rows' numbers, since the engine takes only a constant there. Rows
+ * that read the outer row are numbered in place where the engine needs it; a bound that reads it
+ * alone does not count, since the range is tested outside the rows it numbers.
  */
 function Bounded(
   relation: Relation,
   offset: RowBound,
   count: RowBound,
+  readsOuterRow: boolean,
   context: DecodingContext,
 ): Relation {
   if (offset.kind === "constant" && count.kind === "constant") {
@@ -135,10 +175,14 @@ function Bounded(
     prepared.limit = count.count;
     return prepared;
   }
-  const numbered = Numbered(
-    Prepare(relation, NUMBERING_BLOCKERS, context),
-    context,
-  );
+  const inPlace = readsOuterRow ? context.dialect.sql.json.inPlace : undefined;
+  const numbered = inPlace
+    ? NumberedInPlace(
+        Prepare(relation, BOUND_BLOCKERS, context),
+        inPlace,
+        context,
+      )
+    : Numbered(Prepare(relation, NUMBERING_BLOCKERS, context), context);
   numbered.relation.where.push(
     RowRange(context.dialect, numbered.rowNumber, offset, count),
   );
@@ -188,18 +232,20 @@ const OrderByStage: PipelineStage = (relation, stage, context) => {
 };
 
 const SliceStage: PipelineStage = (relation, stage, context) => {
+  const readsOuterRow = context.readsOuterRow;
   const offset = Bound(stage, FIRST_OPERAND, context);
   const count =
     stage.args[SECOND_OPERAND] === undefined
       ? UNBOUNDED
       : Bound(stage, SECOND_OPERAND, context);
-  return Bounded(relation, offset, count, context);
+  return Bounded(relation, offset, count, readsOuterRow, context);
 };
 
 const NthStage: PipelineStage = (relation, stage, context) => {
+  const readsOuterRow = context.readsOuterRow;
   const offset = Bound(stage, FIRST_OPERAND, context);
   const one: RowBound = { kind: "constant", count: SINGLE_ROW };
-  const bounded = Bounded(relation, offset, one, context);
+  const bounded = Bounded(relation, offset, one, readsOuterRow, context);
   bounded.single = true;
   return bounded;
 };

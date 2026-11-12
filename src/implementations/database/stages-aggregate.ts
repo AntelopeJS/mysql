@@ -8,7 +8,7 @@ import type { SqlType } from "./types";
 import { AsFloat, Numeric } from "./readings";
 import type { PipelineStage, PipelineStageMap } from "./pipeline";
 import { CurrentValue, type Relation, SetProjection } from "./relation";
-import { AbsorbOrder, Prepare, type RelationFlag } from "./render";
+import { AbsorbOrder, HasFlag, Prepare, type RelationFlag } from "./render";
 import { IsString } from "./guards";
 import { OptionsOf } from "./utils";
 
@@ -22,15 +22,6 @@ const AGGREGATE_BLOCKERS: readonly RelationFlag[] = [
   "offset",
   "distinct",
   "aggregated",
-];
-
-/**
- * Everything that blocks an aggregate, plus an existing ordering: `SELECT DISTINCT … ORDER BY` a
- * term outside the select list is refused, so wrapping moves the sort inside.
- */
-const DISTINCT_BLOCKERS: readonly RelationFlag[] = [
-  ...AGGREGATE_BLOCKERS,
-  "ordered",
 ];
 
 /**
@@ -154,32 +145,62 @@ function AggregateStage(aggregate: Aggregation): PipelineStage {
   };
 }
 
+/** What blocks counting a dedup's values in the select that dedups them. */
+const DEDUP_COUNT_BLOCKERS: readonly RelationFlag[] = [
+  "limit",
+  "offset",
+  "aggregated",
+];
+
+/**
+ * The number of distinct values, SQL NULL counted as one of them as a dedup keeps it, in the select
+ * that reads the rows rather than over a derived table of the dedup.
+ */
+function DistinctTally(dialect: Dialect, value: Compiled): Compiled {
+  const absent = sql`(COUNT(*) > COUNT(${value.sql}))`;
+  return AsFloat(dialect, sql`COUNT(DISTINCT ${value.sql}) + ${absent}`);
+}
+
 /** The one aggregate that reads the *presence* of its field rather than the field. */
 const CountStage: PipelineStage = (relation, stage, context) => {
-  const prepared = Prepare(relation, AGGREGATE_BLOCKERS, context);
   const field = NamedField(stage);
+  const deduped = relation.distinct ? relation.projection : undefined;
+  if (
+    field === undefined &&
+    deduped &&
+    !HasFlag(relation, DEDUP_COUNT_BLOCKERS)
+  ) {
+    relation.distinct = false;
+    return SetAggregate(relation, DistinctTally(context.dialect, deduped));
+  }
+  const prepared = Prepare(relation, AGGREGATE_BLOCKERS, context);
   const operand =
     field === undefined ? undefined : prepared.source.field(field);
   return SetAggregate(prepared, Tally(context.dialect, operand));
 };
 
 /**
- * Dedups the relation, on one named field or on whole rows. A named field also becomes the
- * projection; either way the relation stays a stream.
- */
-/**
  * A dedup of the whole value dedups the select list, which a plain projection already is, so the
  * projection stays in the select that filters the rows. A subquery that reads its outer row then
  * keeps that read out of a derived table, which MariaDB cannot correlate.
  */
 const VALUE_DISTINCT_BLOCKERS: readonly RelationFlag[] =
-  DISTINCT_BLOCKERS.filter((flag) => flag !== "projection");
+  AGGREGATE_BLOCKERS.filter((flag) => flag !== "projection");
 
+/**
+ * Dedups the relation, on one named field or on whole rows. A named field also becomes the
+ * projection; either way the relation stays a stream.
+ *
+ * A dedup promises no order, and both engines drop the order of a derived table that a `DISTINCT`
+ * reads, so the dedup drops the order before it in the select that reads the rows: `SELECT
+ * DISTINCT … ORDER BY` a term outside the select list is refused.
+ */
 const DistinctStage: PipelineStage = (relation, stage, context) => {
   const field = NamedField(stage);
   const blockers =
-    field === undefined ? VALUE_DISTINCT_BLOCKERS : DISTINCT_BLOCKERS;
+    field === undefined ? VALUE_DISTINCT_BLOCKERS : AGGREGATE_BLOCKERS;
   const prepared = Prepare(relation, blockers, context);
+  AbsorbOrder(prepared);
   prepared.distinct = true;
   if (field === undefined) {
     return prepared;

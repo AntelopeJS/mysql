@@ -303,11 +303,13 @@ function WalkRows(
   alias: string,
 ): Walk {
   const rows = ident(alias);
+  const from = WALK_ROWS[kind](source);
   return {
+    from,
     ordinal: sql`${rows}.${ORDINAL}`,
     value: flavour.tabled(sql`${rows}.${VALUE}`),
     aggregate: (select, where) =>
-      sql`(SELECT ${select} FROM ${WALK_ROWS[kind](source)} AS ${rows}${where ? sql` WHERE ${where}` : sql``})`,
+      sql`(SELECT ${select} FROM ${from} AS ${rows}${where ? sql` WHERE ${where}` : sql``})`,
   };
 }
 
@@ -422,7 +424,7 @@ export function JsonOf(flavour: Flavour): JsonSyntax {
     truthy: (value) =>
       sql`(NOT ${flavour.includes(flavour.json(FALSY), value)})`,
     collect,
-    collectInPlace: flavour.collectInPlace,
+    inPlace: flavour.inPlace,
     length: (container) => sql`JSON_LENGTH(${container})`,
     at: At,
     concatArrays: (left, right) => sql`JSON_MERGE_PRESERVE(${left}, ${right})`,

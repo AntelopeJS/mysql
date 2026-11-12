@@ -62,8 +62,19 @@ const ALIAS_PREFIX = "t";
  *
  * The compilers are injected so this module stays free of a circular import back onto them.
  */
+/** A query nested inside another one as a value, compiled. */
+export interface NestedRelation {
+  readonly relation: Relation;
+  /** Whether it read the row of a query outside it, through a parameter bound there. */
+  readonly readsOuterRow: boolean;
+}
+
 export class DecodingContext {
   private readonly bindings = new Map<string, ArgumentBinding>();
+  /** How many subqueries were open when each lambda parameter was bound. */
+  private readonly bindingDepths = new Map<string, number>();
+  /** Per open subquery, outermost first: whether it has read a parameter bound outside it. */
+  private readonly outerReads: boolean[] = [];
   private aliasCounter = 0;
 
   /**
@@ -94,15 +105,20 @@ export class DecodingContext {
 
   public bind(id: ParameterId, binding: ArgumentBinding): void {
     this.bindings.set(String(id), binding);
+    this.bindingDepths.set(String(id), this.outerReads.length);
   }
 
   public unbind(id: ParameterId): void {
     this.bindings.delete(String(id));
+    this.bindingDepths.delete(String(id));
   }
 
+  /** A parameter's binding; every subquery opened since it was bound now reads its outer row. */
   public arg(id: ParameterId): ArgumentBinding {
     const binding = this.bindings.get(String(id));
     assert(binding, `Unbound lambda parameter ${id}`);
+    const depth = this.bindingDepths.get(String(id)) ?? 0;
+    this.outerReads.fill(true, depth);
     return binding;
   }
 
@@ -117,5 +133,21 @@ export class DecodingContext {
   /** The one door to a query nested inside another one. */
   public relation(stages: QueryStage[]): Relation {
     return this.compilers.relation(stages, this);
+  }
+
+  /** A query nested inside another one as a value. */
+  public subqueryRelation(stages: QueryStage[]): NestedRelation {
+    this.outerReads.push(false);
+    try {
+      const relation = this.relation(stages);
+      return { relation, readsOuterRow: this.readsOuterRow };
+    } finally {
+      this.outerReads.pop();
+    }
+  }
+
+  /** Whether the subquery compiling now has so far read the row of a query outside it. */
+  public get readsOuterRow(): boolean {
+    return this.outerReads.at(-1) ?? false;
   }
 }
