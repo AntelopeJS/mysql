@@ -13,6 +13,7 @@ interface Item {
 }
 
 const SCHEMA_ID = "write-contention";
+const WRITERS = 20;
 
 /** Long enough for an update to reach the row lock it waits on. */
 const LOCK_REACHED_MS = 300;
@@ -22,6 +23,12 @@ const contended = new Schema<{ items: Item }>(SCHEMA_ID, {
 });
 const items = () => contended.instance().table("items");
 const table = () => ident(PhysicalTable(SCHEMA_ID, "items"));
+
+function Failures(outcomes: PromiseSettledResult<unknown>[]): string[] {
+  return outcomes.flatMap((outcome) =>
+    outcome.status === "rejected" ? [String(outcome.reason)] : [],
+  );
+}
 
 describe("writes that contend for rows", function () {
   this.timeout(60_000);
@@ -60,5 +67,41 @@ describe("writes that contend for rows", function () {
     } finally {
       other.release();
     }
+  });
+
+  it("lets concurrent updates and deletes of overlapping rows all succeed", async () => {
+    const outcomes = await Promise.allSettled([
+      ...Array.from({ length: WRITERS }, (_, i) =>
+        items()
+          .filter((row) => row.key("n").ge(0))
+          .update({ n: i + 1 }),
+      ),
+      ...Array.from({ length: WRITERS }, (_, i) =>
+        items()
+          .filter((row) => row.key("_id").ge(String(i * 50).padStart(4, "0")))
+          .delete(),
+      ),
+    ]);
+    expect(Failures(outcomes)).to.deep.equal([]);
+    expect(await items().count()).to.equal(0);
+  });
+
+  it("applies every increment that concurrent mapper updates of one row answer", async () => {
+    const outcomes = await Promise.allSettled(
+      Array.from({ length: WRITERS }, () =>
+        items()
+          .get("0000")
+          .update((row) => ({ n: row.key("n").add(1) })),
+      ),
+    );
+    expect(Failures(outcomes)).to.deep.equal([]);
+    const answers = outcomes.map((outcome) =>
+      outcome.status === "fulfilled" ? outcome.value : undefined,
+    );
+    expect(answers).to.deep.equal(Array.from({ length: WRITERS }, () => 1));
+    expect(await items().get("0000")).to.deep.equal({
+      _id: "0000",
+      n: WRITERS,
+    });
   });
 });
