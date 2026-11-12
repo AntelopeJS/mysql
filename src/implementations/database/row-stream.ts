@@ -48,7 +48,9 @@ function Arrival(stream: Readable): Promise<void> {
  * The server sends only while the client reads: once a batch is waiting the stream pauses the
  * socket, and TCP flow control stops the server within the socket buffers, so a cursor holds about
  * one batch whatever the result's size. A statement that fails, a bad table or a syntax error among
- * them, fails the first `next`, not the open.
+ * them, fails the first `next`, not the open. A connection the server or the network ends fails the
+ * `next` waiting on it: the driver reports that loss on the connection, not on the statement it
+ * streams, so the stream would otherwise wait for rows that never come.
  *
  * Two costs the caller must know. The open statement holds a shared metadata lock on every table it
  * reads until it is read to its end or the connection is closed, so a DDL statement on those tables
@@ -76,8 +78,13 @@ export async function OpenRowStream(
   let failure: Error | undefined;
   let isClosed = false;
   stream.on("error", (err: Error) => {
-    failure = err;
+    failure ??= err;
   });
+  const lost = (err: Error) => {
+    failure ??= err;
+    stream.destroy(err);
+  };
+  driver.on("error", lost);
 
   async function Take(count: number): Promise<Row[]> {
     const rows: Row[] = [];
@@ -103,6 +110,7 @@ export async function OpenRowStream(
         return;
       }
       isClosed = true;
+      driver.off("error", lost);
       if (stream.readableEnded && !failure) {
         await ReleaseCapped(connection);
       } else {

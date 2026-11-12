@@ -28,6 +28,7 @@ The same message ends a registration that has to swap the triggers of a table th
 | Read a cursor that had been idle past `cursorIdleTimeoutMs` | `cursor {reqId} was reclaimed after {ms} ms idle (cursorIdleTimeoutMs) and cannot be resumed; re-run the query`                                                                                |
 | Read a cursor whose ending is no longer remembered          | `cursor {reqId} has already ended and how it ended is no longer remembered, more than 1024 cursors having ended since; re-run the query`                                                       |
 | Opened a cursor past `maxOpenCursors`                       | `cannot open another cursor: {n} are open, which is the maxOpenCursors limit of {max}; read one to its end or close it, or raise maxOpenCursors (it defaults to half of pool.connectionLimit)` |
+| Read a cursor whose connection the server or network ended  | The driver's error, such as `Connection lost: The server closed the connection.` The cursor ends and gives its place under `maxOpenCursors` back                                               |
 
 A cursor holds a pooled connection for as long as it is open, and a streaming `SELECT` holds a shared metadata lock that makes DDL on its tables wait. So the module reclaims a cursor that stops being read instead of letting it keep both. Both reclaim errors leave the whole query to be run again, where an exhausted or explicitly closed cursor reports that it is done. Answering `done` for a reclaimed cursor would cut your results short without a signal.
 
