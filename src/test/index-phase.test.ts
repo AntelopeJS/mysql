@@ -14,7 +14,12 @@ import {
 
 import { Bind, type Sql, ident, param, sql } from "../statement";
 import { GetOptions, type ResolvedOptions } from "../config";
-import { AcquireConnection, GetDialect, Read } from "../connection";
+import {
+  AcquireConnection,
+  GetDialect,
+  Read,
+  RegisterBeforeDisconnect,
+} from "../connection";
 import {
   FailureOf,
   Interrupt,
@@ -26,6 +31,7 @@ import {
   GetTablePlan,
   Schemas,
   WaitForIndexes,
+  WaitForSchemaReady,
   WaitForUniqueIndexes,
 } from "../implementations/database/schema";
 import { Numbers, PhysicalTable, Reconnect, Run } from "./tables";
@@ -93,7 +99,7 @@ async function IndexNames(schemaId: string): Promise<string[]> {
 
 /** Whether a statement adding an index to the table is running on the server right now. */
 async function IsBuilding(schemaId: string): Promise<boolean> {
-  const pattern = `ALTER TABLE \`${PhysicalTable(schemaId)}\` ADD INDEX%`;
+  const pattern = `ALTER TABLE \`${PhysicalTable(schemaId)}\` ADD %INDEX%`;
   const rows = await Read(
     sql`SELECT ID FROM information_schema.PROCESSLIST WHERE INFO LIKE ${param(pattern)}`,
   );
@@ -172,6 +178,19 @@ async function HoldIndexPhasesElsewhere(
     ]);
     expect(Number(rows[0]?.acquired), "the lock is free to take").to.equal(1);
   }
+  return elsewhere;
+}
+
+/** An open transaction of another process that has read the table, which holds off any `ALTER` on it. */
+async function HoldTableElsewhere(
+  url: string,
+  schemaId: string,
+): Promise<Connection> {
+  const elsewhere = await createConnection(url);
+  await elsewhere.query("START TRANSACTION");
+  await elsewhere.query(
+    Bind(sql`SELECT _id FROM ${ident(PhysicalTable(schemaId))} LIMIT 1`).sql,
+  );
   return elsewhere;
 }
 
@@ -367,5 +386,83 @@ describe("index phases waiting for another process's builds", function () {
       await WaitForIndexes(schemaId);
       expect(await IndexNames(schemaId), schemaId).to.deep.equal(["price"]);
     }
+  });
+});
+
+/**
+ * Fails on an index phase that a reconnect stops while it builds a unique index or waits for
+ * another process's phase, and is then never run on the next pool, so the duplicate is stored; and
+ * on a stop that opens the unique-index gate, so a write held there stores its duplicate on the pool
+ * being ended while the disconnect still waits on another connection, such as a cursor's.
+ */
+describe("an index phase a reconnect stops", function () {
+  this.timeout(60_000);
+  const running = "index_phase_reconnect_running";
+  const queued = "index_phase_reconnect_queued";
+  const held = "index_phase_reconnect_held";
+  const duplicate: Item = { _id: "duplicate", price: 7 };
+
+  after(() => {
+    for (const schemaId of [running, queued, held]) {
+      Schemas.unregister(schemaId);
+    }
+  });
+
+  it("builds the unique index on the next pool when the reconnect killed its build, and refuses the duplicate", async () => {
+    await Fresh(running, 100);
+    const restore = GetOptions();
+    const elsewhere = await HoldTableElsewhere(restore.url, running);
+    const schema = new Schema<{ items: Item }>(running, UNIQUE_PRICE);
+    try {
+      await UntilBuilding(running);
+      await Reconnect(restore);
+    } finally {
+      await elsewhere.end();
+    }
+    expect(await Inserting(schema, duplicate)).to.satisfy(
+      IsDuplicateKeyError,
+      "the duplicate is refused",
+    );
+    expect(await IndexNames(running)).to.deep.equal(["price"]);
+  });
+
+  it("builds the unique index on the next pool when the reconnect stopped it waiting for another process's phase, and refuses the duplicate", async () => {
+    await Fresh(queued, 100);
+    const restore = GetOptions();
+    const elsewhere = await HoldIndexPhasesElsewhere(restore.url, [queued]);
+    const schema = new Schema<{ items: Item }>(queued, UNIQUE_PRICE);
+    try {
+      await WaitForSchemaReady(queued);
+      await Reconnect(restore);
+    } finally {
+      await elsewhere.end();
+    }
+    expect(await Inserting(schema, duplicate)).to.satisfy(
+      IsDuplicateKeyError,
+      "the duplicate is refused",
+    );
+    expect(await IndexNames(queued)).to.deep.equal(["price"]);
+  });
+
+  it("refuses a write held for the unique index when the reconnect stops the phase, while the disconnect waits on another connection", async () => {
+    await Fresh(held, 100);
+    const restore = GetOptions();
+    const elsewhere = await HoldIndexPhasesElsewhere(restore.url, [held]);
+    const schema = new Schema<{ items: Item }>(held, UNIQUE_PRICE);
+    const insert = Inserting(schema, duplicate);
+    const withdraw = RegisterBeforeDisconnect(() => delay(BLOCKED_MS));
+    try {
+      expect(
+        await SettlesWithin(insert, BLOCKED_MS),
+        "the write waits for the unique index",
+      ).to.equal(false);
+      await Reconnect(restore);
+    } finally {
+      withdraw();
+      await elsewhere.end();
+    }
+    expect(await insert).to.not.equal("stored");
+    await WaitForIndexes(held);
+    expect(await IndexNames(held)).to.deep.equal(["price"]);
   });
 });
