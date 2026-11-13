@@ -1,6 +1,6 @@
-import type { InPlaceSyntax, Walk } from "../../dialect/sql-types";
+import type { HeldKeys, InPlaceSyntax, Walk } from "../../dialect/sql-types";
 import { type Sql, ident, int, join, sql } from "../../statement";
-import { ArrayOf, BOOL, TEXT } from "./types";
+import { ArrayOf, FLOAT, OPAQUE, TEXT } from "./types";
 import { Collected } from "./json";
 import { AsJson } from "./readings";
 import { type Compiled, QualifiedColumn } from "./sql";
@@ -8,20 +8,29 @@ import type { DecodingContext } from "./context";
 import { BuildDocument, JsonRowSource } from "./row-source";
 import {
   CurrentValue,
+  OUTPUT_COLUMN,
   type Relation,
   SetProjection,
   type TableOrigin,
 } from "./relation";
 import { FromItem, JoinOn, Render } from "./render";
+import { ID_COLUMN, INSTANCE_COLUMN } from "./utils";
 
 const COMMA = sql`, `;
 const AND = sql` AND `;
 
 /**
  * The rows times distinct keys of one outer row below which its groups are never looked up by key,
- * so a statement of small groups never counts the rows a lookup would materialize.
+ * so a statement of small groups never counts the rows a lookup would materialize, and never looks
+ * up keys that every outer row shares, each of which matches the rows of every outer row.
  */
 const KEYED_GROUPS_FROM = 2 ** 20;
+
+/** The columns that name a row of a table the adapter owns, in its primary key's order. */
+const IDENTITY = [INSTANCE_COLUMN, ID_COLUMN];
+
+/** How one outer row's groups read their rows, as {@link ReadingOf} chooses it. */
+const READING = { scanned: 0, held: 1, keyed: 2 } as const;
 
 /**
  * A grouped relation's distinct keys, walked: each part's text in the relation's rows, the walk
@@ -32,6 +41,7 @@ const KEYED_GROUPS_FROM = 2 ** 20;
 interface WalkedKeys {
   readonly texts: readonly Sql[];
   readonly walk: Walk;
+  readonly alias: string;
   readonly walked: readonly Sql[];
 }
 
@@ -61,11 +71,8 @@ function WalkedKeysOf(
     sql: inPlace.collect(key.sql, { distinct: true }),
     type: ArrayOf(key.type),
   });
-  const walk = dialect.sql.json.walk(
-    "elements",
-    sql`(${Render(keys)})`,
-    context.nextAlias(),
-  );
+  const alias = context.nextAlias();
+  const walk = dialect.sql.json.walk("elements", sql`(${Render(keys)})`, alias);
   const source = new JsonRowSource(dialect, {
     sql: walk.value,
     type: key.type,
@@ -73,27 +80,109 @@ function WalkedKeysOf(
   return {
     texts,
     walk,
+    alias,
     walked: texts.map((_, part) => source.field(KeyName(part)).sql),
   };
 }
 
-/**
- * One group: the grouped select restricted to the rows whose texts are the walked key's. It reads
- * every row of the relation once per group.
- */
-function ScannedGroup(
+/** The grouped select restricted to the rows whose texts are the walked key's. */
+function GroupOf(
   relation: Relation,
   keys: WalkedKeys,
   context: DecodingContext,
-): Sql {
+): Relation {
   const rows = context.dialect.sql.rows;
-  return Render({
+  return {
     ...relation,
     groupBy: keys.texts.map((text) => ({ sql: text, type: TEXT })),
     where: [
       ...relation.where,
       ...keys.texts.map((text, part) =>
         rows.nullSafeEqual(text, keys.walked[part]),
+      ),
+    ],
+  };
+}
+
+/** One group, which reads every row of the relation once per group. */
+function ScannedGroup(
+  relation: Relation,
+  keys: WalkedKeys,
+  context: DecodingContext,
+): Sql {
+  return Render(GroupOf(relation, keys, context));
+}
+
+/**
+ * The outer row's rows, held once as the hash of each row's first part's text beside the row's
+ * identity: the one-row table at an alias of its own, as a FROM item, and the array it holds.
+ * `fits` is an aggregate over the rows, true where the array fits in the largest aggregate the
+ * engine builds, which would otherwise come back cut short.
+ */
+interface HeldRows {
+  readonly fits: Sql;
+  readonly item: Sql;
+  readonly keys: HeldKeys;
+}
+
+function HeldRowsOf(
+  relation: Relation,
+  keys: WalkedKeys,
+  inPlace: InPlaceSyntax,
+  context: DecodingContext,
+): HeldRows {
+  const identity = IDENTITY.map((name) =>
+    QualifiedColumn(relation.alias, name),
+  );
+  const element = inPlace.hashedKey(inPlace.hash(keys.texts[0]), identity);
+  const array = SetProjection(Ungrouped(relation), {
+    sql: inPlace.collect(element, { distinct: false }),
+    type: OPAQUE,
+  });
+  const alias = context.nextAlias();
+  const held = inPlace.held(sql`(${Render(array)})`, identity.length, alias);
+  return {
+    fits: inPlace.heldFits(identity),
+    item: FromItem(held.from, alias),
+    keys: held,
+  };
+}
+
+/**
+ * One group, read through the outer row's {@link HeldRows}: the held rows whose hash is the walked
+ * key's are joined to the table by identity, so each group reads the held array and its own rows,
+ * whether or not an index serves a condition that reads the outer row. Every conjunct still tests
+ * the rows it reads, and the full text decides, so two keys that share a hash stay apart.
+ */
+function HeldGroup(
+  relation: Relation,
+  keys: WalkedKeys,
+  held: HeldKeys,
+  inPlace: InPlaceSyntax,
+  context: DecodingContext,
+): Sql {
+  const lookup = context.nextAlias();
+  const one = inPlace.hashRow(keys.walked[0], lookup);
+  const alias = context.nextAlias();
+  const rows = held.rows(alias);
+  const identity = IDENTITY.map(
+    (name, part) =>
+      sql`${QualifiedColumn(relation.alias, name)} = ${rows.key[part]}`,
+  );
+  return Render({
+    ...GroupOf(relation, keys, context),
+    from: one.from,
+    alias: lookup,
+    joins: [
+      JoinOn(
+        "JOIN",
+        FromItem(rows.from, alias),
+        sql`${rows.hash} = ${one.hash}`,
+      ),
+      JoinOn(
+        "JOIN",
+        FromItem(relation.from, relation.alias),
+        join(identity, AND),
       ),
     ],
   });
@@ -182,39 +271,90 @@ function KeyedGroup(
 }
 
 /**
- * Whether scanning one outer row's rows once per group costs more than materializing the rows
- * {@link OuterFreeRows} keeps, which the engine counts once per statement and only once a group
- * reaches {@link KEYED_GROUPS_FROM}.
+ * The rows times distinct keys of each row of the query outside, summed once for the statement,
+ * where those rows are a plain select that every outer row the groups are read for is one of. Rows
+ * an offset or limit bounds are summed in a derived table that keeps them, so the cost is counted
+ * for those rows only; {@link MappedRows} names bounded rows only where they read no outer row.
  */
-function ManyGroups(
+function EveryOuterRow(
+  outer: Relation,
+  perRow: Sql,
+  context: DecodingContext,
+): Sql | undefined {
+  const plain =
+    !outer.aggregated && !outer.distinct && outer.groupBy.length === 0;
+  if (!plain) {
+    return undefined;
+  }
+  const rows = { ...outer, locked: false };
+  if (outer.offset === undefined && outer.limit === undefined) {
+    const summed = SetProjection(
+      { ...rows, orderBy: [] },
+      { sql: sql`SUM((${perRow}))`, type: FLOAT },
+    );
+    return sql`(${Render(summed)})`;
+  }
+  const kept = SetProjection(rows, { sql: sql`(${perRow})`, type: FLOAT });
+  const alias = context.nextAlias();
+  return sql`(SELECT SUM(${QualifiedColumn(alias, OUTPUT_COLUMN)}) FROM (${Render(kept)}) AS ${ident(alias)})`;
+}
+
+/**
+ * How this outer row's groups read their rows, chosen in one pass over them and answered as one of
+ * {@link READING}. They are looked up by key where scanning costs more than materializing the rows
+ * {@link OuterFreeRows} keeps, which the engine counts once per statement and only once one outer
+ * row's groups reach {@link KEYED_GROUPS_FROM}. The scan's cost is this outer row's, and where that
+ * falls short and the outer rows are known, that of every outer row's groups, which share the one
+ * materialized table, summed once per statement. Below that, the groups read the
+ * {@link HeldRows} where they fit, and each group scans the rows where they do not.
+ */
+function ReadingOf(
   relation: Relation,
   keys: WalkedKeys,
+  held: HeldRows,
   context: DecodingContext,
+  outerRows: Relation | undefined,
 ): Sql {
   const scanned = sql`COUNT(*) * COUNT(DISTINCT ${join(keys.texts, COMMA)})`;
   const materialized = sql`(SELECT COUNT(*) ${OuterFreeRows(relation, context)})`;
-  const counted = SetProjection(Ungrouped(relation), {
-    sql: sql`(CASE WHEN ${scanned} < ${int(KEYED_GROUPS_FROM)} THEN FALSE ELSE ${scanned} >= ${materialized} END)`,
-    type: BOOL,
+  const perRow = SetProjection(Ungrouped(relation), {
+    sql: scanned,
+    type: FLOAT,
   });
-  return sql`(${Render(counted)})`;
+  const statement =
+    outerRows && EveryOuterRow(outerRows, Render(perRow), context);
+  const shared = statement
+    ? sql` WHEN ${statement} >= ${materialized} THEN TRUE`
+    : sql``;
+  const many = sql`(CASE WHEN ${scanned} < ${int(KEYED_GROUPS_FROM)} THEN FALSE WHEN ${scanned} >= ${materialized} THEN TRUE${shared} ELSE FALSE END)`;
+  const reading = SetProjection(Ungrouped(relation), {
+    sql: sql`(CASE WHEN ${many} THEN ${int(READING.keyed)} WHEN ${held.fits} THEN ${int(READING.held)} ELSE ${int(READING.scanned)} END)`,
+    type: FLOAT,
+  });
+  return sql`(${Render(reading)})`;
 }
 
-/** Each walked key's group, as `group` reads it, collected in the walk's order. */
+/**
+ * Each walked key's group, as `group` reads it, collected in the walk's order. `held` is a one-row
+ * FROM item the groups read, joined ahead of the walk.
+ */
 function Groups(
   relation: Relation,
   keys: WalkedKeys,
   group: Sql,
   context: DecodingContext,
+  held?: Sql,
 ): Sql {
   const value = CurrentValue(relation);
   const element = AsJson(context.dialect, {
     sql: sql`(${group})`,
     type: value.type,
   });
-  return keys.walk.aggregate(
-    Collected(context.dialect, keys.walk.ordinal, element.sql),
-  );
+  const select = Collected(context.dialect, keys.walk.ordinal, element.sql);
+  if (!held) {
+    return keys.walk.aggregate(select);
+  }
+  return sql`(SELECT ${select} FROM ${held} CROSS JOIN ${FromItem(keys.walk.from, keys.alias)})`;
 }
 
 /**
@@ -222,35 +362,46 @@ function Groups(
  * keys reads the outer row, and each key's group is a subquery of its own, so it reads it too.
  * The session leaves `ONLY_FULL_GROUP_BY` off, so the mapper still reads a term.
  *
- * A relation that reads a table the adapter owns, with no join, looks each group up by key once
- * the outer row's rows times keys reach {@link KEYED_GROUPS_FROM} and the rows the lookup
- * materializes; below that, and for any other relation, each group scans the rows.
+ * A relation that reads a table the adapter owns, with no join, reads its groups as
+ * {@link ReadingOf} chooses for each outer row, given `outerRows`, the rows of the query outside
+ * where they are known. Any other relation scans its rows once per group.
  */
 export function GroupedInPlace(
   relation: Relation,
   inPlace: InPlaceSyntax,
   context: DecodingContext,
+  outerRows: Relation | undefined,
 ): Compiled {
   const keys = WalkedKeysOf(relation, inPlace, context);
   const type = ArrayOf(CurrentValue(relation).type);
-  const scanned = Groups(
-    relation,
-    keys,
-    ScannedGroup(relation, keys, context),
-    context,
-  );
   const table = relation.table;
   if (!table || relation.joins.length > 0) {
-    return { sql: scanned, type };
+    const scanned = ScannedGroup(relation, keys, context);
+    return { sql: Groups(relation, keys, scanned, context), type };
   }
+  const held = HeldRowsOf(relation, keys, inPlace, context);
+  const reading = ReadingOf(relation, keys, held, context, outerRows);
   const keyed = Groups(
     relation,
     keys,
     KeyedGroup(relation, table, keys, inPlace, context),
     context,
   );
+  const fromHeld = Groups(
+    relation,
+    keys,
+    HeldGroup(relation, keys, held.keys, inPlace, context),
+    context,
+    held.item,
+  );
+  const scanned = Groups(
+    relation,
+    keys,
+    ScannedGroup(relation, keys, context),
+    context,
+  );
   return {
-    sql: sql`(CASE WHEN ${ManyGroups(relation, keys, context)} THEN ${keyed} ELSE ${scanned} END)`,
+    sql: sql`(CASE ${reading} WHEN ${int(READING.keyed)} THEN ${keyed} WHEN ${int(READING.held)} THEN ${fromHeld} ELSE ${scanned} END)`,
     type,
   };
 }

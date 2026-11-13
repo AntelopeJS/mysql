@@ -8,8 +8,12 @@ import { AsJson } from "./readings";
 import type { Compiled } from "./sql";
 import { FIRST_OPERAND } from "./stage";
 import { ParameterKey } from "./value";
-import { type DecodingContext, IsSubqueryProvider } from "./context";
-import { CurrentValue, type Relation, SetProjection } from "./relation";
+import {
+  type DecodingContext,
+  IsSubqueryProvider,
+  type NestedRelation,
+} from "./context";
+import { CurrentValue, SetProjection } from "./relation";
 import { Numbered, type RelationFlag, Render } from "./render";
 import { CollectedInPlace, Prepare } from "./wrap";
 
@@ -30,15 +34,15 @@ const SUBQUERY_BLOCKERS: readonly RelationFlag[] = [
  * derived table instead, which reads its rows once.
  */
 function AggregatedInPlace(
-  relation: Relation,
-  readsOuterRow: boolean,
+  nested: NestedRelation,
   context: DecodingContext,
 ): Compiled | undefined {
+  const { relation, readsOuterRow, outerRows } = nested;
   const inPlace = context.dialect.sql.json.inPlace;
   if (!inPlace || (relation.aggregated && !readsOuterRow)) {
     return undefined;
   }
-  return CollectedInPlace(relation, inPlace, context);
+  return CollectedInPlace(relation, inPlace, context, outerRows);
 }
 
 /**
@@ -46,15 +50,14 @@ function AggregatedInPlace(
  * ordered query's rows are numbered in that order first, and the aggregate orders by the number.
  */
 export function Aggregated(
-  relation: Relation,
-  readsOuterRow: boolean,
+  nested: NestedRelation,
   context: DecodingContext,
 ): Compiled {
-  const inPlace = AggregatedInPlace(relation, readsOuterRow, context);
+  const inPlace = AggregatedInPlace(nested, context);
   if (inPlace) {
     return inPlace;
   }
-  const prepared = Prepare(relation, SUBQUERY_BLOCKERS, context);
+  const prepared = Prepare(nested.relation, SUBQUERY_BLOCKERS, context);
   const numbered =
     prepared.orderBy.length > 0 ? Numbered(prepared, context) : undefined;
   const rows = numbered?.relation ?? prepared;
@@ -104,9 +107,10 @@ export function CompileSubquery(
   if (provided) {
     return provided;
   }
-  const { relation, readsOuterRow } = context.subqueryRelation(stages);
+  const nested = context.subqueryRelation(stages);
+  const relation = nested.relation;
   if (!relation.single) {
-    return Aggregated(relation, readsOuterRow, context);
+    return Aggregated(nested, context);
   }
   const value = CurrentValue(relation);
   return {

@@ -6,6 +6,7 @@ import type {
 
 import { Cast, UnifyAll } from "./coerce";
 import type { ArgumentBinding, DecodingContext } from "./context";
+import type { Relation } from "./relation";
 import {
   BooleanParam,
   type Compiled,
@@ -222,13 +223,15 @@ export function RecordedLambda(
 
 /**
  * Runs a compilation with a recorded lambda's parameters bound to the given row sources or
- * subquery providers, and unbound again however it ends.
+ * subquery providers, and unbound again however it ends. `rows` names the relation the parameters
+ * range over, where the stage calls the lambda once per row of it.
  */
 export function WithBoundArguments<T>(
   func: RecordedFunction,
   context: DecodingContext,
   bindings: ArgumentBinding[],
   compile: () => T,
+  rows?: Relation,
 ): T {
   const ids = func.args[PARAMETER_IDS];
   const missing = ids.findIndex((_, index) => !bindings[index]);
@@ -236,7 +239,7 @@ export function WithBoundArguments<T>(
     throw new Error(`Missing binding for lambda parameter ${missing}`);
   }
   ids.forEach((id, index) => {
-    context.bind(ParameterKey(id), bindings[index]);
+    context.bind(ParameterKey(id), bindings[index], rows);
   });
   try {
     return compile();
@@ -247,13 +250,21 @@ export function WithBoundArguments<T>(
   }
 }
 
-/** Decodes the body of a recorded lambda with its parameters bound for the duration. */
+/**
+ * Decodes the body of a recorded lambda with its parameters bound for the duration, ranging over
+ * `rows` where the stage calls it once per row of them.
+ */
 export function DecodeFunction(
   func: RecordedFunction,
   context: DecodingContext,
   bindings: ArgumentBinding[],
+  rows?: Relation,
 ): Compiled | undefined {
-  return WithBoundArguments(func, context, bindings, () =>
-    DecodeValue(ClassifyMember(func.args[FUNCTION_BODY]), context),
+  return WithBoundArguments(
+    func,
+    context,
+    bindings,
+    () => DecodeValue(ClassifyMember(func.args[FUNCTION_BODY]), context),
+    rows,
   );
 }

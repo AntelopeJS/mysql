@@ -5,7 +5,7 @@ import {
   type MemberPath,
   FamilyDialect,
 } from "../mysql";
-import type { CollectedRows, HashRow } from "../sql-types";
+import type { CollectedRows, HashRow, HeldKeys } from "../sql-types";
 import {
   Bind,
   type Sql,
@@ -284,6 +284,63 @@ function Materialized(select: Sql): Sql {
   return sql`${select} LIMIT ${NO_LIMIT}`;
 }
 
+function HashedKey(hash: Sql, key: readonly Sql[]): Sql {
+  return sql`JSON_ARRAY(${join([hash, ...key], sql`, `)})`;
+}
+
+/**
+ * The most bytes an element spends beyond its quoted key parts: its brackets, a CRC-32 of up to
+ * 10 digits, and the separator before each key part and after the element.
+ */
+const HASHED_KEY_BYTES = 14;
+const KEY_PART_BYTES = 2;
+
+/** The brackets of the held array and of the one-row array that holds it. */
+const HELD_ARRAY_BYTES = 4;
+
+/**
+ * Each element's length is bounded from its key parts, as `JSON_ARRAY` quotes them, rather than
+ * measured, which would hash every row's key text once more.
+ */
+function HeldFits(key: readonly Sql[]): Sql {
+  const quoted = key.map((part) => sql`LENGTH(JSON_QUOTE(${part}))`);
+  const element = sql`${join(quoted, sql` + `)} + ${int(HASHED_KEY_BYTES + KEY_PART_BYTES * key.length)}`;
+  return sql`(SUM(${element}) + ${int(HELD_ARRAY_BYTES)} <= @@max_allowed_packet)`;
+}
+
+const HELD_KEYS = ident("held");
+
+function KeyPart(part: number): Sql {
+  return ident(`k${part}`);
+}
+
+/**
+ * The array is read from the one-row table's column as it is, where the walk of a JSON value reads
+ * it through `JSON_EXTRACT`, which parses it again for each select that reads it.
+ */
+function HeldArray(array: Sql, parts: number, alias: string): HeldKeys {
+  const held = sql`${ident(alias)}.${HELD_KEYS}`;
+  const keys = Array.from({ length: parts }, (_, part) => part);
+  const columns = join(
+    [
+      sql`${HASH_COLUMN} INT UNSIGNED PATH '$[0]'`,
+      ...keys.map(
+        (part) =>
+          sql`${KeyPart(part)} LONGTEXT COLLATE ${ident(BINARY_COLLATION)} PATH ${lit(`$[${part + 1}]`)}`,
+      ),
+    ],
+    sql`, `,
+  );
+  return {
+    from: sql`JSON_TABLE(JSON_ARRAY(${array}), '$[*]' COLUMNS (${HELD_KEYS} JSON PATH '$'))`,
+    rows: (at) => ({
+      from: sql`JSON_TABLE(${held}, '$[*]' COLUMNS (${columns}))`,
+      hash: sql`${ident(at)}.${HASH_COLUMN}`,
+      key: keys.map((part) => sql`${ident(at)}.${KeyPart(part)}`),
+    }),
+  };
+}
+
 /**
  * MariaDB's cast reads a zone offset and drops it, so the offset is subtracted from the local time,
  * and a `Z` is dropped since the session is UTC. `CONVERT_TZ` would leave an instant before 1970
@@ -406,6 +463,9 @@ const MARIADB: Flavour = {
     hash: Hash,
     hashRow: OneHash,
     materialized: Materialized,
+    hashedKey: HashedKey,
+    held: HeldArray,
+    heldFits: HeldFits,
   },
   returning: true,
   lateral: false,
