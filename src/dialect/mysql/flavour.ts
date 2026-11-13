@@ -9,6 +9,26 @@ export interface Held {
   readonly kind: "json" | "text";
 }
 
+/** A member of a JSON document named by the keys of its path. */
+export interface MemberPath {
+  readonly document: Sql;
+  /** The keys from the document to the object that holds the member; none where the document does. */
+  readonly holder: readonly string[];
+  /** The member's own key. */
+  readonly key: string;
+}
+
+/**
+ * How an engine whose JSON paths match a key only as the document spells it reads a member stored
+ * under another spelling of its key, as `"caf\u00e9"` spells `café`.
+ */
+export interface EscapedKeys {
+  /** The member, where `read` of a document, the read by the path's own spelling, is SQL NULL. */
+  member(member: MemberPath, read: (document: Sql) => Sql): Sql;
+  /** Whether the document holds the member, where `found` of a document, the test by the path's own spelling, is false. */
+  has(member: MemberPath, found: (document: Sql) => Sql): Sql;
+}
+
 /**
  * What MySQL and MariaDB spell differently. Every other statement this directory writes is the same
  * on both, so each of its modules is a function of one flavour, and an engine of the family is one
@@ -44,6 +64,8 @@ export interface Flavour {
   readonly jsonEquals?: (left: Sql, right: Sql) => Sql;
   /** JSON text as a JSON value, one the JSON functions take whole rather than as a string. */
   json(text: Sql): Sql;
+  /** Absent where the engine stores every key decoded, so a path finds a key however it was written. */
+  readonly escapedKeys?: EscapedKeys;
   /** A double as a JSON number, a negative zero included. */
   number(value: Sql): Sql;
   /** Whether JSON text the engine parses keeps a finite number exactly. */

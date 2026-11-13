@@ -1,4 +1,10 @@
-import { type Flavour, type Held, FamilyDialect } from "../mysql";
+import {
+  type EscapedKeys,
+  type Flavour,
+  type Held,
+  type MemberPath,
+  FamilyDialect,
+} from "../mysql";
 import type { CollectedRows } from "../sql-types";
 import {
   Bind,
@@ -59,6 +65,100 @@ const UTC_DESIGNATOR = /Z$/;
 function Json(text: Sql): Sql {
   return sql`JSON_EXTRACT(CONVERT(${text} USING utf8mb4) COLLATE ${ident(BINARY_COLLATION)}, '$')`;
 }
+
+/** A backslash, which every escaped key is spelled with. */
+const BACKSLASH = lit("\\");
+
+/** Keys of ASCII letters, digits and `_`, which no common JSON writer escapes on its own. */
+const PLAIN_KEY = /^[A-Za-z0-9_]*$/;
+
+/** What `JSON_SEARCH` reads as a wildcard or as its escape, each escaped by a backslash. */
+const SEARCH_SPECIAL = /[\\%_]/g;
+
+/** Whether every key of the path is plain, so that its spelling is the one the document holds. */
+function IsPlain({ holder, key }: MemberPath): boolean {
+  return [...holder, key].every((one) => PLAIN_KEY.test(one));
+}
+
+/**
+ * A path the decoding functions read as the keys themselves. Each member is JSON text, so a control
+ * character is an escape there: a raw one makes `JSON_EXISTS` and `JSON_QUERY` answer NULL.
+ */
+function DecodedPath(keys: readonly string[]): Sql {
+  return lit(`$${keys.map((key) => `.${JSON.stringify(key)}`).join("")}`);
+}
+
+/**
+ * Whether the document holds the member under a spelling of its path other than the path's own.
+ * `JSON_EXISTS` decodes a key and `JSON_EXTRACT` does not. A document without a backslash spells
+ * every key as it reads; a byte search tells, where a `LIKE` or a search in the text's collation
+ * costs more than the read.
+ */
+function HeldEscaped({ document, holder, key }: MemberPath): Sql {
+  return sql`(LOCATE(${BACKSLASH}, CAST(${document} AS BINARY)) > 0 AND JSON_EXISTS(${document}, ${DecodedPath([...holder, key])}))`;
+}
+
+/**
+ * The member by its key as the holder spells it. `JSON_SEARCH` finds the key's position among the
+ * holder's keys, which it decodes, and `$.*` lists the holder's members in that same order. It
+ * matches in the session's binary collation; in a case-insensitive one it would match `FR` for `fr`.
+ */
+function SpelledMember({ document, holder, key }: MemberPath): Sql {
+  const object =
+    holder.length === 0
+      ? document
+      : sql`JSON_QUERY(${document}, ${DecodedPath(holder)})`;
+  const pattern = lit(key.replace(SEARCH_SPECIAL, "\\$&"));
+  const position = sql`JSON_UNQUOTE(JSON_SEARCH(JSON_KEYS(${object}), 'one', ${pattern}))`;
+  return sql`JSON_EXTRACT(JSON_EXTRACT(${object}, '$.*'), ${position})`;
+}
+
+/** A column of a table, as a generated key column reads its source. */
+const COLUMN_REFERENCE = /^(?:`(?:[^`]|``)+`\.)?`(?:[^`]|``)+`$/;
+
+const HELD_DOCUMENT = ident("__escaped_key");
+const HELD_COLUMN = ident("d");
+
+/** Whether the document is a column, which a generated column reads and which is cheap to repeat. */
+function IsColumn({ document }: MemberPath): boolean {
+  return COLUMN_REFERENCE.test(Bind(document).sql);
+}
+
+/**
+ * `read` of the member over its document parsed once. A read of a read, which a `default()` between
+ * two keys makes, then spells each document once rather than once per use. The document's text
+ * keeps the spelling of its keys, and its column answers in `utf8mb4_bin`.
+ */
+function OnHeld(member: MemberPath, read: (member: MemberPath) => Sql): Sql {
+  const document = sql`${HELD_DOCUMENT}.${HELD_COLUMN}`;
+  const held = sql`JSON_TABLE(${member.document}, '$' COLUMNS (${HELD_COLUMN} JSON PATH '$')) AS ${HELD_DOCUMENT}`;
+  return sql`(SELECT ${read({ ...member, document })} FROM ${held})`;
+}
+
+/**
+ * MariaDB matches a path's key to a document's as each is spelled, so `$."café"` misses a key
+ * stored as `"caf\u00e9"`. A read that misses looks for such a spelling only where the document
+ * holds one, and only for a path with a key a writer escapes: one of plain keys reads as it is
+ * spelled, so `"f\u0072"` is not read as `fr`.
+ */
+const ESCAPED_KEYS: EscapedKeys = {
+  member: (member, read) => {
+    if (IsPlain(member)) {
+      return read(member.document);
+    }
+    const spelled = (held: MemberPath) =>
+      sql`COALESCE(${read(held.document)}, IF(${HeldEscaped(held)}, ${SpelledMember(held)}, NULL))`;
+    return IsColumn(member) ? spelled(member) : Json(OnHeld(member, spelled));
+  },
+  has: (member, found) => {
+    if (IsPlain(member)) {
+      return found(member.document);
+    }
+    const spelled = (held: MemberPath) =>
+      sql`(${found(held.document)} OR ${HeldEscaped(held)})`;
+    return IsColumn(member) ? spelled(member) : OnHeld(member, spelled);
+  },
+};
 
 /**
  * Equality as JSON: a number however it is spelled, an object whatever its key order. `JSON_EQUALS`
@@ -253,6 +353,7 @@ const MARIADB: Flavour = {
   },
   jsonEquals: JsonEquals,
   json: Json,
+  escapedKeys: ESCAPED_KEYS,
   number: JsonNumber,
   keepsInText: (value) => !Object.is(value, -0),
   boolean: (truth) =>

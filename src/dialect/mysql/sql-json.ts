@@ -9,7 +9,7 @@ import type {
 import type { KeyColumn } from "../../implementations/database/paths";
 import type { Ordering } from "../../implementations/database/json";
 import { type Sql, ident, int, join, lit, param, sql } from "../../statement";
-import { type Flavour, type Held, HeldRead } from "./flavour";
+import { type Flavour, type Held, HeldRead, type MemberPath } from "./flavour";
 import { IsoText, ParseInstant } from "./sql-time";
 
 /** What `JSON_TYPE` answers for each kind; a JSON number has four. */
@@ -40,11 +40,27 @@ export function KeyPath(...keys: readonly string[]): Sql {
  * One `JSON_EXTRACT` for the whole path. A chain of one per key builds each intermediate value, a
  * subdocument for every key but the last, which the server then reads once more.
  */
-function Member(document: Sql, ...keys: readonly string[]): Sql {
-  if (keys.length === 0) {
-    return document;
-  }
-  return sql`JSON_EXTRACT(${document}, ${KeyPath(...keys)})`;
+function Member(flavour: Flavour): JsonSyntax["member"] {
+  return (document, ...keys) => {
+    const key = keys.at(-1);
+    if (key === undefined) {
+      return document;
+    }
+    const path = KeyPath(...keys);
+    const read = (from: Sql) => sql`JSON_EXTRACT(${from}, ${path})`;
+    const member: MemberPath = { document, holder: keys.slice(0, -1), key };
+    return flavour.escapedKeys?.member(member, read) ?? read(document);
+  };
+}
+
+function HasKey(flavour: Flavour): JsonSyntax["hasKey"] {
+  return (document, key) => {
+    const path = KeyPath(key);
+    const found = (from: Sql) =>
+      sql`JSON_CONTAINS_PATH(${from}, 'one', ${path})`;
+    const member: MemberPath = { document, holder: [], key };
+    return flavour.escapedKeys?.has(member, found) ?? found(document);
+  };
 }
 
 /**
@@ -394,7 +410,7 @@ export function JsonOf(flavour: Flavour): JsonSyntax {
   const collect: JsonSyntax["collect"] = (element, ordinal, distinct) =>
     flavour.collect(element, ordinal, distinct, text);
   return {
-    member: Member,
+    member: Member(flavour),
     dynamicMember: (document, key) =>
       sql`JSON_EXTRACT(${document}, ${DynamicPath(key)})`,
     is: Is,
@@ -417,8 +433,7 @@ export function JsonOf(flavour: Flavour): JsonSyntax {
     document: Document,
     removeKeys: RemoveKeys,
     setKeys: SetKeys,
-    hasKey: (document, key) =>
-      sql`JSON_CONTAINS_PATH(${document}, 'one', ${KeyPath(key)})`,
+    hasKey: HasKey(flavour),
     includes: (array, element) => flavour.includes(array, element),
     indexedElements: (column) => sql`JSON_EXTRACT(${column}, '$')`,
     truthy: (value) =>

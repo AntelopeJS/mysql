@@ -12,7 +12,7 @@ import { CatalogOf } from "./catalog";
 import { ExternalOf } from "./external";
 import { CaptureOf } from "./capture";
 
-export type { Flavour, Held } from "./flavour";
+export type { EscapedKeys, Flavour, Held, MemberPath } from "./flavour";
 
 /** The dialect of an engine of the MySQL family, from what it spells its own way. */
 export function FamilyDialect(flavour: Flavour): Dialect {
