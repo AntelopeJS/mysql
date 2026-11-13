@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.1.1
+
+[compare changes](https://github.com/AntelopeJS/mysql/compare/v0.1.0...v0.1.1)
+
+### 🔥 Performance
+
+- **dialect:** Share MariaDB's keyed group lookup across a map's outer rows, and read unindexed groups by primary key ([#31](https://github.com/AntelopeJS/mysql/pull/31))
+- **filter:** Test a JSON read's JSON_VALUE text before its typed comparison ([#11](https://github.com/AntelopeJS/mysql/pull/11))
+
+### 🩹 Fixes
+
+- **query:** Keep a relation's order when a later stage wraps it in a derived table ([#16](https://github.com/AntelopeJS/mysql/pull/16))
+- **dialect:** Keep a stored "null" string through eq(null) and array add on MariaDB ([#26](https://github.com/AntelopeJS/mysql/pull/26))
+- **indexes:** Refuse the writes a unique index the server refused would check ([#25](https://github.com/AntelopeJS/mysql/pull/25))
+- **connection:** Name the engine in the pool, startup, slow-acquire and not-connected messages ([#27](https://github.com/AntelopeJS/mysql/pull/27))
+- **dialect:** Answer MariaDB's nested groups, unions, joins and stages after a group or computed slice that read their outer row ([#9](https://github.com/AntelopeJS/mysql/pull/9))
+- **lookup:** Collect a looked-up list in the order its query asks for ([#28](https://github.com/AntelopeJS/mysql/pull/28))
+- **indexes:** Refuse the writes a unique index a lock holds off would check, and build it once the lock is gone ([#29](https://github.com/AntelopeJS/mysql/pull/29))
+
+### ✅ Tests
+
+- Count and take nth of a nested join whose condition reads its outer row on MariaDB ([#12](https://github.com/AntelopeJS/mysql/pull/12))
+- **decorators:** Serve each run's api on its own port instead of locking 5010 ([#30](https://github.com/AntelopeJS/mysql/pull/30))
+
+### ❤️ Contributors
+
+- Antony Rizzitelli ([@Upd4ting](http://github.com/Upd4ting))
+
 ## v0.1.0
 
 
