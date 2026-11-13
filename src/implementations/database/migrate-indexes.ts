@@ -4,7 +4,7 @@ import { Logger } from "../../logger";
 import type { DdlFailure } from "../../dialect";
 import {
   GetDialect,
-  PoolGeneration,
+  IsPoolEnding,
   RegisterBeforeDisconnect,
 } from "../../connection";
 import { Observe } from "./observe";
@@ -53,15 +53,6 @@ const STOPPED_BY_SERVER: ReadonlySet<DdlFailure> = new Set([
 
 const builds = new Set<IndexBuild>();
 const phases = new Set<Promise<IndexPhaseEnd>>();
-
-/** The pool the latest disconnect ends, from the moment it stops the running index builds. */
-let ending: number | undefined;
-
-/** Whether no pool is open, or a disconnect is ending the open one, so a phase cannot run on it. */
-function IsPoolEnding(): boolean {
-  const open = PoolGeneration();
-  return open === undefined || open === ending;
-}
 
 function Describe(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
@@ -313,7 +304,6 @@ export function BuildIndexes(
  * back. A phase that would start on the pool being ended stops before it runs.
  */
 async function StopIndexBuilds(): Promise<void> {
-  ending = PoolGeneration();
   const running = [...builds];
   for (const build of running) {
     build.stop.abort();
