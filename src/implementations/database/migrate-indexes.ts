@@ -215,7 +215,7 @@ async function RunIndexPhase(
         }
         const pause = RestartDelayMs(attempt);
         Logger.Warn(
-          `The server stopped the index phase of schema '${schemaId}' (${Describe(err)}); it starts again on a connection of the pool in ${pause} ms`,
+          `The server stopped attempt ${attempt} at the index phase of schema '${schemaId}' (${Describe(err)}); attempt ${attempt + 1} starts on a connection of the pool in ${pause} ms`,
         );
         await PauseUnlessStopped(pause, build.stop.signal);
       }

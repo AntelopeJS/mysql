@@ -9,8 +9,10 @@ import {
 
 import { type Sql, ident, int, param, sql } from "../statement";
 import { AcquireConnection, Read } from "../connection";
+import { Logger } from "../logger";
 import { Schemas, WaitForIndexes } from "../implementations/database/schema";
 import { Numbers, PhysicalTable, Run } from "./tables";
+import { SettlesWithin } from "./watch";
 
 const FIELDS = { sku: "string", price: "number" } as const;
 const BARE: SchemaDefinition = { items: { fields: FIELDS, indexes: {} } };
@@ -27,6 +29,9 @@ const ROWS = 100;
 const POLL_MS = 5;
 const POLL_ATTEMPTS = 2000;
 
+/** Far longer than a phase that ends at once takes; a phase that tried a refusal again would never end. */
+const PROMPT_MS = 10_000;
+
 /** A table of `ROWS` rows with distinct prices, and no index but its primary key. */
 async function Fresh(schemaId: string): Promise<void> {
   const table = ident(PhysicalTable(schemaId));
@@ -37,6 +42,21 @@ async function Fresh(schemaId: string): Promise<void> {
   await Run(
     sql`INSERT INTO ${table} (_id, _instance, sku, price) SELECT LPAD(n, 7, '0'), '', CONCAT('sku-', n), n FROM ${Numbers(3)} AS numbers WHERE n < ${param(ROWS)}`,
   );
+}
+
+/** The warnings logged while `work` runs. */
+async function CaptureWarnings(work: () => Promise<void>): Promise<string[]> {
+  const warnings: string[] = [];
+  const original = Logger.Warn.bind(Logger);
+  Logger.Warn = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(" "));
+  };
+  try {
+    await work();
+  } finally {
+    Logger.Warn = original;
+  }
+  return warnings;
 }
 
 async function IndexNames(schemaId: string): Promise<string[]> {
@@ -164,4 +184,40 @@ describe("a unique-index build the server stops", function () {
       expect(await IndexNames(schemaId)).to.deep.equal(["price"]);
     });
   }
+});
+
+describe("a unique index the server refuses to build", function () {
+  this.timeout(60_000);
+  const schemaId = "index_build_refused";
+
+  after(() => {
+    Schemas.unregister(schemaId);
+  });
+
+  it("is not tried again when the rows already hold a duplicate: the phase ends at once, names the index, and lets writes through", async () => {
+    await Fresh(schemaId);
+    await Run(
+      sql`UPDATE ${ident(PhysicalTable(schemaId))} SET price = 1 WHERE price = 2`,
+    );
+    let ended = false;
+    const warnings = await CaptureWarnings(async () => {
+      const schema = new Schema<{ items: Item }>(schemaId, UNIQUE_PRICE);
+      await schema.instance().table("items").get("0000000").run();
+      ended = await SettlesWithin(WaitForIndexes(schemaId), PROMPT_MS);
+      await WaitForIndexes(schemaId);
+      expect(
+        await Inserting(schema, { _id: "written", price: 1 }),
+        "the write is not held",
+      ).to.equal("stored");
+    });
+    expect(
+      ended,
+      "the phase ends without trying the refused index again",
+    ).to.equal(true);
+    expect(warnings).to.have.length(1);
+    expect(warnings[0]).to.match(
+      /^Index phase of 'index_build_refused.items' could not addIndex 'price': Duplicate entry/,
+    );
+    expect(await IndexNames(schemaId)).to.deep.equal([]);
+  });
 });
