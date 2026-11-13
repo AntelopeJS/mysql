@@ -88,7 +88,7 @@ describe("a group's sub-stream", () => {
           total: stream.distinct("age").sum(),
         })),
       ).sql,
-    ).to.include("SUM(DISTINCT (`t0`.`age` + 0e0))");
+    ).to.include("SUM(DISTINCT `t0`.`age`)");
   });
 
   it("collects a stream it did not reduce into a JSON array, deduplicated by a distinct", () => {

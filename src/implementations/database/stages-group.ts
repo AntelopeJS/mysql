@@ -78,14 +78,27 @@ const MapSubStream: SubStreamStage = (state, stage, context) => {
   return Revalued(state, RequireOperand(body, stage, FIRST_OPERAND), context);
 };
 
+/**
+ * The value a pending dedup compares, where a count or the collected array spends it. A sum or an
+ * average takes the value itself, since `SUM(DISTINCT)` already finds -0 equal to 0 and a decimal
+ * column stays exact.
+ */
+function Deduped(
+  state: SubStream,
+  context: DecodingContext,
+): Compiled | undefined {
+  return state.distinct
+    ? Deduplicable(context.dialect, state.value)
+    : undefined;
+}
+
 const DistinctSubStream: SubStreamStage = (state, stage, context) => {
   const deduped: SubStream = { ...state, distinct: true };
   const field = NamedField(stage);
-  const value = field === undefined ? state.value : state.source.field(field);
-  const compared = Deduplicable(context.dialect, value);
-  return field === undefined && compared === value
-    ? deduped
-    : Revalued(deduped, compared, context);
+  if (field === undefined) {
+    return deduped;
+  }
+  return Revalued(deduped, state.source.field(field), context);
 };
 
 /**
@@ -98,7 +111,7 @@ const CountSubStream: SubStreamStage = (state, stage, context) => {
   if (field !== undefined) {
     return Tally(context.dialect, state.source.field(field));
   }
-  return Tally(context.dialect, state.distinct ? state.value : undefined);
+  return Tally(context.dialect, Deduped(state, context));
 };
 
 function AggregateSubStream(aggregate: Aggregation): SubStreamStage {
@@ -127,7 +140,10 @@ function IsTerminal(step: SubStream | Compiled): step is Compiled {
 
 /** The group's rows as one JSON array, deduplicated where a `distinct` is pending. */
 function CollectedRows(state: SubStream, context: DecodingContext): Compiled {
-  const element = AsJson(context.dialect, state.value).sql;
+  const element = AsJson(
+    context.dialect,
+    Deduped(state, context) ?? state.value,
+  ).sql;
   return {
     sql: Collected(context.dialect, undefined, element, state.distinct),
     type: ArrayOf(state.value.type),
