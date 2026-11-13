@@ -81,31 +81,29 @@ function RestartDelayMs(attempt: number): number {
 }
 
 /**
- * Runs `attempt` again each time the server stops it, with its statement or its connection, after
- * a pause of {@link RESTART_FIRST_MS} doubled at each attempt up to {@link RESTART_MAX_MS}, with no
- * limit on attempts. The pool replaces a lost connection, so a server restart, a network drop or a
- * `KILL` only delays an index build, and the writes the unique gate holds wait for it. Any other
- * failure, and any failure once `stop` aborts, rejects.
+ * The `again` hook of a schema's index phase: tries again each time the server stops an attempt,
+ * with its statement or its connection, after a pause of {@link RESTART_FIRST_MS} doubled at each
+ * attempt up to {@link RESTART_MAX_MS}, with no limit on attempts. The pool replaces a lost
+ * connection, so a server restart, a network drop or a `KILL` only delays an index build, and the
+ * writes the unique gate holds wait for it. Gives up on any other failure, and once `stop` aborts.
  */
-async function RetryServerStops<T>(
+function AgainWhenServerStops(
   schemaId: string,
   stop: AbortSignal,
-  attempt: () => Promise<T>,
-): Promise<T> {
-  for (let count = 1; ; count++) {
-    try {
-      return await attempt();
-    } catch (err) {
-      if (stop.aborted || !STOPPED_BY_SERVER.has(FailureOf(err))) {
-        throw err;
-      }
-      const pause = RestartDelayMs(count);
-      Logger.Warn(
-        `The server stopped attempt ${count} at the index phase of schema '${schemaId}' (${Describe(err)}); attempt ${count + 1} starts on a connection of the pool in ${pause} ms`,
-      );
-      await PauseUnlessStopped(pause, stop);
+): (cause: unknown) => Promise<boolean> {
+  let attempt = 0;
+  return async (cause) => {
+    if (stop.aborted || !STOPPED_BY_SERVER.has(FailureOf(cause))) {
+      return false;
     }
-  }
+    attempt += 1;
+    const pause = RestartDelayMs(attempt);
+    Logger.Warn(
+      `The server stopped attempt ${attempt} at the index phase of schema '${schemaId}' (${Describe(cause)}); attempt ${attempt + 1} starts on a connection of the pool in ${pause} ms`,
+    );
+    await PauseUnlessStopped(pause, stop);
+    return true;
+  };
 }
 
 /**
@@ -193,23 +191,25 @@ async function RunIndexPhase(
         holdsUnique();
       }
     };
-    const steps = await RetryServerStops(schemaId, build.stop.signal, () =>
-      WithIndexesLock(
-        SchemaKey(schemaId),
-        { opened, stop: build.stop.signal },
-        async (session) => {
-          build.session = session;
-          try {
-            let total = 0;
-            for (const plan of plans) {
-              total += await ConvergeIndexes(session, plan, isStopping);
-            }
-            return total;
-          } finally {
-            build.session = undefined;
+    const steps = await WithIndexesLock(
+      SchemaKey(schemaId),
+      {
+        opened,
+        stop: build.stop.signal,
+        again: AgainWhenServerStops(schemaId, build.stop.signal),
+      },
+      async (session) => {
+        build.session = session;
+        try {
+          let total = 0;
+          for (const plan of plans) {
+            total += await ConvergeIndexes(session, plan, isStopping);
           }
-        },
-      ),
+          return total;
+        } finally {
+          build.session = undefined;
+        }
+      },
     );
     if (steps) {
       Logger.Info(

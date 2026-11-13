@@ -39,6 +39,14 @@ describe("the MySQL DDL failure classification", () => {
     expect(ddl.failure(DriverError(-104, true))).to.equal("disconnected");
   });
 
+  it("reads a server turning a connection away or ending it as disconnected, so the work waits for another", () => {
+    for (const errno of [1040, 1053, 1129, 1203, 1927]) {
+      expect(ddl.failure(DriverError(errno)), String(errno)).to.equal(
+        "disconnected",
+      );
+    }
+  });
+
   it("reads an error with no server error number on a live connection as broken", () => {
     expect(ddl.failure(DriverError())).to.equal("broken");
     expect(ddl.failure(DriverError(-104))).to.equal("broken");

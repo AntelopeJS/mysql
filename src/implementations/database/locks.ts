@@ -165,6 +165,12 @@ export interface PhaseHooks {
   readonly opened?: (session: ConvergenceSession) => Promise<void>;
   /** Ends the phase before its next attempt, and cuts short the pause before it. */
   readonly stop?: AbortSignal;
+  /**
+   * Decides, once an attempt failed with `cause`, whether the phase tries again, and pauses as long
+   * as it needs first. The phase keeps its turn meanwhile, so a later call for the same schema still
+   * runs after it.
+   */
+  readonly again?: (cause: unknown) => Promise<boolean>;
 }
 
 /** One attempt at a lock: what the work answered, or nothing while another session holds the lock. */
@@ -199,15 +205,23 @@ function WithPhaseLock<T>(
           `Stopped before the ${phase} phase of '${schemaKey}' began`,
         );
       }
-      const attempt = await OnDedicatedSession(
-        async (session): Promise<Attempt<T>> => {
-          await hooks.opened?.(session);
-          const name = await LockName(session, phase, schemaKey);
-          return (await TakeLock(session, name, 0))
-            ? { result: await Holding(session, name, work) }
-            : undefined;
-        },
-      );
+      let attempt: Attempt<T>;
+      try {
+        attempt = await OnDedicatedSession(
+          async (session): Promise<Attempt<T>> => {
+            await hooks.opened?.(session);
+            const name = await LockName(session, phase, schemaKey);
+            return (await TakeLock(session, name, 0))
+              ? { result: await Holding(session, name, work) }
+              : undefined;
+          },
+        );
+      } catch (err) {
+        if (await hooks.again?.(err)) {
+          continue;
+        }
+        throw err;
+      }
       if (attempt) {
         return attempt.result;
       }

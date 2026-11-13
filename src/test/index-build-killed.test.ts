@@ -221,3 +221,28 @@ describe("a unique index the server refuses to build", function () {
     expect(await IndexNames(schemaId)).to.deep.equal([]);
   });
 });
+
+describe("a registration made while a stopped unique-index build waits to start again", function () {
+  this.timeout(60_000);
+  const schemaId = "index_build_superseded";
+
+  after(() => {
+    Schemas.unregister(schemaId);
+  });
+
+  it("runs its index phase after that build's next attempt, so the index it no longer declares is not left behind", async () => {
+    await Fresh(schemaId);
+    const held = await HoldTable(schemaId);
+    const schema = new Schema<{ items: Item }>(schemaId, UNIQUE_PRICE);
+    await Run(sql`KILL ${int(await BuildingConnection(schemaId, []))}`);
+    await Release(held);
+    const stopped = WaitForIndexes(schemaId);
+    await Schemas.register(schemaId, BARE);
+    await WaitForIndexes(schemaId);
+    await stopped;
+    expect(await IndexNames(schemaId)).to.deep.equal([]);
+    expect(await Inserting(schema, { _id: "duplicate", price: 7 })).to.equal(
+      "stored",
+    );
+  });
+});
