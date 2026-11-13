@@ -35,10 +35,11 @@ const MODE = process.env.MYSQL_TEST_MODE;
  * caller sets one, so decorators suites on one machine run side by side.
  */
 function ApiPort(): number {
-  const port = Number(process.env.DECORATORS_TEST_API_PORT);
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+  const raw = process.env.DECORATORS_TEST_API_PORT ?? "";
+  const port = Number(raw);
+  if (!/^\d+$/.test(raw) || port < 1 || port > 65_535) {
     throw new Error(
-      "The decorators suite runs through scripts/decorators.sh, which sets DECORATORS_TEST_API_PORT",
+      `DECORATORS_TEST_API_PORT must be a port from 1 to 65535, got "${raw}"; scripts/decorators.sh picks a free one`,
     );
   }
   return port;
