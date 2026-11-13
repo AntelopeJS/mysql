@@ -71,6 +71,7 @@ const MASKED_JSON: JsonSyntax = {
   shallowMerge: (left, right) => Marked(left, right),
   split: (text) => Marked(text),
   walk: (_kind, source) => ({
+    from: Marked(source),
     ordinal: Marked(),
     value: Marked(),
     aggregate: (select, where) => Marked(source, select, ...Present(where)),

@@ -43,15 +43,14 @@ describe("the group stage", () => {
     );
   });
 
-  it("sorts inside a subselect, since an order term beside a GROUP BY is no group's", () => {
+  it("drops the order ahead of it in the select that groups, since an order term beside a GROUP BY is no group's", () => {
     const sql = Compile(
       Root()
         .orderBy("age")
         .group("name", (stream, name) => ({ name })),
     ).sql;
-    expect(sql).to.include(
-      "ORDER BY `t0`.`age` ASC) AS `t1` GROUP BY `t1`.`name`",
-    );
+    expect(sql).to.include(`${FROM_PEOPLE} GROUP BY \`t0\`.\`name\``);
+    expect(sql).to.not.include("ORDER BY");
   });
 });
 

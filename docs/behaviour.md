@@ -29,13 +29,14 @@ These queries answer instead of throwing, and the answer may not be the one you 
 
 ## Shaping a stream
 
-| Behaviour                                                                       | Detail                                                                                                                                             |
-| ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `without` over a value that is not an object answers `null`                     | An array or a scalar has no keys to remove, so the row survives with a null in place of the value                                                  |
-| Successive `orderBy` stages are stable sorts, so the **last one written wins**  | Sort by name, then by age, and ties in age stay in name order                                                                                      |
-| A `slice` bound on a _stream_ is clamped; one on an _array_ counts from the end | `slice(-3)` over an array is the last three elements, and a fractional bound truncates toward zero. Over a stream a negative bound is clamped to 0 |
-| `union` never deduplicates                                                      | The interface asserts that a stream unioned with itself is twice as long                                                                           |
-| `distinct` discards the ordering ahead of it                                    | MySQL refuses `SELECT DISTINCT … ORDER BY` a term outside the select list, so the sort is moved inside, where it no longer orders the result       |
+| Behaviour                                                                       | Detail                                                                                                                                                                      |
+| ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `without` over a value that is not an object answers `null`                     | An array or a scalar has no keys to remove, so the row survives with a null in place of the value                                                                           |
+| Successive `orderBy` stages are stable sorts, so the **last one written wins**  | Sort by name, then by age, and ties in age stay in name order                                                                                                               |
+| A `slice` bound on a _stream_ is clamped; one on an _array_ counts from the end | `slice(-3)` over an array is the last three elements, and a fractional bound truncates toward zero. Over a stream a negative bound is clamped to 0                          |
+| `union` never deduplicates                                                      | The interface asserts that a stream unioned with itself is twice as long                                                                                                    |
+| `distinct` discards the ordering ahead of it                                    | MySQL refuses `SELECT DISTINCT … ORDER BY` a term outside the select list, and neither engine keeps the order of a derived table a dedup reads, so the dedup drops the sort |
+| `group` discards the ordering ahead of it                                       | Neither engine keeps the order of a derived table a `GROUP BY` reads, and a group collects its rows unordered, so the group drops the sort                                  |
 
 ## Storing a value
 

@@ -26,7 +26,7 @@ import {
   type Relation,
   SetProjection,
 } from "./relation";
-import { Prepare, type RelationFlag } from "./render";
+import { AbsorbOrder, Prepare, type RelationFlag } from "./render";
 import { IsString } from "./guards";
 import { OptionsOf } from "./utils";
 
@@ -184,14 +184,13 @@ function SubStreamProvider(
   };
 }
 
-/** Everything that blocks a whole-stream aggregate, plus an existing ordering. */
+/** Everything that blocks a whole-stream aggregate. */
 const GROUP_BLOCKERS: readonly RelationFlag[] = [
   "projection",
   "limit",
   "offset",
   "distinct",
   "aggregated",
-  "ordered",
 ];
 
 function GroupName(stage: QueryStage): string {
@@ -229,9 +228,12 @@ function GroupValue(
  * relies on the session pin leaving that mode off.
  *
  * The relation is left `aggregated` and not `single`: a later `count()` wraps and counts the groups.
+ * A group keeps no order of the rows ahead of it, which a group's rows are collected without and
+ * both engines drop from a derived table a `GROUP BY` reads, so the order is dropped in place.
  */
 const GroupStage: PipelineStage = (relation, stage, context) => {
   const prepared = Prepare(relation, GROUP_BLOCKERS, context);
+  AbsorbOrder(prepared);
   const members = IndexColumns(prepared, GroupName(stage));
   const value = GroupValue(members, context);
   prepared.groupBy.push(...members.map((member) => member.value));

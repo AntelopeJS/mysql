@@ -143,6 +143,11 @@ function CollectInPlace(element: Sql, rows: CollectedRows): Sql {
   return sql`COALESCE(JSON_ARRAYAGG(${value}${order}${limit}), JSON_ARRAY())`;
 }
 
+/** MariaDB stores JSON as text, and a dedup compares that text in the binary collation. */
+function DedupText(json: Sql): Sql {
+  return sql`CONVERT(${json} USING utf8mb4) COLLATE ${ident(BINARY_COLLATION)}`;
+}
+
 /**
  * MariaDB's cast reads a zone offset and drops it, so the offset is subtracted from the local time,
  * and a `Z` is dropped since the session is UTC. `CONVERT_TZ` would leave an instant before 1970
@@ -254,7 +259,7 @@ const MARIADB: Flavour = {
     sql`(CASE ${truth} WHEN TRUE THEN ${Json(lit("true"))} WHEN FALSE THEN ${Json(lit("false"))} END)`,
   includes: Includes,
   collect: Collect,
-  collectInPlace: CollectInPlace,
+  inPlace: { collect: CollectInPlace, dedupText: DedupText },
   returning: true,
   lateral: false,
   hold: Hold,
