@@ -414,13 +414,28 @@ async function Stop(running: readonly IndexBuild[]): Promise<void> {
   );
 }
 
+function BuildsOf(schemaId: string): IndexBuild[] {
+  return [...builds].filter((build) => build.schemaId === schemaId);
+}
+
 /**
  * Stops the index phases of a schema, running or waiting for their turn, as unregistering it does:
  * nothing waits for them any more, and a phase that a lock holds off would otherwise keep trying for
  * as long as the lock is held.
  */
 export async function StopSchemaIndexBuilds(schemaId: string): Promise<void> {
-  await Stop([...builds].filter((build) => build.schemaId === schemaId));
+  await Stop(BuildsOf(schemaId));
+}
+
+/**
+ * Ends the index phases of a schema once the statement each runs has ended, as a later registration
+ * of the schema does before it starts its own phase: that phase builds from the plan now declared,
+ * and a build it still declares is not thrown away.
+ */
+export function SupersedeIndexBuilds(schemaId: string): void {
+  for (const build of BuildsOf(schemaId)) {
+    build.stop.abort();
+  }
 }
 
 /**

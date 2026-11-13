@@ -57,6 +57,10 @@ function Key(unbuilt: UnbuiltUniqueIndex): string {
   return `${unbuilt.tableId}\u0000${unbuilt.index.name}`;
 }
 
+function CausedKey(unbuilt: UnbuiltUniqueIndex): string {
+  return `${Key(unbuilt)}\u0000${unbuilt.cause}`;
+}
+
 /** What follows a unique index the phase left unbuilt, by why. */
 const OUTLOOK: Record<UnbuiltCause, string> = {
   refused: "remove the rows it refuses, then register the schema again",
@@ -64,17 +68,17 @@ const OUTLOOK: Record<UnbuiltCause, string> = {
 };
 
 /**
- * Logs each unique index a pass left unbuilt that the one before it had not, and each that a pass
- * built after a lock held it off.
+ * Logs each unique index a pass left unbuilt that the one before it had not, or not for that cause,
+ * and each that a pass built after a lock held it off.
  */
 export function ReportUnbuilt(
   schemaId: string,
   before: readonly UnbuiltUniqueIndex[],
   after: readonly UnbuiltUniqueIndex[],
 ): void {
-  const was = new Set(before.map(Key));
+  const was = new Set(before.map(CausedKey));
   const is = new Set(after.map(Key));
-  for (const one of after.filter((left) => !was.has(Key(left)))) {
+  for (const one of after.filter((left) => !was.has(CausedKey(left)))) {
     Logger.Warn(
       `Index phase of '${schemaId}.${one.tableId}' could not build unique index '${one.index.id}': ${one.reason}. Inserts, and writes that set its fields, are refused until it is built: ${OUTLOOK[one.cause]}`,
     );

@@ -22,6 +22,8 @@ type TableId = "items" | "others";
 
 const SCHEMA_ID = "locked_unique";
 const GONE_ID = "locked_unique_gone";
+const EARLY_ID = "locked_unique_early";
+const REPLACED_ID = "locked_unique_replaced";
 const FIELDS = { price: "number" } as const;
 const BARE: SchemaDefinition = {
   items: { fields: FIELDS, indexes: {} },
@@ -145,6 +147,8 @@ describe("a unique index whose build a long transaction holds off", function () 
   after(() => {
     Schemas.unregister(SCHEMA_ID);
     Schemas.unregister(GONE_ID);
+    Schemas.unregister(EARLY_ID);
+    Schemas.unregister(REPLACED_ID);
   });
 
   it("refuses inserts by name while held, then is built once the transaction ends and refuses the duplicate", async () => {
@@ -210,5 +214,44 @@ describe("a unique index whose build a long transaction holds off", function () 
     await delay(NEXT_ATTEMPT_MS);
     expect(polls, "no build runs once the schema is gone").to.equal(0);
     expect(await IndexNames(GONE_ID)).to.deep.equal([]);
+  });
+
+  it("starts no build for a registration unregistered before its tables converged", async () => {
+    await Fresh(EARLY_ID);
+    const held = await HoldTable(EARLY_ID);
+    const registering = Schemas.register(EARLY_ID, UNIQUE_PRICE);
+    Schemas.unregister(EARLY_ID);
+    await registering;
+    const polls = await AlteringPolls(EARLY_ID, NEXT_ATTEMPT_MS);
+    await Release(held);
+    await delay(NEXT_ATTEMPT_MS);
+    expect(polls, "no build runs for the unregistered schema").to.equal(0);
+    expect(await IndexNames(EARLY_ID)).to.deep.equal([]);
+  });
+
+  it("stops retrying an index a later registration no longer declares", async () => {
+    await Fresh(REPLACED_ID);
+    const held = await HoldTable(REPLACED_ID);
+    await Schemas.register(REPLACED_ID, UNIQUE_PRICE);
+    const replaced = new Schema<{ items: Item }>(REPLACED_ID, UNIQUE_PRICE);
+    const refused = await replaced
+      .instance()
+      .table("items")
+      .insert({ _id: "held", price: 5 })
+      .run()
+      .then(
+        () => "stored",
+        (err: unknown) => err,
+      );
+    expect(refused, "the first pass left the index unbuilt").to.be.instanceOf(
+      Error,
+    );
+    await Schemas.register(REPLACED_ID, BARE);
+    await WaitForIndexes(REPLACED_ID);
+    const polls = await AlteringPolls(REPLACED_ID, LATER_PASS_MS);
+    await Release(held);
+    await delay(NEXT_ATTEMPT_MS);
+    expect(polls, "the earlier registration's passes end").to.equal(0);
+    expect(await IndexNames(REPLACED_ID)).to.deep.equal([]);
   });
 });

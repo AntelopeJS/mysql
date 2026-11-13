@@ -11,6 +11,7 @@ import { GetDialect, GetSchemaPrefix, PoolGeneration } from "../../connection";
 import {
   BuildIndexes,
   StopSchemaIndexBuilds,
+  SupersedeIndexBuilds,
   type IndexPhaseEnd,
 } from "./migrate-indexes";
 import type { UnbuiltUniqueIndex, UniqueGate } from "./unbuilt-unique";
@@ -176,6 +177,10 @@ async function initialize(
   );
   scanNotices.set(schemaId, SchemaScanNotices(schemaId, schema));
   await ConvergeTables(schemaId, planned.tables, GetOptions().migrations);
+  if (unconverged.get(schemaId) !== registration) {
+    return;
+  }
+  SupersedeIndexBuilds(schemaId);
   const phase = BuildIndexes(schemaId, planned.tables);
   indexing.set(schemaId, phase.done);
   uniqueGates.set(schemaId, phase.unique);
@@ -370,5 +375,14 @@ export async function WaitForUniqueIndexes(
   schemaId: string,
 ): Promise<readonly UnbuiltUniqueIndex[]> {
   await WaitForSchemaReady(schemaId);
-  return (await uniqueGates.get(schemaId))?.unbuilt ?? [];
+  for (;;) {
+    const gate = uniqueGates.get(schemaId);
+    try {
+      return (await gate)?.unbuilt ?? [];
+    } catch (err) {
+      if (uniqueGates.get(schemaId) === gate) {
+        throw err;
+      }
+    }
+  }
 }
