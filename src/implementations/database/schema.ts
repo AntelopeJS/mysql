@@ -8,7 +8,7 @@ import type {
 import { Logger } from "../../logger";
 import { GetOptions, IsExternal } from "../../config";
 import { GetDialect, GetSchemaPrefix, PoolGeneration } from "../../connection";
-import { BuildIndexes } from "./migrate-indexes";
+import { BuildIndexes, type IndexPhaseEnd } from "./migrate-indexes";
 import { ConvergeTables } from "./migrate-tables";
 import { ParseSchema, type SchemaModel, type TableModel } from "./fields";
 import { DescribeExternalSchema } from "./external-schema";
@@ -29,7 +29,7 @@ const schemaModels = new Map<string, SchemaModel>();
 const schemaPlans = new Map<string, ReadonlyMap<string, TablePlan>>();
 const scanNotices = new Map<string, TableScanNotices>();
 const ready = new Map<string, Promise<void>>();
-const indexing = new Map<string, Promise<void>>();
+const indexing = new Map<string, Promise<IndexPhaseEnd>>();
 const uniqueGates = new Map<string, Promise<void>>();
 
 /** A registration that has not converged: its definition, and the pool it started on. */
@@ -38,7 +38,10 @@ interface Unconverged {
   readonly generation: number | undefined;
 }
 
-/** The registrations still converging or failed, by schema id. */
+/**
+ * The registrations still converging, failed, or whose index phase a disconnect stopped, by schema
+ * id.
+ */
 const unconverged = new Map<string, Unconverged>();
 
 function UnservedScanWarning(
@@ -129,16 +132,29 @@ async function InitializeExternal(
   );
 }
 
+/** Forgets a registration that has converged, unless a later registration of the id replaced it. */
+function Converged(schemaId: string, registration: Unconverged): void {
+  if (unconverged.get(schemaId) === registration) {
+    unconverged.delete(schemaId);
+  }
+}
+
 /**
  * Parses the schema, plans its tables and converges them; the secondary indexes then converge in
  * the background, tracked in `indexing`, so the readiness gate never waits on an index build. An
  * index the engine cannot build is reported once and left out; every other refusal fails the
- * registration with its reason.
+ * registration with its reason. The registration has converged once its index phase has ended
+ * without a disconnect stopping it.
  */
-async function initialize(schemaId: string, schema: SchemaDefinition) {
+async function initialize(
+  schemaId: string,
+  schema: SchemaDefinition,
+  registration: Unconverged,
+) {
   const model = ParseSchema(schemaId, schema);
   if (IsExternal()) {
     await InitializeExternal(schemaId, schema, model);
+    Converged(schemaId, registration);
     return;
   }
   const planned = BuildSchemaPlan(schemaId, schema, model, {
@@ -158,6 +174,11 @@ async function initialize(schemaId: string, schema: SchemaDefinition) {
   const phase = BuildIndexes(schemaId, planned.tables);
   indexing.set(schemaId, phase.done);
   uniqueGates.set(schemaId, phase.unique);
+  void phase.done.then((end) => {
+    if (end !== "stopped") {
+      Converged(schemaId, registration);
+    }
+  });
 }
 
 /**
@@ -177,33 +198,32 @@ async function initialize(schemaId: string, schema: SchemaDefinition) {
  * the same id has already succeeded and installed its own definition, shape and gate; deleting
  * unconditionally there would wipe the live schema.
  *
- * **A registration outlives the pool it started on.** Until it converges it stays in
- * {@link unconverged} with the pool it started on, and once another pool is open
- * {@link WaitForSchemaReady} registers it again there, whether the first run failed or still waits
- * on a connection the old pool ended. Convergence plans every step from the catalog and runs one at
- * a time per schema, so the second run finishes whatever the first left.
+ * **A registration outlives the pool it started on.** Until it converges, its index phase
+ * included, it stays in {@link unconverged} with the pool it started on, and once another pool is
+ * open {@link WaitForSchemaReady} registers it again there, whether the first run failed, still
+ * waits on a connection the old pool ended, or had its index phase stopped by the disconnect.
+ * Convergence plans every step from the catalog and runs one at a time per schema, so the second
+ * run finishes whatever the first left.
  */
 export const Schemas = {
   register(schemaId: string, schema: SchemaDefinition) {
     definitions.set(schemaId, schema);
-    unconverged.set(schemaId, { schema, generation: PoolGeneration() });
-    const pending: Promise<void> = initialize(schemaId, schema).then(
-      () => {
-        if (ready.get(schemaId) === pending) {
-          unconverged.delete(schemaId);
-        }
-      },
-      (err: unknown) => {
-        if (ready.get(schemaId) === pending) {
-          definitions.delete(schemaId);
-          schemaModels.delete(schemaId);
-          schemaPlans.delete(schemaId);
-          scanNotices.delete(schemaId);
-          uniqueGates.delete(schemaId);
-        }
-        throw err;
-      },
-    );
+    const registration: Unconverged = { schema, generation: PoolGeneration() };
+    unconverged.set(schemaId, registration);
+    const pending: Promise<void> = initialize(
+      schemaId,
+      schema,
+      registration,
+    ).catch((err: unknown) => {
+      if (ready.get(schemaId) === pending) {
+        definitions.delete(schemaId);
+        schemaModels.delete(schemaId);
+        schemaPlans.delete(schemaId);
+        scanNotices.delete(schemaId);
+        uniqueGates.delete(schemaId);
+      }
+      throw err;
+    });
     ready.set(schemaId, pending);
     pending.catch(() => {});
     return pending;

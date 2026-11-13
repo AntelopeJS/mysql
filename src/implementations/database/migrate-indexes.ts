@@ -2,7 +2,11 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { Logger } from "../../logger";
 import type { DdlFailure } from "../../dialect";
-import { GetDialect, RegisterBeforeDisconnect } from "../../connection";
+import {
+  GetDialect,
+  IsPoolEnding,
+  RegisterBeforeDisconnect,
+} from "../../connection";
 import { Observe } from "./observe";
 import { SchemaKey } from "./registry";
 import type { TablePlan } from "./plan";
@@ -48,7 +52,7 @@ const STOPPED_BY_SERVER: ReadonlySet<DdlFailure> = new Set([
 ]);
 
 const builds = new Set<IndexBuild>();
-const phases = new Set<Promise<void>>();
+const phases = new Set<Promise<IndexPhaseEnd>>();
 
 function Describe(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
@@ -182,11 +186,17 @@ async function HoldsEveryUniqueIndex(
   return true;
 }
 
+/** How an index phase ended: it ran to its end, it failed, or a disconnect stopped it first. */
+export type IndexPhaseEnd = "converged" | "failed" | "stopped";
+
 async function RunIndexPhase(
   schemaId: string,
   plans: readonly TablePlan[],
   holdsUnique: () => void,
-): Promise<void> {
+): Promise<"converged" | "stopped"> {
+  if (IsPoolEnding()) {
+    return "stopped";
+  }
   const build: IndexBuild = { stop: new AbortController() };
   builds.add(build);
   const isStopping = () => build.stop.signal.aborted;
@@ -221,10 +231,12 @@ async function RunIndexPhase(
         `converged the indexes of schema '${schemaId}' in ${steps} statements`,
       );
     }
+    return "converged";
   } catch (err) {
     if (!isStopping()) {
       throw err;
     }
+    return "stopped";
   } finally {
     builds.delete(build);
   }
@@ -232,11 +244,12 @@ async function RunIndexPhase(
 
 /** A background index phase, and the gate of the writes its schema's unique indexes guard. */
 export interface IndexPhase {
-  /** Settles once the phase has, whatever its outcome; never rejects. */
-  readonly done: Promise<void>;
+  /** Settles once the phase has, to how it ended; never rejects. */
+  readonly done: Promise<IndexPhaseEnd>;
   /**
    * Settles at once for plans that declare no unique index, as soon as the phase finds the catalog
-   * already holding every one they declare, and otherwise once the phase has settled.
+   * already holding every one they declare, and otherwise once the phase has settled. Rejects when a
+   * disconnect stops the phase before that, so no write it holds runs on the pool being ended.
    */
   readonly unique: Promise<void>;
 }
@@ -244,7 +257,8 @@ export interface IndexPhase {
 /**
  * Converges a schema's secondary indexes and key columns, once its tables converged. Meant to run in
  * the background: queries never wait for it, and their results never depend on whether an index
- * exists yet. `done` never rejects; a failure is logged and repaired by the next registration.
+ * exists yet. `done` never rejects; a failure is logged and repaired by the next registration, and
+ * a phase a disconnect stopped is run again by the registration the next pool makes.
  *
  * A btree index builds with writes flowing, and carries its signature from the statement that
  * builds it, so there is no unsigned window and a failed build leaves no index behind. Processes
@@ -256,9 +270,12 @@ export function BuildIndexes(
   plans: readonly TablePlan[],
 ): IndexPhase {
   let open = () => {};
-  const unique = new Promise<void>((resolve) => {
+  let refuse: (reason: Error) => void = () => {};
+  const unique = new Promise<void>((resolve, reject) => {
     open = resolve;
+    refuse = reject;
   });
+  unique.catch(() => {});
   if (!plans.some(DeclaresUnique)) {
     open();
   }
@@ -268,14 +285,24 @@ export function BuildIndexes(
         `Building the indexes of schema '${schemaId}' failed; the next registration retries it`,
         err,
       );
+      return "failed" as const;
     })
-    .finally(open);
+    .then((end) => {
+      if (end === "stopped") {
+        refuse(INDEX_BUILD_STOPPED);
+      }
+      open();
+      return end;
+    });
   phases.add(done);
   void done.finally(() => phases.delete(done));
   return { done, unique };
 }
 
-/** Stops every running index build, killing its statement, and waits for each to give its connection back. */
+/**
+ * Stops every running index build, killing its statement, and waits for each to give its connection
+ * back. A phase that would start on the pool being ended stops before it runs.
+ */
 async function StopIndexBuilds(): Promise<void> {
   const running = [...builds];
   for (const build of running) {

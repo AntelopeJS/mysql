@@ -58,6 +58,7 @@ export type Row = ReadonlyMap<string, Cell>;
 
 let pool: Pool | undefined;
 let generation = 0;
+let isEnding = false;
 let dialect: Dialect | undefined;
 let connectFailure: string | undefined;
 let isWaiting = false;
@@ -284,6 +285,7 @@ export async function SettleBeforeDisconnect(endPool: PoolTeardown) {
 async function EndPool() {
   const current = pool;
   pool = undefined;
+  isEnding = false;
   dialect = undefined;
   connectFailure = undefined;
   ClearOptions();
@@ -293,8 +295,12 @@ async function EndPool() {
   }
 }
 
-/** Settles every `RegisterBeforeDisconnect` callback, then ends the pool and forgets the options. */
+/**
+ * Settles every `RegisterBeforeDisconnect` callback, then ends the pool and forgets the options. The
+ * pool counts as ending from the call on, so work that would start on it meanwhile does not.
+ */
 export async function Disconnect() {
+  isEnding = true;
   await SettleBeforeDisconnect(EndPool);
 }
 
@@ -320,6 +326,14 @@ export function AssertConnected(): void {
  */
 export function PoolGeneration(): number | undefined {
   return pool ? generation : undefined;
+}
+
+/**
+ * Whether no pool is open, or `Disconnect` is ending the open one, so work started now cannot
+ * finish on it.
+ */
+export function IsPoolEnding(): boolean {
+  return !pool || isEnding;
 }
 
 /** The dialect of the connected server, or a refusal with why there is none. */
