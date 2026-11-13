@@ -64,7 +64,7 @@
     "@antelopejs/api": "^1.7.3",
     "@antelopejs/core": "^1.21.0",
     "@antelopejs/interface-api": "^0.3.2",
-    "@antelopejs/interface-database-decorators": "^0.3.2",
+    "@antelopejs/interface-database-decorators": "^0.4.1",
     "@antelopejs/postgres": "0.2.8",
     "@antelopejs/tooling-configs": "^0.5.6",
     "@testcontainers/mysql": "^12.2.1",

@@ -30,10 +30,31 @@ const REPOSITORY = path.resolve(__dirname, "..", "..");
 const MODE = process.env.MYSQL_TEST_MODE;
 
 /**
- * The port the decorators' `model` tests fetch their routes from, which they spell out themselves,
- * so only one decorators suite can run on a machine at a time (`scripts/decorators.sh` takes a lock).
+ * The port `api` serves the decorators' routes on, which their `model` tests fetch from:
+ * `DECORATORS_TEST_API_PORT`, a free port `scripts/decorators.sh` picks for each run unless the
+ * caller sets one, so decorators suites on one machine run side by side.
  */
-const API_PORT = 5010;
+function ApiPort(): number {
+  const raw = process.env.DECORATORS_TEST_API_PORT ?? "";
+  const port = Number(raw);
+  if (!/^\d+$/.test(raw) || port < 1 || port > 65_535) {
+    throw new Error(
+      `DECORATORS_TEST_API_PORT must be a port from 1 to 65535, got "${raw}"; scripts/decorators.sh picks a free one`,
+    );
+  }
+  return port;
+}
+
+/** The `api` module entry that serves the decorators' routes on `port`. */
+function ApiModuleConfig(port: number) {
+  return {
+    source: { type: "local" as const, path: ApiModule() },
+    config: {
+      servers: [{ protocol: "http", host: "127.0.0.1", port }],
+      publicBaseUrl: `http://127.0.0.1:${port}`,
+    },
+  };
+}
 
 /** The `@antelopejs/api` module the decorators' routes are served by, installed as a dev dependency. */
 function ApiModule(): string {
@@ -141,15 +162,7 @@ export default defineConfig({
       ? {
           local: { source: { type: "local", path: "." } },
           mysql: { source: { type: "local", path: REPOSITORY } },
-          api: {
-            source: { type: "local", path: ApiModule() },
-            config: {
-              servers: [
-                { protocol: "http", host: "127.0.0.1", port: API_PORT },
-              ],
-              publicBaseUrl: `http://127.0.0.1:${API_PORT}`,
-            },
-          },
+          api: ApiModuleConfig(ApiPort()),
         }
       : { local: { source: { type: "local", path: "." } } },
   test: {

@@ -31,8 +31,8 @@ importers:
         specifier: ^0.3.2
         version: 0.3.2(@antelopejs/interface-core@0.4.1)
       '@antelopejs/interface-database-decorators':
-        specifier: ^0.3.2
-        version: 0.3.2(@antelopejs/interface-api@0.3.2(@antelopejs/interface-core@0.4.1))(@antelopejs/interface-core@0.4.1)(@antelopejs/interface-database@0.3.1(@antelopejs/interface-core@0.4.1))
+        specifier: ^0.4.1
+        version: 0.4.1(@antelopejs/interface-api@0.3.2(@antelopejs/interface-core@0.4.1))(@antelopejs/interface-core@0.4.1)(@antelopejs/interface-database@0.3.1(@antelopejs/interface-core@0.4.1))
       '@antelopejs/postgres':
         specifier: 0.2.8
         version: 0.2.8
@@ -122,8 +122,8 @@ packages:
     peerDependencies:
       '@antelopejs/interface-core': '>=0.2.4 <1.0.0'
 
-  '@antelopejs/interface-database-decorators@0.3.2':
-    resolution: {integrity: sha512-+7KWEFmaymZg8RVzMNZMYanB5tlW40ffkNw1BBG0RwCsU0z4fcouMfpMTRn5JTqDYP4ywuu7EezZaoZoVzDBdg==}
+  '@antelopejs/interface-database-decorators@0.4.1':
+    resolution: {integrity: sha512-89oefwbeL7VJAVTujs+uigLcSrMxwb/+3uj0xTLVZV1iAQ26mctNaVy1evizyFEupYpgqEdOt34qhJ2VTNkSXw==}
     peerDependencies:
       '@antelopejs/interface-api': '>=0.0.15 <1.0.0'
       '@antelopejs/interface-core': '>=0.2.4 <1.0.0'
@@ -2851,7 +2851,7 @@ snapshots:
     dependencies:
       '@antelopejs/interface-core': 0.4.1
 
-  '@antelopejs/interface-database-decorators@0.3.2(@antelopejs/interface-api@0.3.2(@antelopejs/interface-core@0.4.1))(@antelopejs/interface-core@0.4.1)(@antelopejs/interface-database@0.3.1(@antelopejs/interface-core@0.4.1))':
+  '@antelopejs/interface-database-decorators@0.4.1(@antelopejs/interface-api@0.3.2(@antelopejs/interface-core@0.4.1))(@antelopejs/interface-core@0.4.1)(@antelopejs/interface-database@0.3.1(@antelopejs/interface-core@0.4.1))':
     dependencies:
       '@antelopejs/interface-api': 0.3.2(@antelopejs/interface-core@0.4.1)
       '@antelopejs/interface-core': 0.4.1

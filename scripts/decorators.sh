@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
-port=5010
-exec 9>"${XDG_RUNTIME_DIR:-/tmp}/ajs-mysql-decorators-$port.lock"
-flock 9
+if [[ -z "${DECORATORS_TEST_API_PORT:-}" ]]; then
+  DECORATORS_TEST_API_PORT=$(node -e '
+const server = require("node:net").createServer();
+server.listen(0, "127.0.0.1", () => {
+  console.log(server.address().port);
+  server.close();
+});
+') || exit 1
+  export DECORATORS_TEST_API_PORT
+fi
 source=$(cd "$root" && node -p 'path.dirname(require.resolve("@antelopejs/interface-database-decorators/package.json"))')
 dependencies=$(dirname "$(dirname "$source")")
 wrapper=$(mktemp -d "${TMPDIR:-/tmp}/ajs-mysql-decorators.XXXXXX")
