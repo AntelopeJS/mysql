@@ -347,6 +347,7 @@ function JsonChecked(rows: readonly Row[]): ReadonlySet<string> {
 /** MariaDB 11.8 LTS and 12.3 LTS. */
 const MARIADB: Flavour = {
   id: "mariadb",
+  name: "MariaDB",
   binaryCollation: BINARY_COLLATION,
   jsonType: sql`JSON COLLATE utf8mb4_nopad_bin`,
   maxJsonNesting: MAX_JSON_NESTING,
