@@ -1,6 +1,6 @@
 {
   "name": "@antelopejs/mysql",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "MySQL and MariaDB backend for AntelopeJS, implementing the Database interface on relational tables, with an external mode for existing databases.",
   "keywords": [
     "antelopejs",
