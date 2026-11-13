@@ -77,6 +77,12 @@ const STOPPED_BY_SERVER: ReadonlySet<DdlFailure> = new Set([
   "disconnected",
 ]);
 
+/**
+ * How long a later pass's statement waits for a metadata lock, shorter than the first pass's: every
+ * statement on the table queues behind it, at each pass, for as long as the transaction holds it.
+ */
+const RETRY_LOCK_WAIT_SECONDS = 1;
+
 const builds = new Set<IndexBuild>();
 const phases = new Set<Promise<IndexPhaseEnd>>();
 
@@ -250,6 +256,9 @@ async function RunPass(
   return WithIndexesLock(SchemaKey(build.schemaId), hooks, async (session) => {
     build.session = session;
     try {
+      if (previous) {
+        await session.apply(GetDialect().ddl.lockWait(RETRY_LOCK_WAIT_SECONDS));
+      }
       let steps = 0;
       const unbuilt: UnbuiltUniqueIndex[] = [];
       for (const plan of plans) {
