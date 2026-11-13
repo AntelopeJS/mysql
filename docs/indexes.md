@@ -65,9 +65,10 @@ These writes are refused:
 
 - every `insert`, upserts included, because every row it adds goes into the index;
 - every `replace`, because it states every column;
+- every `update` whose function returns a whole document, such as `update((row) => row.merge({ ... }))`, because it assigns every column. An `update` whose function returns an object literal assigns only the keys it names;
 - an `update` or an atomic update that sets a field the index keys on. A field that no column declares is stored in `_extra`, so an index on such a field refuses every write that sets any undeclared field.
 
-Reads, deletes and updates that set none of the index's fields go through. The server checks a unique index only when a row enters it or its key changes, so these writes cannot store a duplicate. They stay open so that you can clean the table through the module.
+Reads, deletes and other updates that set none of the index's fields go through. The server checks a unique index only when a row enters it or its key changes, so these writes cannot store a duplicate. They stay open so that you can clean the table through the module.
 
 To build the index:
 
