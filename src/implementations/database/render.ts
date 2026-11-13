@@ -62,7 +62,8 @@ function SelectClause(relation: Relation): Sql {
   return sql`SELECT ${modifier}${SelectList(relation)}`;
 }
 
-function FromItem(from: Sql, alias: string): Sql {
+/** A relation's FROM text at its alias, as a FROM or join clause names it. */
+export function FromItem(from: Sql, alias: string): Sql {
   return sql`${from} AS ${ident(alias)}`;
 }
 
@@ -75,9 +76,24 @@ const JOIN_KEYWORDS = { JOIN: sql`JOIN`, "LEFT JOIN": sql`LEFT JOIN` };
 /** The joins every engine spells alike; a lookup's lateral is the dialect's to spell. */
 export type JoinKind = keyof typeof JOIN_KEYWORDS;
 
-/** A join of already-rendered FROM text at an alias, on a condition. */
-export function JoinOn(kind: JoinKind, from: Sql, alias: string, on: Sql): Sql {
-  return sql`${JOIN_KEYWORDS[kind]} ${FromItem(from, alias)} ON ${on}`;
+/** A join of an already-rendered FROM item, on a condition. */
+export function JoinOn(kind: JoinKind, item: Sql, on: Sql): Sql {
+  return sql`${JOIN_KEYWORDS[kind]} ${item} ON ${on}`;
+}
+
+/**
+ * The identity of each row of a table read as itself, `_instance` and `_id`, beside `value`
+ * computed once per row as `column`, selected under the relation's own clauses.
+ */
+export function KeyedIdentities(
+  relation: Relation,
+  value: Sql,
+  column: string,
+): Sql {
+  const identity = [INSTANCE_COLUMN, ID_COLUMN].map((name) =>
+    QualifiedColumn(relation.alias, name),
+  );
+  return sql`SELECT ${join(identity, COMMA)}, ${value} AS ${ident(column)} ${RenderClauses(relation, BODY)}`;
 }
 
 function JoinClauses(relation: Relation): Sql | undefined {

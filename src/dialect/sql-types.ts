@@ -324,6 +324,13 @@ export interface RowSyntax {
    */
   joinScope(column: Sql, value: Sql, lookup: boolean): Sql;
   /**
+   * The select kept from being merged into the statement that reads it as a derived table, so each
+   * column it computes is computed once per row. Present where the engine joins on an equality no
+   * index serves by nested loop, which evaluates an operand once per pair of rows; absent where it
+   * hash joins, which evaluates it once per row already.
+   */
+  readonly unmerged?: (select: Sql) => Sql;
+  /**
    * A one-row table, without its alias, holding a JSON value the row it is read for computes, and
    * how that row reads the value back once the table is at `alias`. It stands where a derived table
    * selecting the value would, which MariaDB cannot correlate.

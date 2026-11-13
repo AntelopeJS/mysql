@@ -263,6 +263,7 @@ const MARIADB: Flavour = {
   inPlace: { collect: CollectInPlace, dedupText: DedupText },
   returning: true,
   lateral: false,
+  nestedLoopJoin: true,
   hold: Hold,
   tabled: Json,
   instant: Instant,

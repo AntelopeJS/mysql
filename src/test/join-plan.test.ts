@@ -2,7 +2,7 @@ import { expect } from "chai";
 import type { ValueProxy } from "@antelopejs/interface-database";
 import { Schema } from "@antelopejs/interface-database/schema";
 
-import { Read, type Row } from "../connection";
+import { GetDialect, Read, type Row } from "../connection";
 import { ident, sql } from "../statement";
 import { WaitForIndexes } from "../implementations/database/schema";
 import { Compiled } from "./compiled";
@@ -104,9 +104,17 @@ function Text(row: Row, column: string): string {
   return String(row.get(column));
 }
 
+/** One plan row's access: its type and index, whether it reads a derived table, and whether through a buffer. */
+function Access(row: Row): string {
+  const derived = Text(row, "table").startsWith("<derived") ? "derived " : "";
+  const buffered = BUFFERED_JOIN.test(Text(row, "Extra")) ? " buffered" : "";
+  return `${derived}${Text(row, "type")} ${Text(row, "key")}${buffered}`;
+}
+
 /**
- * How the plan reads the books: its access type and index, and whether it reads them once for many
- * reviews, through MySQL's hash join or MariaDB's join buffer.
+ * How the plan joins the books to the page of reviews it reads first, one access per plan row:
+ * whether it reads them once for many reviews, through MySQL's hash join or MariaDB's join buffer,
+ * or looks each review's book up through an index.
  */
 async function BooksAccess(
   table: BookTable,
@@ -115,15 +123,25 @@ async function BooksAccess(
   const plan = await Read(
     sql`EXPLAIN FORMAT=TRADITIONAL ${Compiled(Joined(table, condition))}`,
   );
-  const books = plan.filter(
-    (row) =>
-      Text(row, "select_type") === "PRIMARY" &&
-      !Text(row, "table").startsWith("<"),
+  const [page, ...books] = plan.filter(
+    (row) => Text(row, "select_type") === "PRIMARY",
   );
-  expect(books, "one plan row reads the books").to.have.length(1);
-  const [row] = books;
-  const buffered = BUFFERED_JOIN.test(Text(row, "Extra")) ? " buffered" : "";
-  return `${Text(row, "type")} ${Text(row, "key")}${buffered}`;
+  expect(Text(page, "rows"), "the page of reviews is read first").to.equal(
+    String(REVIEWS),
+  );
+  return books.map(Access).join(", ");
+}
+
+/**
+ * The books' access where no index serves the condition. MySQL hash joins the instance's range.
+ * MariaDB, whose join buffer would compute the books' side once per pair of rows, computes it once
+ * per book into a derived table of identities, joins that through the buffer, and reads each
+ * matched book by its primary key.
+ */
+function UnindexedAccess(): string {
+  return GetDialect().id === "mysql"
+    ? "range PRIMARY buffered"
+    : "derived ALL null buffered, eq_ref PRIMARY";
 }
 
 async function Pairs(
@@ -155,8 +173,23 @@ describe("a join against a table read whole", function () {
   });
 
   it("reads the books once and joins them through a buffer where no index serves the condition", async () => {
-    expect(await BooksAccess("bare", CONDITIONS.title)).to.match(/ buffered$/);
+    expect(await BooksAccess("bare", CONDITIONS.title)).to.equal(
+      UnindexedAccess(),
+    );
     expect(await Pairs("bare", CONDITIONS.title)).to.deep.equal(EXPECTED);
+  });
+
+  it("answers the same pairs where no index serves a fallback read, in either operand order", async () => {
+    const swapped: Condition = (review, book) =>
+      review
+        .key("bookTitle")
+        .eq(book.key("title").key("fr").default(book.key("title").key("en")));
+    for (const condition of [CONDITIONS.fallback, swapped]) {
+      expect(await BooksAccess("bare", condition)).to.equal(UnindexedAccess());
+      expect(await Pairs("bare", condition)).to.deep.equal(
+        [...EXPECTED, "r-fallback b-1"].sort(),
+      );
+    }
   });
 
   it("looks each review's book up through the key column an index declares", async () => {
@@ -184,6 +217,31 @@ describe("a join against a table read whole", function () {
         [...EXPECTED, "r-fallback b-1"].sort(),
       );
     }
+  });
+
+  it("joins inside a map on a condition that also reads the mapped row", async () => {
+    const fallback = (review: ValueProxy<Review>) =>
+      review.key("_id").eq("r-fallback");
+    const answer = await Table("reviews")
+      .filter(fallback)
+      .map((outer) => ({
+        review: outer.key("_id"),
+        books: Table("reviews")
+          .filter(fallback)
+          .joinInner(
+            Table("bare"),
+            (review, book) =>
+              book
+                .key("title")
+                .key("fr")
+                .default(outer.key("bookTitle"))
+                .eq(review.key("bookTitle")),
+            (_review, book) => book.key("_id"),
+          )
+          .slice(0, 5),
+      }))
+      .run();
+    expect(answer).to.deep.equal([{ review: "r-fallback", books: ["b-1"] }]);
   });
 
   it("keeps a review no book matches in an outer join, and reads only the review's instance", async () => {

@@ -1,5 +1,6 @@
 import { expect } from "chai";
 
+import { DIALECTS } from "../../dialect";
 import {
   Compile,
   CompiledRelation,
@@ -46,6 +47,35 @@ describe("the join stages", () => {
     expect(sql).to.include(
       " JOIN `directory__people` AS `t1` ON ((`t1`.`_instance` = ?) AND ",
     );
+  });
+
+  it("computes a read of the joined row once per row on MariaDB, in a derived table it keeps unmerged", () => {
+    const sql = Compile(
+      Other().joinInner(
+        Root(),
+        (product, person) =>
+          person
+            .key("_internal")
+            .key("data")
+            .key("title")
+            .key("fr")
+            .eq(product.key("name")),
+        (product, person) => ({ person, product }),
+      ),
+      DIALECTS.mariadb,
+    ).sql;
+    expect(sql).to.include(
+      " END) AS `_key` FROM `directory__people` AS `t1` WHERE (`t1`.`_instance` = ?) LIMIT 18446744073709551615) AS `t2` JOIN `directory__people` AS `t1` ON `t1`.`_instance` = `t2`.`_instance` AND `t1`.`_id` = `t2`.`_id`) ON (",
+    );
+    expect(sql.slice(sql.indexOf("`t2`.`_id`) ON "))).to.not.include(
+      "JSON_EXTRACT",
+    );
+  });
+
+  it("joins the table itself on MariaDB where the joined row's operand is a stored column", () => {
+    const sql = Compile(InnerJoined(), DIALECTS.mariadb).sql;
+    expect(sql).to.include(` JOIN ${PRODUCTS} ON (`);
+    expect(sql).to.not.include("`_key`");
   });
 
   it("joins the subselect of a query that does more than read a table", () => {

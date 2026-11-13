@@ -44,8 +44,16 @@ function Lookup(flavour: Flavour): RowSyntax["lookup"] {
   });
 }
 
+/**
+ * MariaDB merges a derived table that holds no row bound, and 11.8 ignores the `NO_MERGE` hint, so
+ * a bound that keeps every row keeps it unmerged.
+ */
+function Unmerged(select: Sql): Sql {
+  return sql`${select} LIMIT ${NO_LIMIT}`;
+}
+
 export function RowsOf(flavour: Flavour): RowSyntax {
-  return {
+  const rows: RowSyntax = {
     nullSafeEqual: (left, right) => sql`(${left} <=> ${right})`,
     limit: Limit,
     materialize: (alias) => sql`/*+ NO_MERGE(${ident(alias)}) */`,
@@ -60,4 +68,5 @@ export function RowsOf(flavour: Flavour): RowSyntax {
       };
     },
   };
+  return flavour.nestedLoopJoin ? { ...rows, unmerged: Unmerged } : rows;
 }
