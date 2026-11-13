@@ -149,7 +149,8 @@ function Bootstrap(
 /**
  * The deepest a JSON-backed column's value is boxed in its image: the image's object and the box
  * take two of the levels the engine stores, and `JSON_DEPTH` counts a level for the scalar inside
- * the deepest container, so a value of that depth nests no more containers than are left.
+ * the deepest container, so a value of that depth nests no more containers than are left. The box
+ * also leaves room for the containers the engine's hold nests an image in as a poll reads it.
  */
 const IMAGE_LEVELS = 2;
 
@@ -350,7 +351,7 @@ const MICROSECONDS_PER_MS = 1000;
 export function CaptureOf(flavour: Flavour, syntax: SqlSyntax): CaptureSyntax {
   const image: ImageSyntax = {
     json: syntax.json,
-    boxedDepth: flavour.maxJsonNesting - IMAGE_LEVELS,
+    boxedDepth: flavour.maxJsonNesting - IMAGE_LEVELS - flavour.heldNesting,
     comparesText: flavour.jsonEquals !== undefined,
   };
   const { json } = syntax;
@@ -365,6 +366,7 @@ export function CaptureOf(flavour: Flavour, syntax: SqlSyntax): CaptureSyntax {
     triggerRefusal: TriggerRefusal,
     tooDeep: (error) =>
       "errno" in error && error.errno === flavour.tooDeepErrno,
+    warnings: flavour.warnsTooDeep ? sql`SHOW WARNINGS` : undefined,
     lockTable: (table) => sql`LOCK TABLES ${ident(table)} WRITE`,
     unlockTables: sql`UNLOCK TABLES`,
     markMoves: sql`SET ${MOVING} = 1`,

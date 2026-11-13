@@ -95,6 +95,8 @@ const deep = new Schema<{
   projected: Row;
   hollowed: Row;
   mapped: Row;
+  hollows: Row;
+  plucks: Row;
 }>("feeds-depth", {
   stored: DEPTH_TABLE,
   delivered: DEPTH_TABLE,
@@ -102,6 +104,8 @@ const deep = new Schema<{
   projected: DEPTH_TABLE,
   hollowed: DEPTH_TABLE,
   mapped: DEPTH_TABLE,
+  hollows: DEPTH_TABLE,
+  plucks: DEPTH_TABLE,
 });
 
 describe("a watched table holding JSON as deep as the server stores it", function () {
@@ -164,6 +168,34 @@ describe("a watched table holding JSON as deep as the server stores it", functio
       const removed = await Delivered(feed.next());
       expect(removed).to.have.property("changeType", "removed");
       expect(removed.oldValue).to.deep.include(stored);
+    } finally {
+      await feed.return?.();
+    }
+  });
+
+  /**
+   * MariaDB's poll reads an image inside one more array, so a field 29 containers deep whose
+   * innermost one is empty, which `JSON_DEPTH` measures as deep as one 28 containers deep around a
+   * string, failed the poll as nested too deep, and the feed ended at a document it builds.
+   */
+  it("delivers a field whose innermost object is empty, at each depth a document around it holds", async () => {
+    const rows = deep.instance().table("hollows");
+    const feed = await Opened(rows, "hollows");
+    try {
+      const levels = [3, 2, 1].map((short) => depths.inColumn - short);
+      await rows.insert(
+        levels.map((level) => ({
+          _id: `hollow-${level}`,
+          tree: Hollow(level),
+        })),
+      );
+      for (const level of levels) {
+        const id = `hollow-${level}`;
+        expect((await DeliveredRow(feed, id)).newValue).to.deep.equal({
+          _id: id,
+          tree: Hollow(level),
+        });
+      }
     } finally {
       await feed.return?.();
     }
@@ -245,7 +277,7 @@ describe("a change feed reaching a document deeper than the server builds", func
   /**
    * A `map` that wraps a field nests it deeper than the row does. MySQL fails the poll of the batch
    * holding it, and a feed that ended on that failure lost the events committed ahead of it in the
-   * same batch. MariaDB answers a null document or builds it, so only MySQL ends.
+   * same batch. MariaDB builds it, since no function it passes through reads it, so only MySQL ends.
    */
   it("delivers the events a map builds ahead of one it nests too deep", async () => {
     const rows = deep.instance().table("mapped");
@@ -273,6 +305,59 @@ describe("a change feed reaching a document deeper than the server builds", func
       }
     } finally {
       await feed.return?.();
+    }
+  });
+});
+
+describe("a change feed whose stages build a document deeper than the server builds", function () {
+  this.timeout(30_000);
+  let depths: Awaited<ReturnType<typeof Depths>>;
+
+  before(async () => {
+    depths = await Depths();
+  });
+
+  /**
+   * A `pluck` that keeps a field as deep as the server stores, or a `without` that drops another,
+   * builds a document as deep as the row's. MariaDB 11.8 answers SQL NULL for it, with a warning
+   * rather than an error, and the feed delivered `null` as the document.
+   */
+  it("ends, naming where it stopped, at a projection deeper than the server builds", async () => {
+    const rows = deep.instance().table("plucks");
+    const plucked = await OpenedOver(
+      rows.pluck("_id", "tree").changes().cursor(),
+      rows,
+      { _id: "plucked" },
+    );
+    const dropped = await OpenedOver(
+      rows.without("label").changes().cursor(),
+      rows,
+      { _id: "dropped" },
+    );
+    try {
+      const tree = Nested(depths.inColumn);
+      await rows.insert({ _id: "shallow", label: "before" });
+      await rows.insert({ _id: "deepest", label: "deep", tree });
+      for (const feed of [plucked, dropped]) {
+        expect(await DeliveredRow(feed, "shallow")).to.have.nested.property(
+          "newValue._id",
+          "shallow",
+        );
+        const next = feed.next();
+        if (await Builds(depths.inColumn + 1)) {
+          expect((await Delivered(next)).newValue).to.deep.equal({
+            _id: "deepest",
+            tree,
+          });
+          continue;
+        }
+        expect(await Settled(next))
+          .to.match(ENDED)
+          .and.contain("feeds-depth.plucks");
+      }
+    } finally {
+      await plucked.return?.();
+      await dropped.return?.();
     }
   });
 });

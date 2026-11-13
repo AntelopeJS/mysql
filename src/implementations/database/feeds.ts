@@ -6,6 +6,7 @@ import type { Sql } from "../../statement";
 import type { Dialect } from "../../dialect";
 import { GetOptions, IsExternal, type ResolvedOptions } from "../../config";
 import {
+  AcquireConnection,
   GetDialect,
   Read,
   RegisterBeforeDisconnect,
@@ -94,9 +95,49 @@ const LIVE: FeedEnvironment = {
       await Sequence(session, dialect, "wait");
       return ReadFrontier(session, dialect);
     }),
-  read: (statement) => Read(statement),
+  read: ReadWarned,
   subscribe: SubscribeToChanges,
 };
+
+/** A warning the server raised, as the error a statement that failed for it would have raised. */
+class ServerWarning extends Error {
+  constructor(
+    readonly errno: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * Reads a poll, and fails it as MySQL does where the engine answered SQL NULL with a warning for a
+ * document nested deeper than it builds, so the feed never delivers that NULL as a document.
+ */
+async function ReadWarned(statement: Sql): Promise<Row[]> {
+  const { capture } = GetDialect();
+  if (!capture.warnings) {
+    return Read(statement);
+  }
+  const connection = await AcquireConnection();
+  try {
+    const rows = await Read(statement, connection);
+    const warned = (await Read(capture.warnings, connection))
+      .map(
+        (warning) =>
+          new ServerWarning(
+            Number(warning.get("Code")),
+            String(warning.get("Message")),
+          ),
+      )
+      .find((warning) => capture.tooDeep(warning));
+    if (warned) {
+      throw warned;
+    }
+    return rows;
+  } finally {
+    connection.release();
+  }
+}
 
 /** The range of `seq` a lapsed feed was promised and cannot be given, as the rejection names it. */
 interface FeedGap {
@@ -276,25 +317,11 @@ function Delivered(event: LoggedEvent): RowObject {
 }
 
 /**
- * Whether the server answered no document for a side of an event the feed delivers. Only a feed
- * whose documents are whole rows can tell: MariaDB 11.8 answers SQL NULL for a document nested
- * deeper than it builds, and a row is never null.
- */
-function Unbuilt(plan: FeedPlan, event: LoggedEvent): boolean {
-  return (
-    plan.whole &&
-    Admitted(event) &&
-    (event.old?.doc === null || event.new?.doc === null)
-  );
-}
-
-/**
  * One poll: read what was numbered, check nothing was lost, and buffer what arrived.
  *
  * A batch that was not full moves the watermark to the frontier the same statement read, so a feed
  * whose table is quiet moves with the log. A full one moves it to the last row it scanned, admitted
- * or not, and the next poll reads on from there. A batch that reaches an event the server built no
- * document for is cut before it, so the next poll starts at that event and ends the feed.
+ * or not, and the next poll reads on from there.
  */
 async function Poll(
   reqId: number,
@@ -321,14 +348,8 @@ async function Poll(
     Retire(reqId, state, { reason: "lapsed", target, gap });
     return;
   }
-  const unbuilt = answer.scanned.findIndex((event) => Unbuilt(plan, event));
-  if (unbuilt === 0) {
-    Retire(reqId, state, { reason: "tooDeep", target, after: state.watermark });
-    return;
-  }
-  const scanned =
-    unbuilt === -1 ? answer.scanned : answer.scanned.slice(0, unbuilt);
-  state.full = unbuilt !== -1 || scanned.length >= limit;
+  const { scanned } = answer;
+  state.full = scanned.length >= limit;
   for (const event of scanned) {
     if (Admitted(event)) {
       state.buffer.push(Delivered(event));

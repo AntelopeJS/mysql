@@ -383,6 +383,8 @@ const MARIADB: Flavour = {
   jsonType: sql`JSON COLLATE utf8mb4_nopad_bin`,
   maxJsonNesting: MAX_JSON_NESTING,
   tooDeepErrno: 4040,
+  warnsTooDeep: true,
+  heldNesting: 1,
   multiValuedIndex: false,
   pinned: [sql`group_concat_max_len = ${int(UNBOUNDED_AGGREGATE_BYTES)}`],
   readTimeout: (ms) =>

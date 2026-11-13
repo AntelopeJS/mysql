@@ -84,6 +84,13 @@ export interface CaptureSyntax {
   triggerRefusal(error: Error): string | undefined;
   /** Whether a statement failed because a JSON document it built nests deeper than the engine allows. */
   tooDeep(error: Error): boolean;
+  /**
+   * The statement listing the warnings of the session's last statement, on an engine that answers
+   * SQL NULL for a JSON document nested deeper than it allows rather than failing; `undefined`
+   * where such a statement fails. A warning it lists counts as {@link CaptureSyntax.tooDeep} by its
+   * `Code` as an `errno`.
+   */
+  readonly warnings?: Sql;
   /** Holds a table against every other session, so no write runs while its triggers change. */
   lockTable(table: string): Sql;
   readonly unlockTables: Sql;

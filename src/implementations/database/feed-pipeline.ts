@@ -62,11 +62,6 @@ export interface FeedPlan {
   readonly new: Sql;
   readonly matches: { readonly old: Sql; readonly new: Sql };
   readonly type: SqlType;
-  /**
-   * Whether a side's document is the row itself, which no stage projects. A row always builds a
-   * document, so a side answering none is one the server could not build.
-   */
-  readonly whole: boolean;
 }
 
 function IsKnownStage(stage: QueryStage): boolean {
@@ -195,6 +190,5 @@ export function CompileFeed(
     new: Render(Side(after)),
     matches: { old: Render(Match(before)), new: Render(Match(after)) },
     type: CurrentValue(before).type,
-    whole: before.projection === undefined,
   };
 }
