@@ -170,6 +170,14 @@ function JsonEquals(left: Sql, right: Sql): Sql {
 }
 
 /**
+ * `JSON_EQUALS` holds where the two values normalize to the same text, so that text's CRC-32, in
+ * one character set whatever the value's, is shared by every pair it holds for.
+ */
+function JsonHash(value: Sql): Sql {
+  return sql`CRC32(CONVERT(JSON_NORMALIZE(${value}) USING utf8mb4))`;
+}
+
+/**
  * A JSON value, or SQL NULL where it is the JSON `null`. MariaDB compares a JSON string by its
  * unquoted text, where `"null"` equals the JSON `null`, so the value is compared as bytes and read
  * back as JSON. It is compacted first: MariaDB keeps the text a client wrote to a JSON column,
@@ -471,7 +479,7 @@ const MARIADB: Flavour = {
   },
   returning: true,
   lateral: false,
-  nestedLoopJoin: true,
+  nestedLoopJoin: { jsonHash: JsonHash },
   hold: Hold,
   tabled: Json,
   instant: Instant,

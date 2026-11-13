@@ -27,12 +27,27 @@ interface Review {
   bookId: string;
 }
 
+/** A key no field declares, which every read compares as JSON. */
+type LooseKey = string | { a: number; b: number[] } | null;
+
+interface LooseBook {
+  _id: string;
+  meta: { key?: LooseKey };
+}
+
+interface Note {
+  _id: string;
+  ref?: LooseKey;
+}
+
 const BOOK_FIELDS = { title: "object" } as const;
 
 const schema = new Schema<{
   indexed: Book;
   bare: Book;
   reviews: Review;
+  loose: LooseBook;
+  notes: Note;
 }>(SCHEMA_ID, {
   indexed: {
     fields: BOOK_FIELDS,
@@ -43,6 +58,8 @@ const schema = new Schema<{
     fields: { bookTitle: "string", bookId: "string" },
     indexes: {},
   },
+  loose: { fields: {}, indexes: {} },
+  notes: { fields: {}, indexes: {} },
 });
 
 /** Every book has a French title but `b-1`, which only the English fallback names. */
@@ -63,6 +80,44 @@ const REVIEW_ROWS: Review[] = [
   { _id: "r-unmatched", bookTitle: UNMATCHED, bookId: "b-none" },
 ];
 
+/**
+ * Every book's key is its French title but `b-1`'s, an object, `b-2`'s, a JSON null, and `b-3`'s,
+ * which is absent.
+ */
+function LooseMeta(n: number, title: string | undefined): LooseBook["meta"] {
+  if (n === 1) {
+    return { key: { a: 1, b: [1, 2] } };
+  }
+  if (n === 2) {
+    return { key: null };
+  }
+  return n === 3 ? {} : { key: title };
+}
+
+const LOOSE_ROWS: LooseBook[] = BOOK_ROWS.map(({ _id, title }, n) => ({
+  _id,
+  meta: LooseMeta(n, title.fr),
+}));
+
+const NOTE_SPECIALS = 4;
+
+/**
+ * Notes of every seventh book, then one naming `b-1`'s object with its keys in another order, one
+ * a JSON null, one with no key, and one naming no book.
+ */
+const NOTE_ROWS: Note[] = [
+  ...REVIEW_ROWS.slice(0, REVIEWS - NOTE_SPECIALS).map(
+    ({ _id, bookTitle }) => ({
+      _id,
+      ref: bookTitle,
+    }),
+  ),
+  { _id: "r-object", ref: { b: [1, 2], a: 1 } },
+  { _id: "r-null", ref: null },
+  { _id: "r-absent" },
+  { _id: "r-unmatched", ref: UNMATCHED },
+];
+
 type BookTable = "indexed" | "bare";
 type Condition = (
   review: ValueProxy<Review>,
@@ -81,7 +136,7 @@ const CONDITIONS = {
   id: (review, book) => book.key("_id").eq(review.key("bookId")),
 } satisfies Record<string, Condition>;
 
-function Table<Name extends BookTable | "reviews">(
+function Table<Name extends BookTable | "reviews" | "loose" | "notes">(
   name: Name,
   instance = INSTANCE,
 ) {
@@ -111,18 +166,25 @@ function Access(row: Row): string {
   return `${derived}${Text(row, "type")} ${Text(row, "key")}${buffered}`;
 }
 
+function LooseJoined() {
+  return Table("notes")
+    .slice(0, REVIEWS)
+    .joinInner(
+      Table("loose"),
+      (note, book) => book.key("meta").key("key").eq(note.key("ref")),
+      (note, book) => ({ review: note.key("_id"), book: book.key("_id") }),
+    );
+}
+
 /**
  * How the plan joins the books to the page of reviews it reads first, one access per plan row:
  * whether it reads them once for many reviews, through MySQL's hash join or MariaDB's join buffer,
  * or looks each review's book up through an index.
  */
-async function BooksAccess(
-  table: BookTable,
-  condition: Condition,
+async function JoinAccess(
+  joined: Parameters<typeof Compiled>[0],
 ): Promise<string> {
-  const plan = await Read(
-    sql`EXPLAIN FORMAT=TRADITIONAL ${Compiled(Joined(table, condition))}`,
-  );
+  const plan = await Read(sql`EXPLAIN FORMAT=TRADITIONAL ${Compiled(joined)}`);
   const [page, ...books] = plan.filter(
     (row) => Text(row, "select_type") === "PRIMARY",
   );
@@ -130,6 +192,10 @@ async function BooksAccess(
     String(REVIEWS),
   );
   return books.map(Access).join(", ");
+}
+
+function BooksAccess(table: BookTable, condition: Condition): Promise<string> {
+  return JoinAccess(Joined(table, condition));
 }
 
 /**
@@ -166,8 +232,10 @@ describe("a join against a table read whole", function () {
       await Table("bare", instance).insert(BOOK_ROWS).run();
     }
     await Table("reviews").insert(REVIEW_ROWS).run();
+    await Table("loose").insert(LOOSE_ROWS).run();
+    await Table("notes").insert(NOTE_ROWS).run();
     await WaitForIndexes(SCHEMA_ID);
-    for (const table of ["indexed", "bare", "reviews"]) {
+    for (const table of ["indexed", "bare", "reviews", "loose", "notes"]) {
       await Run(sql`ANALYZE TABLE ${ident(PhysicalTable(SCHEMA_ID, table))}`);
     }
   });
@@ -177,6 +245,24 @@ describe("a join against a table read whole", function () {
       UnindexedAccess(),
     );
     expect(await Pairs("bare", CONDITIONS.title)).to.deep.equal(EXPECTED);
+  });
+
+  it("looks each review's books up by the hash of a key both sides compare as JSON on MariaDB", async () => {
+    expect(await JoinAccess(LooseJoined())).to.equal(
+      GetDialect().id === "mysql"
+        ? "range PRIMARY buffered"
+        : "derived ref key0, eq_ref PRIMARY",
+    );
+    const pairs = await LooseJoined().run();
+    expect(
+      pairs.map(({ review, book }) => `${review} ${book}`).sort(),
+    ).to.deep.equal(
+      [
+        ...EXPECTED.slice(0, REVIEWS - NOTE_SPECIALS),
+        "r-object b-1",
+        "r-null b-2",
+      ].sort(),
+    );
   });
 
   it("answers the same pairs where no index serves a fallback read, in either operand order", async () => {
