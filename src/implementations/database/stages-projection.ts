@@ -15,7 +15,8 @@ import {
   RequireOperand,
 } from "./stage";
 import { CurrentValue, SetPlainProjection, SetProjection } from "./relation";
-import { Prepare, type RelationFlag } from "./render";
+import type { RelationFlag } from "./render";
+import { Prepare } from "./wrap";
 
 /**
  * Every projection stage is blocked by a pending projection and by nothing else: inlining one into

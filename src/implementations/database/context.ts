@@ -2,6 +2,7 @@ import assert from "node:assert";
 import type { QueryStage } from "@antelopejs/interface-database/common";
 
 import type { Dialect } from "../../dialect";
+import type { Sql } from "../../statement";
 import type { Compiled } from "./sql";
 import type { Relation } from "./relation";
 import type { RowSource } from "./row-source";
@@ -55,13 +56,6 @@ export interface Compilers {
 
 const ALIAS_PREFIX = "t";
 
-/**
- * State shared by every layer compiling a single statement: the dialect it is written for, the
- * table alias counter and the bindings of lambda parameters. Bound values travel inside each
- * fragment, so there is no parameter ledger to keep in step.
- *
- * The compilers are injected so this module stays free of a circular import back onto them.
- */
 /** A query nested inside another one as a value, compiled. */
 export interface NestedRelation {
   readonly relation: Relation;
@@ -69,12 +63,27 @@ export interface NestedRelation {
   readonly readsOuterRow: boolean;
 }
 
+/** What {@link DecodingContext.readingOuterRow} built, and whether building it read the outer row. */
+export interface OuterRowRead<T> {
+  readonly value: T;
+  readonly readsOuterRow: boolean;
+}
+
+/**
+ * State shared by every layer compiling a single statement: the dialect it is written for, the
+ * table alias counter and the bindings of lambda parameters. Bound values travel inside each
+ * fragment, so there is no parameter ledger to keep in step.
+ *
+ * The compilers are injected so this module stays free of a circular import back onto them.
+ */
 export class DecodingContext {
   private readonly bindings = new Map<string, ArgumentBinding>();
   /** How many subqueries were open when each lambda parameter was bound. */
   private readonly bindingDepths = new Map<string, number>();
-  /** Per open subquery, outermost first: whether it has read a parameter bound outside it. */
-  private readonly outerReads: boolean[] = [];
+  /** Per open subquery, outermost first: how many reads of a parameter bound outside it it made. */
+  private readonly outerReads: number[] = [];
+  /** Fragments built while the subquery they are in read no parameter bound outside it. */
+  private readonly outerFree = new WeakSet<Sql>();
   private aliasCounter = 0;
 
   /**
@@ -118,7 +127,9 @@ export class DecodingContext {
     const binding = this.bindings.get(String(id));
     assert(binding, `Unbound lambda parameter ${id}`);
     const depth = this.bindingDepths.get(String(id)) ?? 0;
-    this.outerReads.fill(true, depth);
+    for (let level = depth; level < this.outerReads.length; level++) {
+      this.outerReads[level]++;
+    }
     return binding;
   }
 
@@ -137,7 +148,7 @@ export class DecodingContext {
 
   /** A query nested inside another one as a value. */
   public subqueryRelation(stages: QueryStage[]): NestedRelation {
-    this.outerReads.push(false);
+    this.outerReads.push(0);
     try {
       const relation = this.relation(stages);
       return { relation, readsOuterRow: this.readsOuterRow };
@@ -148,6 +159,40 @@ export class DecodingContext {
 
   /** Whether the subquery compiling now has so far read the row of a query outside it. */
   public get readsOuterRow(): boolean {
-    return this.outerReads.at(-1) ?? false;
+    return this.outerReadCount > 0;
+  }
+
+  private get outerReadCount(): number {
+    return this.outerReads.at(-1) ?? 0;
+  }
+
+  /**
+   * Builds part of the subquery compiling now, and tells whether building it read the row of a
+   * query outside that subquery.
+   */
+  public readingOuterRow<T>(build: () => T): OuterRowRead<T> {
+    const before = this.outerReadCount;
+    const value = build();
+    return { value, readsOuterRow: this.outerReadCount !== before };
+  }
+
+  /**
+   * Builds a fragment of the subquery compiling now, and remembers it as reading no row of a query
+   * outside it when building it read none.
+   */
+  public fragment(build: () => Sql): Sql {
+    const { value, readsOuterRow } = this.readingOuterRow(build);
+    if (!readsOuterRow) {
+      this.outerFree.add(value);
+    }
+    return value;
+  }
+
+  /**
+   * Whether {@link DecodingContext.fragment} saw it read no row of a query outside the
+   * subquery it was built in. A fragment built any other way may read one.
+   */
+  public readsNoOuterRow(fragment: Sql): boolean {
+    return this.outerFree.has(fragment);
   }
 }

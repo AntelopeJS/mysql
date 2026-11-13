@@ -27,8 +27,9 @@ type ScanNotice = (name: string) => void;
 /**
  * What the relation still knows about the table it reads.
  *
- * Present only while the pipeline is row-shaped: a stage that reshapes the output drops it, and
- * its absence is what makes a later write illegal rather than a flag somebody has to check.
+ * Present only while the pipeline is row-shaped, its rows the table's rows whether read as columns
+ * or as the documents a walk reads back: a stage that reshapes the output drops it, and its
+ * absence is what makes a later write illegal rather than a flag somebody has to check.
  */
 export interface TableOrigin {
   schemaId: string;
@@ -92,6 +93,11 @@ export interface Relation {
   source: RowSource;
   projection?: Compiled;
   origin?: TableOrigin;
+  /**
+   * The table the adapter owns, while `from` names it rather than a subselect or a walk. Set by the
+   * root, and kept by every stage that keeps `from`, whatever it projects.
+   */
+  table?: TableOrigin;
   /** The source a plain projection renamed — see {@link SetPlainProjection}. */
   projectedFrom?: RowSource;
 }

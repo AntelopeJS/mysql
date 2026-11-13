@@ -6,12 +6,11 @@ import type { Dialect } from "../../dialect";
 import { type Sql, int, sql } from "../../statement";
 import type { Compiled } from "./sql";
 import { Cast, Widen } from "./coerce";
-import { ArrayOf, OPAQUE, type SqlType } from "./types";
-import type { InPlaceSyntax } from "../../dialect/sql-types";
+import type { SqlType } from "./types";
 import type { DecodingContext } from "./context";
 import { DecodeFunction, DecodeValue, RecordedLambda } from "./value";
 import type { PipelineStage, PipelineStageMap } from "./pipeline";
-import { AsJson, Numeric, Predicate } from "./readings";
+import { Numeric, Predicate } from "./readings";
 import { FIRST_OPERAND, RequireOperand, SECOND_OPERAND } from "./stage";
 import {
   CurrentValue,
@@ -23,14 +22,12 @@ import {
 } from "./relation";
 import {
   Numbered,
-  type NumberedRows,
-  OrderTerms,
-  Prepare,
   type RelationFlag,
   Render,
   SINGLE_ROW,
   WHERE_BLOCKERS,
 } from "./render";
+import { ConcatenatedInPlace, InPlaceFor, Prepare, Walked } from "./wrap";
 import { IsString } from "./guards";
 import { ClassifyMember, StageOperand } from "./member";
 import { OptionsOf } from "./utils";
@@ -123,44 +120,11 @@ function RowRange(
 }
 
 /**
- * Numbers the rows through a walk of their aggregate in place, deduplicated and ordered as the
- * relation asks, where the engine reads no outer row inside the derived table {@link Numbered}
- * numbers them in. The walk reads it, so a nested query bounded by a count it computes reads its
- * outer row as well. The rows come back as the values they yield, in value mode.
- */
-function NumberedInPlace(
-  relation: Relation,
-  inPlace: InPlaceSyntax,
-  context: DecodingContext,
-): NumberedRows {
-  const dialect = context.dialect;
-  const value = CurrentValue(relation);
-  const rows = { distinct: relation.distinct, order: OrderTerms(relation) };
-  relation.orderBy = [];
-  relation.distinct = false;
-  const collected = SetProjection(relation, {
-    sql: inPlace.collect(AsJson(dialect, value).sql, rows),
-    type: ArrayOf(value.type),
-  });
-  const alias = context.nextAlias();
-  const walk = dialect.sql.json.walk(
-    "elements",
-    sql`(${Render(collected)})`,
-    alias,
-  );
-  const numbered = SetProjection(
-    ValueRelation(dialect, walk.from, alias, value.type),
-    Cast(dialect, { sql: walk.value, type: OPAQUE }, value.type),
-  );
-  numbered.orderBy = [{ sql: walk.ordinal, descending: false }];
-  return { relation: numbered, rowNumber: walk.ordinal };
-}
-
-/**
  * Bounds the rows: a known count as a bound `LIMIT` and `OFFSET`, and a count the statement
- * computes as a range of the rows' numbers, since the engine takes only a constant there. Rows
- * that read the outer row are numbered in place where the engine needs it; a bound that reads it
- * alone does not count, since the range is tested outside the rows it numbers.
+ * computes as a range of the rows' numbers, in their order, since the engine takes only a constant
+ * there. Rows that read the outer row are numbered by a walk of their aggregate where the engine
+ * reads no outer row inside the derived table {@link Numbered} numbers them in; a bound that reads
+ * it alone does not count, since the range is tested outside the rows it numbers.
  */
 function Bounded(
   relation: Relation,
@@ -175,14 +139,11 @@ function Bounded(
     prepared.limit = count.count;
     return prepared;
   }
-  const inPlace = readsOuterRow ? context.dialect.sql.json.inPlace : undefined;
+  const inPlace = InPlaceFor(context, readsOuterRow);
   const numbered = inPlace
-    ? NumberedInPlace(
-        Prepare(relation, BOUND_BLOCKERS, context),
-        inPlace,
-        context,
-      )
+    ? Walked(Prepare(relation, BOUND_BLOCKERS, context), inPlace, context)
     : Numbered(Prepare(relation, NUMBERING_BLOCKERS, context), context);
+  numbered.relation.orderBy = [{ sql: numbered.rowNumber, descending: false }];
   numbered.relation.where.push(
     RowRange(context.dialect, numbered.rowNumber, offset, count),
   );
@@ -195,11 +156,17 @@ function Bounded(
  */
 const FilterStage: PipelineStage = (relation, stage, context) => {
   const prepared = Prepare(relation, WHERE_BLOCKERS, context);
-  const body = DecodeFunction(RecordedLambda(stage, FIRST_OPERAND), context, [
-    prepared.source,
-  ]);
-  const predicate = RequireOperand(body, stage, FIRST_OPERAND);
-  prepared.where.push(sql`(${Predicate(context.dialect, predicate).sql})`);
+  prepared.where.push(
+    context.fragment(() => {
+      const body = DecodeFunction(
+        RecordedLambda(stage, FIRST_OPERAND),
+        context,
+        [prepared.source],
+      );
+      const predicate = RequireOperand(body, stage, FIRST_OPERAND);
+      return sql`(${Predicate(context.dialect, predicate).sql})`;
+    }),
+  );
   return prepared;
 };
 
@@ -278,11 +245,22 @@ function Concatenated(stage: QueryStage, context: DecodingContext): Relation {
 /**
  * Concatenates two streams, keeping every row of both, as an ordinary value-mode relation.
  * The type is the {@link Widen} of the two sides, since each row carries only its own side's keys.
+ * Once the subquery compiling now has read its outer row, an engine that reads no outer column
+ * inside a derived table concatenates them in place.
  */
 const UnionStage: PipelineStage = (relation, stage, context) => {
   const left = Sided(relation);
   const right = Sided(Concatenated(stage, context));
   const type = Widen(left.value.type, right.value.type);
+  const inPlace = InPlaceFor(context, context.readsOuterRow);
+  if (inPlace) {
+    return ConcatenatedInPlace(
+      [left.relation, right.relation],
+      type,
+      inPlace,
+      context,
+    );
+  }
   return ValueRelation(
     context.dialect,
     sql`((${Materialize(left, type)}) UNION ALL (${Materialize(right, type)}))`,

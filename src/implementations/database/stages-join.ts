@@ -39,12 +39,12 @@ import {
   type JoinKind,
   JoinOn,
   Nested,
-  Prepare,
   type RelationFlag,
   Render,
   SINGLE_ROW,
   WHERE_BLOCKERS,
 } from "./render";
+import { InPlaceFor, Prepare, Walked } from "./wrap";
 import { IsString } from "./guards";
 import { ID_COLUMN, INSTANCE_COLUMN, OptionsOf } from "./utils";
 
@@ -123,7 +123,9 @@ function Condition(
  * Compiles the query being joined, from its own root, and the condition its rows join on. A read
  * of a whole table the adapter owns joins the table itself, so the condition reads its key columns
  * as a filter does and the instance it reads is part of the condition, unless no index serves an
- * equality the engine would then compute once per pair of rows; anything else joins its subselect.
+ * equality the engine would then compute once per pair of rows; anything else joins its subselect,
+ * or, where it reads the outer row and the engine reads no outer column inside a derived table, a
+ * walk of its rows.
  */
 function JoinedSide(
   stage: QueryStage,
@@ -138,10 +140,13 @@ function JoinedSide(
   const stages = right.build();
   const root = IsTableRead(stages) ? BuildRoot(stages, context) : undefined;
   if (!root || root.external) {
-    const relation = Nested(
-      root?.relation ?? context.relation(stages),
-      context,
+    const { value, readsOuterRow } = context.readingOuterRow(
+      () => root?.relation ?? context.relation(stages),
     );
+    const inPlace = InPlaceFor(context, readsOuterRow);
+    const relation = inPlace
+      ? Walked(value, inPlace, context).relation
+      : Nested(value, context);
     return {
       relation,
       item: FromItem(relation.from, relation.alias),

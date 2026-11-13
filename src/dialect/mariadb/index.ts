@@ -5,7 +5,7 @@ import {
   type MemberPath,
   FamilyDialect,
 } from "../mysql";
-import type { CollectedRows } from "../sql-types";
+import type { CollectedRows, HashRow } from "../sql-types";
 import {
   Bind,
   type Sql,
@@ -261,6 +261,29 @@ function DedupText(json: Sql): Sql {
   return sql`CONVERT(${json} USING utf8mb4) COLLATE ${ident(BINARY_COLLATION)}`;
 }
 
+/** A text's CRC-32, which MariaDB can key where it cannot key the `LONGTEXT` a JSON text is. */
+function Hash(text: Sql): Sql {
+  return sql`CRC32(COALESCE(${text}, ''))`;
+}
+
+const HASH_COLUMN = ident("h");
+
+/**
+ * A `JSON_TABLE` of one element. MariaDB keys a derived table joined after it on its `'$[*]'`
+ * column, and keys none for a `'$'` row path.
+ */
+function OneHash(text: Sql, alias: string): HashRow {
+  return {
+    from: sql`JSON_TABLE(JSON_ARRAY(${Hash(text)}), '$[*]' COLUMNS (${HASH_COLUMN} INT UNSIGNED PATH '$'))`,
+    hash: sql`${ident(alias)}.${HASH_COLUMN}`,
+  };
+}
+
+/** MariaDB merges a derived table into the query that reads it unless the table has a `LIMIT`. */
+function Materialized(select: Sql): Sql {
+  return sql`${select} LIMIT ${NO_LIMIT}`;
+}
+
 /**
  * MariaDB's cast reads a zone offset and drops it, so the offset is subtracted from the local time,
  * and a `Z` is dropped since the session is UTC. `CONVERT_TZ` would leave an instant before 1970
@@ -377,7 +400,13 @@ const MARIADB: Flavour = {
     sql`(CASE ${truth} WHEN TRUE THEN ${Json(lit("true"))} WHEN FALSE THEN ${Json(lit("false"))} END)`,
   includes: Includes,
   collect: Collect,
-  inPlace: { collect: CollectInPlace, dedupText: DedupText },
+  inPlace: {
+    collect: CollectInPlace,
+    dedupText: DedupText,
+    hash: Hash,
+    hashRow: OneHash,
+    materialized: Materialized,
+  },
   returning: true,
   lateral: false,
   nestedLoopJoin: true,

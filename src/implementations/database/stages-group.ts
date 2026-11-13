@@ -26,7 +26,8 @@ import {
   type Relation,
   SetProjection,
 } from "./relation";
-import { AbsorbOrder, Prepare, type RelationFlag } from "./render";
+import { AbsorbOrder, type RelationFlag } from "./render";
+import { Prepare } from "./wrap";
 import { IsString } from "./guards";
 import { OptionsOf } from "./utils";
 
