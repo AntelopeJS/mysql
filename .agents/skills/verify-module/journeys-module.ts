@@ -48,21 +48,8 @@ const notes = schema.instance().table("notes");
 await notes.insert({ _id: "n1", title: "stored" }).run();
 return (await notes.get("n1").run()).title;`;
 
-const PIN = `SELECT ${orderedArray(
-  "JSON_ARRAY(name, value)",
-  "name",
-  `(SELECT DISTINCT v.VARIABLE_NAME AS name, v.VARIABLE_VALUE AS value
-  FROM performance_schema.session_connect_attrs a
-  JOIN performance_schema.threads t ON t.PROCESSLIST_ID = a.PROCESSLIST_ID
-  JOIN performance_schema.variables_by_thread v ON v.THREAD_ID = t.THREAD_ID
-  WHERE a.ATTR_NAME = 'program_name' AND a.ATTR_VALUE = 'verify-pool'
-    AND v.VARIABLE_NAME IN ('collation_connection', 'time_zone', 'lc_messages', 'sql_mode')) pinned`,
-)}`;
-
 export const configOptions = (engine: Engine): Journey => ({
-  title: engine.performanceSchema
-    ? "the default config points at localhost, a pool option the url does not set reaches every connection, every connection runs the session pin, and schemaPrefix prefixes every table name"
-    : "the default config points at localhost, the module starts with a pool option the url does not set, and schemaPrefix prefixes every table name",
+  title: "the default config points at localhost, a pool option the url does not set reaches every connection, every connection runs the session pin, and schemaPrefix prefixes every table name",
   entryPoint: "`url`, `pool` and `schemaPrefix` in the module's config in antelope.config.ts",
   async run(context) {
     const manifest = await context.command("read the module's package.json, where the default configuration `ajs project modules add` writes lives", "cat", [
@@ -91,17 +78,15 @@ export const configOptions = (engine: Engine): Journey => ({
       `SELECT JSON_ARRAY((SELECT TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'verify' AND TABLE_NAME = 'app_verify-config__notes'), (SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'verify' AND TABLE_NAME = 'app_verify-config__notes' AND COLUMN_NAME = '_extra'))`,
     );
     context.expect(dialect.folder, [same(`the module detected ${engine.name}: the table is ${engine.collation} and _extra ${engine.documentType}`, dialect.value, [engine.collation, engine.documentType])]);
-    if (engine.performanceSchema) {
-      const pinned = await sql(context, engine, "read the session variables of the module's connections", PIN);
-      context.expect(pinned.folder, [
-        same("every connection carrying pool.connectAttributes runs the session pin: binary NO PAD collation, UTC, English messages, strict mode", pinned.value, [
-          ["collation_connection", engine.collation],
-          ["lc_messages", "en_US"],
-          ["sql_mode", "STRICT_ALL_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION"],
-          ["time_zone", "+00:00"],
-        ]),
-      ]);
-    }
+    const pinned = await sql(context, engine, "read the session pin of the module's connections", engine.pin);
+    context.expect(pinned.folder, [
+      same("every connection carrying pool.connectAttributes runs the session pin: binary NO PAD collation, UTC, English messages, strict mode", pinned.value, [
+        ["collation_connection", engine.collation],
+        ["lc_messages", "en_US"],
+        ["sql_mode", "STRICT_ALL_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION"],
+        ["time_zone", "+00:00"],
+      ]),
+    ]);
     await close(merged);
   },
 });

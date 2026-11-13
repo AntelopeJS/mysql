@@ -116,6 +116,7 @@ const config: VerifyConfig = {
         image: engine.image,
         port: 3306,
         env: engine.env,
+        args: engine.args,
         ready: [engine.client, "-h127.0.0.1", "-uroot", "-N", "-e", "SELECT 1"],
         reset: [engine.client, "-uroot", "-e", RESET],
       },

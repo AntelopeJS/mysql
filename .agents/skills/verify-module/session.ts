@@ -23,9 +23,38 @@ export interface Engine {
   name: string;
   /** Whether a `multi` index over an array becomes a multi-valued index; without one, registration leaves the index out. */
   multiValuedIndex: boolean;
-  /** Whether the image starts with `performance_schema` on, where root reads the session variables of the module's connections. */
-  performanceSchema: boolean;
+  /** The server arguments the container starts with, in place of the image's default command. */
+  args: string[];
+  /** The statement root runs to read the session pin of every connection carrying `program_name=verify-pool`: a JSON array of distinct `[name, value]` pairs in name order. */
+  pin: string;
 }
+
+const POOLED = `FROM performance_schema.session_connect_attrs a
+  JOIN performance_schema.threads t ON t.PROCESSLIST_ID = a.PROCESSLIST_ID`;
+
+const VERIFY_POOL = "a.ATTR_NAME = 'program_name' AND a.ATTR_VALUE = 'verify-pool'";
+
+/** MySQL reads each connection's session variables from `variables_by_thread`. */
+const MYSQL_PIN = `SELECT ${orderedArray(
+  "JSON_ARRAY(name, value)",
+  "name",
+  `(SELECT DISTINCT v.VARIABLE_NAME AS name, v.VARIABLE_VALUE AS value
+  ${POOLED}
+  JOIN performance_schema.variables_by_thread v ON v.THREAD_ID = t.THREAD_ID
+  WHERE ${VERIFY_POOL}
+    AND v.VARIABLE_NAME IN ('collation_connection', 'time_zone', 'lc_messages', 'sql_mode')) pinned`,
+)}`;
+
+/** MariaDB 11.8 has no `variables_by_thread`, so it reads the values each connection's `SET NAMES` statement assigned from the statement history; a connection that ran none reads as `null` values. */
+const MARIADB_PIN = `SELECT JSON_ARRAYAGG(JSON_ARRAY(name, value) ORDER BY name) FROM (
+  SELECT DISTINCT k.name, REGEXP_SUBSTR(s.SQL_TEXT, CONCAT('(?<=', k.prefix, ''')[^'']+')) AS value
+  ${POOLED}
+  JOIN (SELECT 'collation_connection' AS name, 'COLLATE ' AS prefix
+    UNION ALL SELECT 'time_zone', 'time_zone = '
+    UNION ALL SELECT 'lc_messages', 'lc_messages = '
+    UNION ALL SELECT 'sql_mode', 'sql_mode = ') k
+  LEFT JOIN performance_schema.events_statements_history_long s ON s.THREAD_ID = t.THREAD_ID AND s.SQL_TEXT LIKE 'SET NAMES %'
+  WHERE ${VERIFY_POOL}) pinned`;
 
 /** The database every journey starts from empty: the service's `reset` drops and creates it before each journey. */
 export const DATABASE = "verify";
@@ -40,7 +69,8 @@ export const MYSQL: Engine = {
   documentType: "json",
   name: "mysql",
   multiValuedIndex: true,
-  performanceSchema: true,
+  args: [],
+  pin: MYSQL_PIN,
 };
 
 /** MariaDB 11.8 LTS, whose journeys run under `<id>-mariadb`. */
@@ -53,7 +83,8 @@ export const MARIADB: Engine = {
   documentType: "longtext",
   name: "mariadb",
   multiValuedIndex: false,
-  performanceSchema: false,
+  args: ["--performance-schema=ON", "--log-bin", "--performance-schema-consumer-events-statements-current=ON", "--performance-schema-consumer-events-statements-history-long=ON"],
+  pin: MARIADB_PIN,
 };
 
 /** Every engine the journeys run against. */
