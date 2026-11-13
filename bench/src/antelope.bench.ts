@@ -16,7 +16,10 @@ export default defineConfig({
   modules: {
     bench: { source: { type: "local", path: BENCH_ROOT } },
     [settings.backend]: {
-      source: { type: "local", path: BackendModule(settings.backend) },
+      source: {
+        type: "local",
+        path: settings.module ?? BackendModule(settings.backend),
+      },
       config: { url: settings.url },
     },
   },

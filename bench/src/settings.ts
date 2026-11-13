@@ -15,6 +15,8 @@ export interface RunSettings {
   readonly rows: number;
   readonly runs: number;
   readonly budgetMs: number;
+  /** The folder the MySQL backend loads from, where it is not this repository. */
+  readonly module?: string;
 }
 
 const BACKENDS: readonly Backend[] = ["mysql", "postgres"];
@@ -30,6 +32,7 @@ export const ENV = {
   rows: "BENCH_ROWS",
   runs: "BENCH_RUNS",
   budgetMs: "BENCH_BUDGET_MS",
+  module: "BENCH_MODULE",
 } as const;
 
 function Required(name: string): string {
@@ -67,6 +70,7 @@ export function ReadRunSettings(): RunSettings {
     rows: PositiveInteger(ENV.rows),
     runs: PositiveInteger(ENV.runs),
     budgetMs: PositiveInteger(ENV.budgetMs),
+    module: process.env[ENV.module] || undefined,
   };
 }
 

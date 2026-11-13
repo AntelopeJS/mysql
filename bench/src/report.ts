@@ -11,7 +11,8 @@ import {
 import path from "node:path";
 
 import type { EngineId } from "./engine";
-import { INDEXES, PATHS } from "./dataset";
+import { COMPARISON_FILE, Compared } from "./compare";
+import { Call, ENGINE_TITLES, Ms, Ratio } from "./format";
 import { KINDS, type QueryKind } from "./queries";
 import type { BenchRecord, CaseRecord } from "./record";
 import {
@@ -37,58 +38,14 @@ const KIND_TITLES: Record<QueryKind, string> = {
   lookup: "Lookup from a 20-review page of the reviews table",
 };
 
-const ENGINE_TITLES: Record<EngineId, string> = {
-  "postgres-18": "pg 18",
-  "mysql-8.4": "8.4",
-  "mysql-9.7": "9.7",
-  "mariadb-11.8": "MariaDB 11.8",
-  "mariadb-12.3": "MariaDB 12.3",
-};
-
 const RATIO_TITLES = FAMILY.map((engine) => `${ENGINE_TITLES[engine]} ÷ pg`);
 
 /** The interface call a case makes, as a consumer writes it. */
-function Call(query: CaseRecord): string {
-  const path = PATHS[query.field];
-  const read =
-    query.form === "decorators"
-      ? `unlockrequest(…, "title", fr)`
-      : query.field === "title"
-        ? `key("title").key("fr")`
-        : `key("_internal")…key("fr")`;
-  if (query.kind === "filter") {
-    return `filter(${read}.eq(v))`;
-  }
-  if (query.kind === "orderBy") {
-    return query.form === "path"
-      ? `orderBy("${query.indexed ? INDEXES[query.field] : path}")`
-      : `map({ sortKey: ${read} }).orderBy("sortKey")`;
-  }
-  return query.form === "path"
-    ? `lookup(books, …, "${path}")`
-    : `joinInner(books, ${read}.eq(review.key))`;
-}
-
-function Ms(value: number): string {
-  if (!Number.isFinite(value)) {
-    return "–";
-  }
-  return value < 10
-    ? value.toFixed(2)
-    : value < 100
-      ? value.toFixed(1)
-      : value.toFixed(0);
-}
-
 function Timing(cell: CellSummary): string {
   if (cell.error !== undefined) {
     return "error";
   }
   return `${Ms(cell.median)} (${Ms(cell.p95)})${cell.correct ? "" : " ✗"}`;
-}
-
-function Ratio(value: number): string {
-  return Number.isFinite(value) ? `${value.toFixed(value < 10 ? 2 : 0)}×` : "–";
 }
 
 function Used(cell: CellSummary): string {
@@ -321,6 +278,13 @@ export function WriteReport(record: BenchRecord, root: string): void {
     "",
   ]);
   const serverFile = "server.md";
+  const comparison = Compared(record);
+  if (comparison) {
+    writeFileSync(
+      path.join(root, PLANS_FOLDER, COMPARISON_FILE),
+      comparison.file.join("\n"),
+    );
+  }
   writeFileSync(
     path.join(root, PLANS_FOLDER, serverFile),
     [
@@ -349,6 +313,7 @@ export function WriteReport(record: BenchRecord, root: string): void {
     `Server time, rows read and the spread of the rounds: [${PLANS_FOLDER}/${serverFile}](${PLANS_FOLDER}/${serverFile}).`,
     "",
     ...sections,
+    ...(comparison?.section ?? []),
     summary.trim(),
     "",
     "The causes, section by section, are in [`findings.md`](findings.md).",
@@ -359,6 +324,7 @@ export function WriteReport(record: BenchRecord, root: string): void {
     RESULTS,
     ...[...plans.values()].flat().map((name) => path.join(PLANS_FOLDER, name)),
     path.join(PLANS_FOLDER, serverFile),
+    ...(comparison ? [path.join(PLANS_FOLDER, COMPARISON_FILE)] : []),
   ]);
 }
 
