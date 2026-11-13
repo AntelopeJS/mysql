@@ -24,6 +24,7 @@ const SCHEMA_ID = "locked_unique";
 const GONE_ID = "locked_unique_gone";
 const EARLY_ID = "locked_unique_early";
 const REPLACED_ID = "locked_unique_replaced";
+const WAITING_ID = "locked_unique_waiting";
 const FIELDS = { price: "number" } as const;
 const BARE: SchemaDefinition = {
   items: { fields: FIELDS, indexes: {} },
@@ -134,9 +135,9 @@ async function AlteringPolls(schemaId: string, ms: number): Promise<number> {
   return found;
 }
 
-async function Stored(price: number): Promise<number> {
+async function Stored(price: number, schemaId = SCHEMA_ID): Promise<number> {
   const rows = await Read(
-    sql`SELECT COUNT(*) AS n FROM ${ident(PhysicalTable(SCHEMA_ID))} WHERE price = ${param(price)}`,
+    sql`SELECT COUNT(*) AS n FROM ${ident(PhysicalTable(schemaId))} WHERE price = ${param(price)}`,
   );
   return Number(rows[0]?.get("n"));
 }
@@ -146,9 +147,6 @@ describe("a unique index whose build a long transaction holds off", function () 
 
   after(() => {
     Schemas.unregister(SCHEMA_ID);
-    Schemas.unregister(GONE_ID);
-    Schemas.unregister(EARLY_ID);
-    Schemas.unregister(REPLACED_ID);
   });
 
   it("refuses inserts by name while held, then is built once the transaction ends and refuses the duplicate", async () => {
@@ -197,6 +195,17 @@ describe("a unique index whose build a long transaction holds off", function () 
       "the duplicate is refused",
     ).to.equal(true);
     expect(await Stored(7)).to.equal(1);
+  });
+});
+
+describe("a unique index a long transaction holds off, as its schema's registration changes", function () {
+  this.timeout(180_000);
+
+  after(() => {
+    Schemas.unregister(GONE_ID);
+    Schemas.unregister(EARLY_ID);
+    Schemas.unregister(REPLACED_ID);
+    Schemas.unregister(WAITING_ID);
   });
 
   it("stops trying once the schema is unregistered, and builds nothing for it", async () => {
@@ -253,5 +262,30 @@ describe("a unique index whose build a long transaction holds off", function () 
     await delay(NEXT_ATTEMPT_MS);
     expect(polls, "the earlier registration's passes end").to.equal(0);
     expect(await IndexNames(REPLACED_ID)).to.deep.equal([]);
+  });
+
+  it("refuses a write waiting on the gate when the schema is unregistered", async () => {
+    await Fresh(WAITING_ID);
+    const held = await HoldTable(WAITING_ID);
+    const waiting = new Schema<{ items: Item }>(WAITING_ID, UNIQUE_PRICE);
+    const write = waiting
+      .instance()
+      .table("items")
+      .insert({ _id: "twin", price: 1 })
+      .run()
+      .then(
+        () => "stored",
+        (err: unknown) => (err instanceof Error ? err.message : String(err)),
+      );
+    await delay(SETTLE_MS);
+    Schemas.unregister(WAITING_ID);
+    const answer = await write;
+    await Release(held);
+    expect(answer).to.include(
+      `schema '${WAITING_ID}' was unregistered while the write waited`,
+    );
+    expect(await Stored(1, WAITING_ID), "the seed's key stays single").to.equal(
+      1,
+    );
   });
 });

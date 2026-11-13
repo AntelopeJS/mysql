@@ -251,6 +251,10 @@ export const Schemas = {
   },
 };
 
+function UnregisteredWhileWaiting(schemaId: string): string {
+  return `Write refused: schema '${schemaId}' was unregistered while the write waited for its unique indexes`;
+}
+
 function MissingSchema(schemaId: string): string {
   return `Unknown schema '${schemaId}'`;
 }
@@ -369,13 +373,14 @@ export async function WaitForIndexes(schemaId: string): Promise<void> {
  *
  * Answers the unique indexes the latest phase left unbuilt, as it finds them now: those the server
  * refused stay unbuilt until a later registration's phase builds them, and those a lock held off
- * until a later pass of the phase does.
+ * until a later pass of the phase does. A write whose schema registers again while it waits waits
+ * for that registration's gate instead; one whose schema is unregistered meanwhile is refused.
  */
 export async function WaitForUniqueIndexes(
   schemaId: string,
 ): Promise<readonly UnbuiltUniqueIndex[]> {
-  await WaitForSchemaReady(schemaId);
   for (;;) {
+    await WaitForSchemaReady(schemaId);
     const gate = uniqueGates.get(schemaId);
     try {
       return (await gate)?.unbuilt ?? [];
@@ -383,6 +388,7 @@ export async function WaitForUniqueIndexes(
       if (uniqueGates.get(schemaId) === gate) {
         throw err;
       }
+      assert(definitions.has(schemaId), UnregisteredWhileWaiting(schemaId));
     }
   }
 }
