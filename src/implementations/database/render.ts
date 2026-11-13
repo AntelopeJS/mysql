@@ -82,18 +82,20 @@ export function JoinOn(kind: JoinKind, item: Sql, on: Sql): Sql {
 }
 
 /**
- * The identity of each row of a table read as itself, `_instance` and `_id`, beside `value`
- * computed once per row as `column`, selected under the relation's own clauses.
+ * The identity of each row of a table read as itself, `_instance` and `_id`, beside each of
+ * `columns` computed once per row under its name, selected under the relation's own clauses.
  */
 export function KeyedIdentities(
   relation: Relation,
-  value: Sql,
-  column: string,
+  columns: Readonly<Record<string, Sql>>,
 ): Sql {
   const identity = [INSTANCE_COLUMN, ID_COLUMN].map((name) =>
     QualifiedColumn(relation.alias, name),
   );
-  return sql`SELECT ${join(identity, COMMA)}, ${value} AS ${ident(column)} ${RenderClauses(relation, BODY)}`;
+  const computed = Object.entries(columns).map(
+    ([name, value]) => sql`${value} AS ${ident(name)}`,
+  );
+  return sql`SELECT ${join([...identity, ...computed], COMMA)} ${RenderClauses(relation, BODY)}`;
 }
 
 function JoinClauses(relation: Relation): Sql | undefined {

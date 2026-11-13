@@ -360,6 +360,22 @@ interface CorrelatedRead {
   readonly value: Sql;
 }
 
+/** What {@link RowSyntax.keyedJoin} answers. */
+export interface KeyedJoinSyntax {
+  /**
+   * The select kept from being merged into the statement that reads it as a derived table, so each
+   * column it computes is computed once per row.
+   */
+  unmerged(select: Sql): Sql;
+  /**
+   * A number two values equal as JSON share, SQL NULL where the value is, which a derived table is
+   * keyed by where the JSON text it holds cannot be. Two unequal values may share it too.
+   */
+  jsonHash(value: Sql): Sql;
+  /** A column of a derived table read so the engine builds no index to look it up by. */
+  unindexed(column: Sql): Sql;
+}
+
 /** Row-level constructs that differ between engines in algorithm, not only in spelling. */
 export interface RowSyntax {
   /** Equality that holds between two SQL NULLs. */
@@ -392,12 +408,11 @@ export interface RowSyntax {
    */
   readonly nestedLoopJoin: boolean;
   /**
-   * The select kept from being merged into the statement that reads it as a derived table, so each
-   * column it computes is computed once per row. Present where the engine joins on an equality no
-   * index serves by nested loop, which evaluates an operand once per pair of rows; absent where it
-   * hash joins, which evaluates it once per row already.
+   * How a join computes an operand of its equality once per row, in a derived table. Present where
+   * {@link RowSyntax.nestedLoopJoin} holds; absent where the engine hash joins, which evaluates an
+   * operand once per row already.
    */
-  readonly unmerged?: (select: Sql) => Sql;
+  readonly keyedJoin?: KeyedJoinSyntax;
   /**
    * A one-row table, without its alias, holding a JSON value the row it is read for computes, and
    * how that row reads the value back once the table is at `alias`. It stands where a derived table

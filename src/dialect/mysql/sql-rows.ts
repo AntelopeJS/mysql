@@ -52,6 +52,11 @@ function Unmerged(select: Sql): Sql {
   return sql`${select} LIMIT ${NO_LIMIT}`;
 }
 
+/** MariaDB keys a derived table on an equality that reads its column bare, and on nothing else. */
+function Unindexed(column: Sql): Sql {
+  return sql`(${column} + 0)`;
+}
+
 export function RowsOf(flavour: Flavour): RowSyntax {
   const rows: RowSyntax = {
     nullSafeEqual: (left, right) => sql`(${left} <=> ${right})`,
@@ -59,7 +64,7 @@ export function RowsOf(flavour: Flavour): RowSyntax {
     materialize: (alias) => sql`/*+ NO_MERGE(${ident(alias)}) */`,
     lookup: Lookup(flavour),
     joinScope: JoinScope,
-    nestedLoopJoin: flavour.nestedLoopJoin,
+    nestedLoopJoin: flavour.nestedLoopJoin !== undefined,
     returning: flavour.returning,
     hold: (value, alias) => {
       const held: Held = { name: "value", value, kind: "json" };
@@ -69,5 +74,15 @@ export function RowsOf(flavour: Flavour): RowSyntax {
       };
     },
   };
-  return flavour.nestedLoopJoin ? { ...rows, unmerged: Unmerged } : rows;
+  const nestedLoop = flavour.nestedLoopJoin;
+  return nestedLoop
+    ? {
+        ...rows,
+        keyedJoin: {
+          unmerged: Unmerged,
+          unindexed: Unindexed,
+          jsonHash: nestedLoop.jsonHash,
+        },
+      }
+    : rows;
 }

@@ -141,6 +141,7 @@ function JoinedSide(
   stage: QueryStage,
   left: RowSource,
   context: DecodingContext,
+  leftRows: number | undefined,
 ): JoinedSide {
   const right: unknown = stage.args[FIRST_OPERAND];
   assert(
@@ -166,7 +167,13 @@ function JoinedSide(
   const condition = Condition(stage, [left, root.relation.source], context);
   const keyed = LooksUp(root, condition)
     ? undefined
-    : KeyedSide(RecordedLambda(stage, SECOND_OPERAND), root, left, context);
+    : KeyedSide(
+        RecordedLambda(stage, SECOND_OPERAND),
+        root,
+        left,
+        context,
+        leftRows,
+      );
   return (
     keyed ?? {
       relation: root.relation,
@@ -220,8 +227,9 @@ function MapperSource(right: Relation, flavour: JoinFlavour): RowSource {
 /** Brings a second query into the pipeline as a `JOIN`, with the mapper's result as the projection. */
 const JoinStage: PipelineStage = (relation, stage, context) => {
   const flavour = FlavourOf(stage);
+  const leftRows = relation.single ? SINGLE_ROW : relation.limit;
   const prepared = Prepare(relation, JOIN_BLOCKERS, context);
-  const side = JoinedSide(stage, prepared.source, context);
+  const side = JoinedSide(stage, prepared.source, context, leftRows);
   const right = side.relation;
   prepared.joins.push(JoinOn(flavour.kind, side.item, side.on));
   const mapped = DecodeFunction(
