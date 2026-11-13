@@ -265,6 +265,7 @@ describe("a DDL statement on a table with an open cursor", function () {
         indexes: {},
       },
     };
+    const started = Date.now();
     const registering = Schemas.register(schemaId, altered);
     await UntilWaitingOnLock(physical);
     expect(
@@ -272,6 +273,10 @@ describe("a DDL statement on a table with an open cursor", function () {
       "the cursor's statement holds the table",
     ).to.equal(1);
     await registering;
+    expect(
+      Date.now() - started,
+      "the reclaim waited for cursorIdleTimeoutMs",
+    ).to.be.greaterThan(IDLE_MS / 2);
     expect(await Columns(physical)).to.include("added");
     let failure = "";
     try {
