@@ -23,6 +23,9 @@ const ROWS: Note[] = [
 
 const EXPECTED = ["null", "a", FALLBACK];
 
+/** Enough links that a default writing its value twice outgrows the server's packet. */
+const CHAIN_LINKS = 18;
+
 const Notes = () => schema.instance(INSTANCE).table("notes");
 
 describe("default() before distinct()", function () {
@@ -58,4 +61,18 @@ describe("default() before distinct()", function () {
       expect(read).to.have.members(EXPECTED);
     });
   }
+
+  it("runs a chain of defaults, each reading the one before", async () => {
+    const read = await Notes()
+      .map((note) => {
+        let value = note.key("loose");
+        for (let link = 0; link < CHAIN_LINKS; link++) {
+          value = value.default(note.key("typed"));
+        }
+        return value.default(FALLBACK);
+      })
+      .distinct()
+      .run();
+    expect(read).to.have.members(EXPECTED);
+  });
 });

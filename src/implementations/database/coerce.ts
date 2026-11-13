@@ -232,16 +232,13 @@ function NativePair(
 
 /**
  * The absence a default answers, which a JSON-backed operand spells two ways.
- * A stored JSON null is a value rather than SQL NULL, so `COALESCE` alone never fires. It is told
- * by its JSON type: MariaDB compares a JSON string by its unquoted text, so equality with a JSON
- * null also matches the string `"null"`.
+ * A stored JSON null is a value rather than SQL NULL, so `COALESCE` alone never fires.
  */
 function Absent(dialect: Dialect, pair: CompiledPair) {
-  const value = pair.left.sql;
   if (!IsJsonBacked(pair.type)) {
-    return value;
+    return pair.left.sql;
   }
-  return sql`(CASE WHEN ${dialect.sql.json.is(value, ["null"])} THEN NULL ELSE ${value} END)`;
+  return dialect.sql.json.present(pair.left.sql);
 }
 
 /**

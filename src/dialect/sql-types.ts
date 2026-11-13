@@ -139,6 +139,8 @@ export interface JsonSyntax {
   text(value: Sql): Sql;
   /** The JSON `null`, which is a value and not SQL NULL. */
   readonly null: Sql;
+  /** A JSON value, or SQL NULL where it is the JSON `null`; a string `"null"` stays itself. */
+  present(value: Sql): Sql;
   readonly emptyObject: Sql;
   readonly emptyArray: Sql;
   object(entries: readonly (readonly [string, Sql])[]): Sql;
