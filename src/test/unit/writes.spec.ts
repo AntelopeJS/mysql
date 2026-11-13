@@ -51,6 +51,7 @@ describe("An insert", () => {
       kind: "insert",
       ids: [],
       statements: [],
+      sets: [],
     });
   });
 

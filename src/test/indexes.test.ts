@@ -296,7 +296,9 @@ describe("indexes whose declaration changes", function () {
       }),
     );
     expect(warnings).to.have.length(1);
-    expect(warnings[0]).to.match(/could not addIndex 'price': Duplicate entry/);
+    expect(warnings[0]).to.match(
+      /could not build unique index 'price': Duplicate entry/,
+    );
     expect((await Catalog(schemaId)).map((index) => index.name)).to.deep.equal([
       "sku",
     ]);
