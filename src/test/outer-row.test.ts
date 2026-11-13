@@ -288,10 +288,18 @@ interface RowsGroup {
   rows: Row[];
 }
 
-/** A document as the engine builds it, with no member for a field that holds no value. */
+/** The fields the items declare, each a column that holds SQL NULL for no value. */
+const DECLARED = new Set(["slug", "kind", "views"]);
+
+/**
+ * A document as the engine builds it, with no member for a declared field that holds no value; an
+ * undeclared field holding a JSON null keeps its member.
+ */
 function Valued(row: Row): Row {
   return Object.fromEntries(
-    Object.entries(row).filter(([, value]) => value !== null),
+    Object.entries(row).filter(
+      ([name, value]) => value !== null || !DECLARED.has(name),
+    ),
   );
 }
 
