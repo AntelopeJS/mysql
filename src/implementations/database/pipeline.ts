@@ -13,12 +13,13 @@ import { PROJECTION_STAGES } from "./stages-projection";
 
 /**
  * One step of the read pipeline: it either absorbs into the relation it is given or wraps it,
- * and every wrap decision goes through `Prepare`.
+ * and every wrap decision goes through `Prepare`. `later` holds the stages that follow it.
  */
 export type PipelineStage = (
   relation: Relation,
   stage: QueryStage,
   context: DecodingContext,
+  later: readonly QueryStage[],
 ) => Relation;
 
 export type PipelineStageMap = Record<string, PipelineStage>;
@@ -69,11 +70,12 @@ function ApplyStage(
   relation: Relation,
   stage: QueryStage,
   context: DecodingContext,
+  later: readonly QueryStage[],
 ): Relation {
   if (!Object.hasOwn(PIPELINE_STAGES, stage.stage)) {
     throw StageError(stage.stage);
   }
-  return PIPELINE_STAGES[stage.stage](relation, stage, context);
+  return PIPELINE_STAGES[stage.stage](relation, stage, context, later);
 }
 
 /** Folds the pipeline stages that follow a query's root prefix into one relation. */
@@ -83,7 +85,8 @@ export function ApplyStages(
   context: DecodingContext,
 ): Relation {
   return stages.reduce(
-    (current, stage) => ApplyStage(current, stage, context),
+    (current, stage, index) =>
+      ApplyStage(current, stage, context, stages.slice(index + 1)),
     relation,
   );
 }

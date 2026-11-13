@@ -445,6 +445,7 @@ const MARIADB: Flavour = {
     materialized: Materialized,
     hashedKey: HashedKey,
     held: HeldArray,
+    aggregateBytes: sql`@@max_allowed_packet`,
   },
   returning: true,
   lateral: false,

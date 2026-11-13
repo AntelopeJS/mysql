@@ -39,17 +39,22 @@ const DefaultStage: PipelineStage = (relation, stage, context) => {
   );
 };
 
+/** The stages that keep fewer of the rows they read, so a mapper before them runs on fewer rows. */
+const BOUNDING_STAGES: ReadonlySet<string> = new Set(["slice", "nth"]);
+
 /**
  * Applies the mapper to each row, binding the relation's own source as its parameter, which keeps
- * `map(d => d.key("name"))` a bare column.
+ * `map(d => d.key("name"))` a bare column. The parameter ranges over every row of the relation only
+ * where no later stage bounds the rows the mapper runs on.
  */
-const MapStage: PipelineStage = (relation, stage, context) => {
+const MapStage: PipelineStage = (relation, stage, context, later) => {
   const prepared = Prepare(relation, PROJECTION_BLOCKERS, context);
+  const bounded = later.some((next) => BOUNDING_STAGES.has(next.stage));
   const body = DecodeFunction(
     RecordedLambda(stage, FIRST_OPERAND),
     context,
     [prepared.source],
-    prepared,
+    bounded ? undefined : prepared,
   );
   return SetProjection(prepared, RequireOperand(body, stage, FIRST_OPERAND));
 };

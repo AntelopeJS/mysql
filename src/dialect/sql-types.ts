@@ -83,6 +83,11 @@ export interface InPlaceSyntax {
    * parts, and how a select inside the row it is read for reads the elements back as rows.
    */
   held(array: Sql, parts: number, alias: string): HeldKeys;
+  /**
+   * The most bytes an aggregate the engine builds can hold. Past it the engine cuts the aggregate
+   * short or answers SQL NULL, with a warning only.
+   */
+  readonly aggregateBytes: Sql;
 }
 
 /** What {@link InPlaceSyntax.hashRow} answers. */

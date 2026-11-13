@@ -1,6 +1,6 @@
 import type { HeldKeys, InPlaceSyntax, Walk } from "../../dialect/sql-types";
 import { type Sql, ident, int, join, sql } from "../../statement";
-import { ArrayOf, BOOL, FLOAT, OPAQUE, TEXT } from "./types";
+import { ArrayOf, FLOAT, OPAQUE, TEXT } from "./types";
 import { Collected } from "./json";
 import { AsJson } from "./readings";
 import { type Compiled, QualifiedColumn } from "./sql";
@@ -27,6 +27,15 @@ const KEYED_GROUPS_FROM = 2 ** 20;
 
 /** The columns that name a row of a table the adapter owns, in its primary key's order. */
 const IDENTITY = [INSTANCE_COLUMN, ID_COLUMN];
+
+/** How one outer row's groups read their rows, as {@link ReadingOf} chooses it. */
+const READING = { scanned: 0, held: 1, keyed: 2 } as const;
+
+/** The bytes the held array spends on each element beyond its text: a separator, with room to spare. */
+const ELEMENT_BYTES = 2;
+
+/** The bytes of the brackets around the held array and around the array that holds it. */
+const ARRAY_BYTES = 4;
 
 /**
  * A grouped relation's distinct keys, walked: each part's text in the relation's rows, the walk
@@ -112,8 +121,11 @@ function ScannedGroup(
 /**
  * The outer row's rows, held once as the hash of each row's first part's text beside the row's
  * identity: the one-row table at an alias of its own, as a FROM item, and the array it holds.
+ * `fits` is an aggregate over the rows, true where the array fits in the largest aggregate the
+ * engine builds, which would otherwise come back cut short.
  */
 interface HeldRows {
+  readonly fits: Sql;
   readonly item: Sql;
   readonly keys: HeldKeys;
 }
@@ -134,7 +146,12 @@ function HeldRowsOf(
   });
   const alias = context.nextAlias();
   const held = inPlace.held(sql`(${Render(array)})`, identity.length, alias);
-  return { item: FromItem(held.from, alias), keys: held };
+  const bytes = sql`SUM(LENGTH(${element}) + ${int(ELEMENT_BYTES)}) + ${int(ARRAY_BYTES)}`;
+  return {
+    fits: sql`${bytes} <= ${inPlace.aggregateBytes}`,
+    item: FromItem(held.from, alias),
+    keys: held,
+  };
 }
 
 /**
@@ -281,14 +298,18 @@ function EveryOuterRow(outer: Relation, perRow: Sql): Sql | undefined {
 }
 
 /**
- * Whether scanning costs more than materializing the rows {@link OuterFreeRows} keeps once for the
- * statement, which the engine counts once per statement and only once one outer row's groups reach
- * {@link KEYED_GROUPS_FROM}. Where the outer rows are known, the scan's cost is that of every outer
- * row's groups, which share the one materialized table; otherwise it is this outer row's.
+ * How this outer row's groups read their rows, chosen in one pass over them and answered as one of
+ * {@link READING}. They are looked up by key where scanning costs more than materializing the rows
+ * {@link OuterFreeRows} keeps, which the engine counts once per statement and only once one outer
+ * row's groups reach {@link KEYED_GROUPS_FROM}. The scan's cost is this outer row's, and where that
+ * falls short and the outer rows are known, that of every outer row's groups, which share the one
+ * materialized table, summed once per statement. Below that, the groups read the
+ * {@link HeldRows} where they fit, and each group scans the rows where they do not.
  */
-function ManyGroups(
+function ReadingOf(
   relation: Relation,
   keys: WalkedKeys,
+  held: HeldRows,
   context: DecodingContext,
   outerRows: Relation | undefined,
 ): Sql {
@@ -299,11 +320,15 @@ function ManyGroups(
     type: FLOAT,
   });
   const statement = outerRows && EveryOuterRow(outerRows, Render(perRow));
-  const counted = SetProjection(Ungrouped(relation), {
-    sql: sql`(CASE WHEN ${scanned} < ${int(KEYED_GROUPS_FROM)} THEN FALSE ELSE ${statement ?? scanned} >= ${materialized} END)`,
-    type: BOOL,
+  const shared = statement
+    ? sql` WHEN ${statement} >= ${materialized} THEN TRUE`
+    : sql``;
+  const many = sql`(CASE WHEN ${scanned} < ${int(KEYED_GROUPS_FROM)} THEN FALSE WHEN ${scanned} >= ${materialized} THEN TRUE${shared} ELSE FALSE END)`;
+  const reading = SetProjection(Ungrouped(relation), {
+    sql: sql`(CASE WHEN ${many} THEN ${int(READING.keyed)} WHEN ${held.fits} THEN ${int(READING.held)} ELSE ${int(READING.scanned)} END)`,
+    type: FLOAT,
   });
-  return sql`(${Render(counted)})`;
+  return sql`(${Render(reading)})`;
 }
 
 /**
@@ -334,11 +359,9 @@ function Groups(
  * keys reads the outer row, and each key's group is a subquery of its own, so it reads it too.
  * The session leaves `ONLY_FULL_GROUP_BY` off, so the mapper still reads a term.
  *
- * A relation that reads a table the adapter owns, with no join, looks each group up by key once
- * the outer row's rows times keys reach {@link KEYED_GROUPS_FROM}, and the scan's cost over
- * `outerRows`, the rows of the query outside where they are known, reaches the rows the lookup
- * materializes; below that, each group reads the outer row's {@link HeldRows}. Any other relation
- * scans its rows once per group.
+ * A relation that reads a table the adapter owns, with no join, reads its groups as
+ * {@link ReadingOf} chooses for each outer row, given `outerRows`, the rows of the query outside
+ * where they are known. Any other relation scans its rows once per group.
  */
 export function GroupedInPlace(
   relation: Relation,
@@ -354,22 +377,28 @@ export function GroupedInPlace(
     return { sql: Groups(relation, keys, scanned, context), type };
   }
   const held = HeldRowsOf(relation, keys, inPlace, context);
-  const scanned = Groups(
-    relation,
-    keys,
-    HeldGroup(relation, keys, held.keys, inPlace, context),
-    context,
-    held.item,
-  );
+  const reading = ReadingOf(relation, keys, held, context, outerRows);
   const keyed = Groups(
     relation,
     keys,
     KeyedGroup(relation, table, keys, inPlace, context),
     context,
   );
-  const many = ManyGroups(relation, keys, context, outerRows);
+  const fromHeld = Groups(
+    relation,
+    keys,
+    HeldGroup(relation, keys, held.keys, inPlace, context),
+    context,
+    held.item,
+  );
+  const scanned = Groups(
+    relation,
+    keys,
+    ScannedGroup(relation, keys, context),
+    context,
+  );
   return {
-    sql: sql`(CASE WHEN ${many} THEN ${keyed} ELSE ${scanned} END)`,
+    sql: sql`(CASE ${reading} WHEN ${int(READING.keyed)} THEN ${keyed} WHEN ${int(READING.held)} THEN ${fromHeld} ELSE ${scanned} END)`,
     type,
   };
 }
