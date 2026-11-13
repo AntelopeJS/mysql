@@ -61,7 +61,7 @@ function Within(window: RowWindow, offset: number, limit?: number): RowWindow {
     window.limit === undefined ? undefined : Math.max(0, window.limit - offset);
   const kept = [left, limit].filter((count) => count !== undefined);
   return {
-    offset: window.offset + offset,
+    offset: Math.min(window.offset + offset, Number.MAX_SAFE_INTEGER),
     limit: kept.length > 0 ? Math.min(...kept) : undefined,
   };
 }
@@ -85,11 +85,13 @@ const PROJECTIONS = ["key", "default", "map", "pluck", "without"] as const;
  * The rows the mapper runs on: the relation, within the bounds of each later `slice` and `nth`
  * that only {@link PROJECTIONS} separate from it, which keep fewer of them. Any other stage reads
  * every mapped row, so a bound after it bounds none of them. None where a bound that does is one
- * the statement computes.
+ * the statement computes, and none for bounded rows that read the row of a query outside, which
+ * MariaDB reads only through a derived table that cannot read it.
  */
 function MappedRows(
   relation: Relation,
   later: readonly QueryStage[],
+  readsOuterRow: boolean,
 ): Relation | undefined {
   let window: RowWindow = {
     offset: relation.offset ?? 0,
@@ -111,7 +113,15 @@ function MappedRows(
     }
     window = Within(window, offset ?? 0, limit);
   }
-  return { ...relation, offset: window.offset, limit: window.limit };
+  const bounded = window.offset > 0 || window.limit !== undefined;
+  if (bounded && readsOuterRow) {
+    return undefined;
+  }
+  return {
+    ...relation,
+    offset: window.offset > 0 ? window.offset : undefined,
+    limit: window.limit,
+  };
 }
 
 /**
@@ -125,7 +135,7 @@ const MapStage: PipelineStage = (relation, stage, context, later) => {
     RecordedLambda(stage, FIRST_OPERAND),
     context,
     [prepared.source],
-    MappedRows(prepared, later),
+    MappedRows(prepared, later, context.readsOuterRow),
   );
   return SetProjection(prepared, RequireOperand(body, stage, FIRST_OPERAND));
 };
