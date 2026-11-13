@@ -46,8 +46,7 @@ export interface RowKey {
  * - `present`: what it creates already exists. `absent`: what it drops is already gone.
  * - `interrupted`: the statement was killed.
  * - `refused`: the server rejected this statement and the session is still usable.
- * - `disconnected`: there is no connection to run on. It ended, as a server restart, a network drop
- *   or a `KILL` ends it, or the server turned a new one away while it shuts down or has no room.
+ * - `disconnected`: the connection ended, as a server restart, a network drop or a `KILL` ends it.
  * - `broken`: anything else.
  */
 export type DdlFailure =

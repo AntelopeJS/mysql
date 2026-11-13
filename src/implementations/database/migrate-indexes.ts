@@ -13,6 +13,7 @@ import {
 } from "./convergence";
 import {
   type ConvergenceSession,
+  type FailedAttempt,
   FailureOf,
   Interrupt,
   LOCK_ATTEMPTS,
@@ -82,18 +83,22 @@ function RestartDelayMs(attempt: number): number {
 
 /**
  * The `again` hook of a schema's index phase: tries again each time the server stops an attempt,
- * with its statement or its connection, after a pause of {@link RESTART_FIRST_MS} doubled at each
- * attempt up to {@link RESTART_MAX_MS}, with no limit on attempts. The pool replaces a lost
- * connection, so a server restart, a network drop or a `KILL` only delays an index build, and the
- * writes the unique gate holds wait for it. Gives up on any other failure, and once `stop` aborts.
+ * with its statement or its connection, or the pool cannot hand one out at all, after a pause of
+ * {@link RESTART_FIRST_MS} doubled at each attempt up to {@link RESTART_MAX_MS}, with no limit on
+ * attempts. A server restart, a network drop, a `KILL` or a server turning connections away thus
+ * only delays an index build, and the writes the unique gate holds wait for it. Gives up on any
+ * other failure, and once `stop` aborts.
  */
 function AgainWhenServerStops(
   schemaId: string,
   stop: AbortSignal,
-): (cause: unknown) => Promise<boolean> {
+): (failed: FailedAttempt) => Promise<boolean> {
   let attempt = 0;
-  return async (cause) => {
-    if (stop.aborted || !STOPPED_BY_SERVER.has(FailureOf(cause))) {
+  return async ({ cause, connected }) => {
+    if (
+      stop.aborted ||
+      (connected && !STOPPED_BY_SERVER.has(FailureOf(cause)))
+    ) {
       return false;
     }
     attempt += 1;

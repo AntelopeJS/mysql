@@ -166,11 +166,18 @@ export interface PhaseHooks {
   /** Ends the phase before its next attempt, and cuts short the pause before it. */
   readonly stop?: AbortSignal;
   /**
-   * Decides, once an attempt failed with `cause`, whether the phase tries again, and pauses as long
-   * as it needs first. The phase keeps its turn meanwhile, so a later call for the same schema still
-   * runs after it.
+   * Decides, once an attempt failed, whether the phase tries again, and pauses as long as it needs
+   * first. The phase keeps its turn meanwhile, so a later call for the same schema still runs after
+   * it.
    */
-  readonly again?: (cause: unknown) => Promise<boolean>;
+  readonly again?: (failed: FailedAttempt) => Promise<boolean>;
+}
+
+/** Why an attempt at a phase failed, and whether it had a connection the server ran its work on. */
+export interface FailedAttempt {
+  readonly cause: unknown;
+  /** False when the pool could not hand out a connection, so the server ran none of the work. */
+  readonly connected: boolean;
 }
 
 /** One attempt at a lock: what the work answered, or nothing while another session holds the lock. */
@@ -206,9 +213,11 @@ function WithPhaseLock<T>(
         );
       }
       let attempt: Attempt<T>;
+      let connected = false;
       try {
         attempt = await OnDedicatedSession(
           async (session): Promise<Attempt<T>> => {
+            connected = true;
             await hooks.opened?.(session);
             const name = await LockName(session, phase, schemaKey);
             return (await TakeLock(session, name, 0))
@@ -217,7 +226,7 @@ function WithPhaseLock<T>(
           },
         );
       } catch (err) {
-        if (await hooks.again?.(err)) {
+        if (await hooks.again?.({ cause: err, connected })) {
           continue;
         }
         throw err;

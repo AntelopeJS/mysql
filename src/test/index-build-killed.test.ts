@@ -1,14 +1,15 @@
 import { expect } from "chai";
 import { setTimeout as delay } from "node:timers/promises";
-import type { PoolConnection } from "mysql2/promise";
+import { type PoolConnection, createConnection } from "mysql2/promise";
 import { IsDuplicateKeyError } from "@antelopejs/interface-database";
 import {
   Schema,
   type SchemaDefinition,
 } from "@antelopejs/interface-database/schema";
 
-import { type Sql, ident, int, param, sql } from "../statement";
+import { type Sql, ident, int, lit, param, sql } from "../statement";
 import { AcquireConnection, Read } from "../connection";
+import { GetOptions } from "../config";
 import { Logger } from "../logger";
 import { Schemas, WaitForIndexes } from "../implementations/database/schema";
 import { Numbers, PhysicalTable, Run } from "./tables";
@@ -244,5 +245,68 @@ describe("a registration made while a stopped unique-index build waits to start 
     expect(await Inserting(schema, { _id: "duplicate", price: 7 })).to.equal(
       "stored",
     );
+  });
+});
+
+/** Lets the account of `admin` open `perHour` new connections an hour, or any number for 0. */
+async function ConnectionsPerHour(
+  admin: PoolConnection,
+  perHour: number,
+): Promise<void> {
+  const [row] = await Read(sql`SELECT CURRENT_USER() AS account`, admin);
+  const account = String(row?.get("account"));
+  const at = account.lastIndexOf("@");
+  await Run(
+    sql`ALTER USER ${lit(account.slice(0, at))}@${lit(account.slice(at + 1))} WITH MAX_CONNECTIONS_PER_HOUR ${int(perHour)}`,
+    admin,
+  );
+  await Run(sql`FLUSH USER_RESOURCES`, admin);
+}
+
+describe("a unique-index build whose next attempt the server turns away", function () {
+  this.timeout(60_000);
+  const schemaId = "index_build_turned_away";
+  const REFUSING_MS = 3000;
+
+  after(() => {
+    Schemas.unregister(schemaId);
+  });
+
+  it("keeps trying while the server refuses the pool new connections, and refuses the duplicate written meanwhile", async () => {
+    await Fresh(schemaId);
+    const admin = await AcquireConnection();
+    const held = await HoldTable(schemaId);
+    const schema = new Schema<{ items: Item }>(schemaId, UNIQUE_PRICE);
+    const duplicate = Inserting(schema, { _id: "duplicate", price: 7 });
+    await BuildingConnection(schemaId, []);
+    let ended = false;
+    try {
+      await ConnectionsPerHour(admin, 1);
+      const allowance = await createConnection(GetOptions().url);
+      const others = await Read(
+        sql`SELECT ID AS id FROM information_schema.PROCESSLIST WHERE USER = SUBSTRING_INDEX(CURRENT_USER(), '@', 1) AND ID NOT IN (CONNECTION_ID(), ${param(held.threadId)}, ${param(allowance.threadId)}) AND COMMAND <> 'Daemon'`,
+        admin,
+      );
+      for (const id of others.map((row) => Number(row.get("id")))) {
+        await Run(sql`KILL ${int(id)}`, admin).catch(() => undefined);
+      }
+      void WaitForIndexes(schemaId).then(() => {
+        ended = true;
+      });
+      await delay(REFUSING_MS);
+      await allowance.end();
+    } finally {
+      await ConnectionsPerHour(admin, 0);
+      admin.release();
+    }
+    expect(
+      ended,
+      "the phase still tries while connections are refused",
+    ).to.equal(false);
+    await Release(held);
+    const outcome = await duplicate;
+    expect(IsDuplicateKeyError(outcome), String(outcome)).to.equal(true);
+    await WaitForIndexes(schemaId);
+    expect(await IndexNames(schemaId)).to.deep.equal(["price"]);
   });
 });

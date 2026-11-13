@@ -53,10 +53,7 @@ const FAILURES = new Map<number, DdlFailure>([
   [1205, "lockTimeout"],
   [1213, "lockTimeout"],
   [1317, "interrupted"],
-  [1040, "disconnected"],
   [1053, "disconnected"],
-  [1129, "disconnected"],
-  [1203, "disconnected"],
   [1927, "disconnected"],
 ]);
 
