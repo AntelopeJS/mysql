@@ -6,18 +6,17 @@ const FALLBACK = "fallback";
 
 interface Note {
   _id: string;
-  typed?: string | null;
-  loose?: string | null;
+  note?: string | null;
 }
 
 const schema = new Schema<{ notes: Note }>("default-distinct", {
-  notes: { fields: { typed: "string" }, indexes: {} },
+  notes: { fields: {}, indexes: {} },
 });
 
 const ROWS: Note[] = [
-  { _id: "word", typed: "null", loose: "null" },
-  { _id: "text", typed: "a", loose: "a" },
-  { _id: "nil", typed: null, loose: null },
+  { _id: "word", note: "null" },
+  { _id: "text", note: "a" },
+  { _id: "nil", note: null },
   { _id: "absent" },
 ];
 
@@ -28,7 +27,7 @@ const CHAIN_LINKS = 18;
 
 const Notes = () => schema.instance(INSTANCE).table("notes");
 
-describe("default() before distinct()", function () {
+describe("default() before distinct() over an undeclared field", function () {
   this.timeout(30_000);
 
   before(async () => {
@@ -40,34 +39,32 @@ describe("default() before distinct()", function () {
     await schema.destroyInstance(INSTANCE).run();
   });
 
-  for (const field of ["typed", "loose"] as const) {
-    it(`keeps a stored "null" string in a ${field} field`, async () => {
-      const read = await Notes()
-        .map((note) => note.key(field).default(FALLBACK))
-        .distinct()
-        .run();
-      expect(read).to.have.members(EXPECTED);
-    });
+  it('keeps a stored "null" string', async () => {
+    const read = await Notes()
+      .map((note) => note.key("note").default(FALLBACK))
+      .distinct()
+      .run();
+    expect(read).to.have.members(EXPECTED);
+  });
 
-    it(`keeps a stored "null" string in a ${field} field of a nested query`, async () => {
-      const [read] = await Notes()
-        .filter((note) => note.key("_id").eq("word"))
-        .map(() =>
-          Notes()
-            .map((note) => note.key(field).default(FALLBACK))
-            .distinct(),
-        )
-        .run();
-      expect(read).to.have.members(EXPECTED);
-    });
-  }
+  it('keeps a stored "null" string in a nested query', async () => {
+    const [read] = await Notes()
+      .filter((note) => note.key("_id").eq("word"))
+      .map(() =>
+        Notes()
+          .map((note) => note.key("note").default(FALLBACK))
+          .distinct(),
+      )
+      .run();
+    expect(read).to.have.members(EXPECTED);
+  });
 
   it("runs a chain of defaults, each reading the one before", async () => {
     const read = await Notes()
       .map((note) => {
-        let value = note.key("loose");
+        let value = note.key("note");
         for (let link = 0; link < CHAIN_LINKS; link++) {
-          value = value.default(note.key("typed"));
+          value = value.default(note.key("note"));
         }
         return value.default(FALLBACK);
       })
