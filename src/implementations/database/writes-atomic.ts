@@ -32,6 +32,7 @@ import {
   type WriteCompiler,
   WriteTable,
   type WriteTarget,
+  type WrittenColumn,
   WriteRowSource,
 } from "./writes-shared";
 import { IsString } from "./guards";
@@ -82,7 +83,7 @@ function AtomicAssignments(
   target: WriteTarget,
   request: Mutation,
   context: DecodingContext,
-): Sql {
+): WrittenColumn[] {
   assert(request.type === "update", "Expected an update mutation");
   const document = {
     ...request.patch,
@@ -93,15 +94,17 @@ function AtomicAssignments(
   const split = SplitPayload(view, target.origin.model, context, {
     id: ID_AS_ASSERTION,
   });
-  const assignments = split.members.map((member) =>
-    Assignment(member.column, member.value.sql),
-  );
+  const assignments = split.members.map((member) => ({
+    column: member.column,
+    value: member.value.sql,
+  }));
   if (split.extra) {
-    assignments.push(
-      Assignment(EXTRA_COLUMN, MergeExtra(context.dialect, split.extra)),
-    );
+    assignments.push({
+      column: EXTRA_COLUMN,
+      value: MergeExtra(context.dialect, split.extra),
+    });
   }
-  return join(assignments, sql`, `);
+  return assignments;
 }
 
 function AtomicPredicate(
@@ -146,11 +149,20 @@ export const AtomicWrite: WriteCompiler = (target, stage, context) => {
     sql` AND `,
   );
   const table = WriteTable(target.origin);
-  const command =
-    request.type === "update"
-      ? sql`UPDATE ${table} SET ${AtomicAssignments(target, request, context)}`
-      : sql`DELETE FROM ${table}`;
-  return { kind: "atomic", statement: sql`${command} WHERE ${where}` };
+  if (request.type !== "update") {
+    return {
+      kind: "atomic",
+      statement: sql`DELETE FROM ${table} WHERE ${where}`,
+      sets: [],
+    };
+  }
+  const assignments = AtomicAssignments(target, request, context);
+  const set = assignments.map((one) => Assignment(one.column, one.value));
+  return {
+    kind: "atomic",
+    statement: sql`UPDATE ${table} SET ${join(set, sql`, `)} WHERE ${where}`,
+    sets: assignments.map((one) => one.column),
+  };
 };
 
 /**

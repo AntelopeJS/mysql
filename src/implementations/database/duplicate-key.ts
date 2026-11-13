@@ -3,8 +3,9 @@ import { DuplicateKeyError } from "@antelopejs/interface-database";
 import type { Dialect } from "../../dialect";
 import { ID_COLUMN } from "./utils";
 import type { IndexPlan } from "./plan";
-import { KeyColumnsOf, TextCapacity } from "./paths";
+import { KeyColumnsOf, type KeyPart, TextCapacity } from "./paths";
 import type { TableOrigin } from "./relation";
+import type { RefusedUniqueIndex } from "./migrate-indexes";
 
 const PRIMARY_KEY = "primary";
 const PRIMARY_KEY_FIELDS = [ID_COLUMN];
@@ -79,6 +80,45 @@ export function DuplicateKeyFailure(
     return TooLongFor(origin, failure.column) ?? err;
   }
   return err;
+}
+
+/** The stored columns a key part reads: its own column, or the one its generated key column derives from. */
+function PartSources(part: KeyPart): string[] {
+  switch (part.kind) {
+    case "key":
+      return [part.key.source];
+    case "value":
+      return [part.key.text.source, part.key.number.source];
+    default:
+      return [part.column];
+  }
+}
+
+/**
+ * Refuses a write that stores a value in a column a refused unique index of its table keys on, as
+ * every insert does: with the index unbuilt, the server would store the duplicate it exists to
+ * refuse. A write that sets none of those columns, a delete included, cannot add a duplicate and
+ * goes through.
+ */
+export function RefuseUnbuiltUnique(
+  refused: readonly RefusedUniqueIndex[],
+  origin: TableOrigin,
+  sets: readonly string[],
+): void {
+  const written = new Set(sets);
+  const covering = refused.find(
+    (one) =>
+      one.tableId === origin.tableId &&
+      one.index.parts.some((part) =>
+        PartSources(part).some((column) => written.has(column)),
+      ),
+  );
+  if (covering) {
+    const table = `${origin.schemaId}.${origin.tableId}`;
+    throw new Error(
+      `Write refused: unique index '${covering.index.id}' on '${table}' is not built, because the server refused it (${covering.reason}), so a write that adds rows or sets ${IndexedFields(covering.index).join(", ")} could store the duplicate it exists to refuse. Remove the rows it refuses, then register the schema again`,
+    );
+  }
 }
 
 /** Whether a write failed on the primary key, which a select-then-write runs again after. */

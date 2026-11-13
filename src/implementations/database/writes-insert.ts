@@ -213,8 +213,9 @@ export const InsertWrite: WriteCompiler = (target, stage, context) => {
   const instance = RequireInstance(target, stage);
   const documents = InsertedDocuments(stage);
   if (documents.length === 0) {
-    return { kind: "insert", ids: [], statements: [] };
+    return { kind: "insert", ids: [], statements: [], sets: [] };
   }
+  const sets = target.origin.plan.columns.map((column) => column.name);
   const plan: InsertPlan = {
     dialect: context.dialect,
     origin: target.origin,
@@ -226,12 +227,18 @@ export const InsertWrite: WriteCompiler = (target, stage, context) => {
   );
   const ids = rows.map((row) => row.id);
   if (!mode) {
-    return { kind: "insert", ids, statements: [InsertStatement(plan, rows)] };
+    return {
+      kind: "insert",
+      ids,
+      statements: [InsertStatement(plan, rows)],
+      sets,
+    };
   }
   AssertDistinctIds(rows);
   return {
     kind: "upsert",
     ids,
+    sets,
     lock: LockStatement(plan, rows),
     write: (existing) => {
       const missing = rows.filter((row) => !existing.has(row.id));

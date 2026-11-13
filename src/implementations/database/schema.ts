@@ -8,7 +8,11 @@ import type {
 import { Logger } from "../../logger";
 import { GetOptions, IsExternal } from "../../config";
 import { GetDialect, GetSchemaPrefix, PoolGeneration } from "../../connection";
-import { BuildIndexes, type IndexPhaseEnd } from "./migrate-indexes";
+import {
+  BuildIndexes,
+  type IndexPhaseEnd,
+  type RefusedUniqueIndex,
+} from "./migrate-indexes";
 import { ConvergeTables } from "./migrate-tables";
 import { ParseSchema, type SchemaModel, type TableModel } from "./fields";
 import { DescribeExternalSchema } from "./external-schema";
@@ -30,7 +34,7 @@ const schemaPlans = new Map<string, ReadonlyMap<string, TablePlan>>();
 const scanNotices = new Map<string, TableScanNotices>();
 const ready = new Map<string, Promise<void>>();
 const indexing = new Map<string, Promise<IndexPhaseEnd>>();
-const uniqueGates = new Map<string, Promise<void>>();
+const uniqueGates = new Map<string, Promise<readonly RefusedUniqueIndex[]>>();
 
 /** A registration that has not converged: its definition, and the pool it started on. */
 interface Unconverged {
@@ -355,8 +359,13 @@ export async function WaitForIndexes(schemaId: string): Promise<void> {
  * index changes what a write may store, so a write that ran before it is built could store the
  * duplicate it exists to refuse; writes to such a schema wait instead. The phase waits for any other
  * process's phase on the schema, so they wait for whichever process builds the index.
+ *
+ * Answers the unique indexes the latest phase found the server refusing to build, which stay unbuilt
+ * until a later registration's phase builds them.
  */
-export async function WaitForUniqueIndexes(schemaId: string): Promise<void> {
+export async function WaitForUniqueIndexes(
+  schemaId: string,
+): Promise<readonly RefusedUniqueIndex[]> {
   await WaitForSchemaReady(schemaId);
-  await uniqueGates.get(schemaId);
+  return (await uniqueGates.get(schemaId)) ?? [];
 }
