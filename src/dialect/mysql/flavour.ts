@@ -70,6 +70,8 @@ export interface Flavour {
   readonly escapedKeys?: EscapedKeys;
   /** The JSON syntax's `present`, which depends on how the engine compares a JSON string. */
   present(value: Sql): Sql;
+  /** The JSON syntax's `absent`, which depends on how the engine compares a JSON string. */
+  absent(value: Sql): Sql;
   /** A double as a JSON number, a negative zero included. */
   number(value: Sql): Sql;
   /** Whether JSON text the engine parses keeps a finite number exactly. */
@@ -187,6 +189,8 @@ export const MYSQL: Flavour = {
   },
   json: (text) => sql`CAST(${text} AS JSON)`,
   present: (value) => sql`NULLIF(${value}, CAST('null' AS JSON))`,
+  absent: (value) =>
+    sql`((${value} IS NULL) OR (${value} = CAST('null' AS JSON)))`,
   number: (value) => sql`CAST(${value} AS JSON)`,
   keepsInText: (value) => Number.isSafeInteger(value) && !Object.is(value, -0),
   boolean: (truth) => sql`CAST(${truth} AS JSON)`,
