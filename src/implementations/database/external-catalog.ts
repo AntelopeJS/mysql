@@ -1,4 +1,5 @@
-import { GetDialect, Read } from "../../connection";
+import { GetDialect, Prepares, Read } from "../../connection";
+import type { Sql } from "../../statement";
 import type {
   CatalogColumn,
   CatalogIndex,
@@ -40,21 +41,40 @@ export function KeyOf(indexes: CatalogIndex[]): CatalogIndex | undefined {
   return indexes.filter(IsCandidateKey).sort(ByKeyPreference)[0];
 }
 
-/** The relations named `schema.name`, as the listing reads them; a name the account cannot see is absent. */
-export async function ReadNamedRelationRows(
-  names: readonly string[],
-): Promise<RelationRow[]> {
+/**
+ * The relations a listing statement answers. A relation whose listed columns the account may all
+ * SELECT is readable only once the server takes a `SELECT *` of it: the catalog lists only the
+ * columns the account holds some privilege on, so it cannot count a column the account may not
+ * touch at all.
+ */
+async function ParseRelations(statement: Sql): Promise<RelationRow[]> {
   const catalog = GetDialect().external.catalog;
-  const rows = await Read(catalog.namedRelations(names));
-  return rows.map((row) => catalog.parseRelation(row));
+  const parsed: RelationRow[] = [];
+  for (const cells of await Read(statement)) {
+    const row = catalog.parseRelation(cells);
+    parsed.push(
+      row.readable
+        ? {
+            ...row,
+            readable: await Prepares(catalog.selection(row.schema, row.name)),
+          }
+        : row,
+    );
+  }
+  return parsed;
 }
 
-export async function ReadRelationRows(
+/** The relations named `schema.name`, as the listing reads them; a name the account cannot see is absent. */
+export function ReadNamedRelationRows(
+  names: readonly string[],
+): Promise<RelationRow[]> {
+  return ParseRelations(GetDialect().external.catalog.namedRelations(names));
+}
+
+export function ReadRelationRows(
   schemas: readonly string[] | undefined,
 ): Promise<RelationRow[]> {
-  const catalog = GetDialect().external.catalog;
-  const rows = await Read(catalog.relations(schemas));
-  return rows.map((row) => catalog.parseRelation(row));
+  return ParseRelations(GetDialect().external.catalog.relations(schemas));
 }
 
 export async function ReadColumns(row: RelationRow): Promise<CatalogColumn[]> {

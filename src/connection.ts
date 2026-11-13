@@ -453,6 +453,31 @@ export async function Read(
   }
 }
 
+/**
+ * Whether the server would take a statement from the account. It prepares the statement and
+ * forgets it, never running it, which checks the account's privileges on what the statement names
+ * however they reached it. A refusal answers false; a lost connection still fails.
+ */
+export async function Prepares(statement: Sql): Promise<boolean> {
+  const bound = Bind(statement);
+  const connection = await AcquireConnection();
+  try {
+    await connection.prepare(bound.sql);
+    connection.unprepare(bound.sql);
+    return true;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      GetDialect().errors.classify(error).kind !== "connection"
+    ) {
+      return false;
+    }
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
 async function WriteOn(
   connection: PoolConnection,
   statement: Sql,

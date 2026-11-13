@@ -22,30 +22,28 @@ const AUTO_INCREMENT = /\bauto_increment\b/i;
 const ENUM_LABEL = /'((?:[^']|'')*)'/g;
 const USER_SEPARATOR = "@";
 
-/**
- * The account the connection runs as, spelled as the privilege views spell a grantee. Roles are
- * not resolved: a privilege granted only through a role is not seen here.
- */
-const GRANTEE = sql`CONCAT('''', SUBSTRING_INDEX(CURRENT_USER(), '@', 1), '''@''', SUBSTRING_INDEX(CURRENT_USER(), '@', -1), '''')`;
-
 const SYSTEM_SCHEMAS = sql`('mysql', 'information_schema', 'performance_schema', 'sys')`;
 
-/** Whether the account holds `privilege` on the relation `t` names: globally, on its schema, or on it. */
-function Privilege(privilege: string): Sql {
-  const name = param(privilege);
-  return sql`(EXISTS (SELECT 1 FROM information_schema.USER_PRIVILEGES u WHERE u.GRANTEE = ${GRANTEE} AND u.PRIVILEGE_TYPE = ${name})
-    OR EXISTS (SELECT 1 FROM information_schema.SCHEMA_PRIVILEGES s WHERE s.GRANTEE = ${GRANTEE} AND s.TABLE_SCHEMA = t.TABLE_SCHEMA AND s.PRIVILEGE_TYPE = ${name})
-    OR EXISTS (SELECT 1 FROM information_schema.TABLE_PRIVILEGES p WHERE p.GRANTEE = ${GRANTEE} AND p.TABLE_SCHEMA = t.TABLE_SCHEMA AND p.TABLE_NAME = t.TABLE_NAME AND p.PRIVILEGE_TYPE = ${name}))`;
-}
+/** How a relation's columns fold into one answer: every column holds the privilege, or some does. */
+const FOLDS = { every: sql`MIN`, some: sql`MAX` } as const;
 
-const SOME_COLUMNS = sql`EXISTS (SELECT 1 FROM information_schema.COLUMN_PRIVILEGES c WHERE c.GRANTEE = ${GRANTEE} AND c.TABLE_SCHEMA = t.TABLE_SCHEMA AND c.TABLE_NAME = t.TABLE_NAME AND c.PRIVILEGE_TYPE = 'SELECT')`;
+/**
+ * Whether the account holds `privilege` on every or on some column of the relation `t` names, as
+ * `information_schema.COLUMNS.PRIVILEGES` answers it. That column is the server's own reckoning
+ * for the session: it counts global, schema, table and column grants, those of every enabled role
+ * and of the roles they hold, and it never spells the account's name. NULL when the account sees
+ * none of the relation's columns.
+ */
+function ColumnPrivilege(fold: keyof typeof FOLDS, privilege: string): Sql {
+  return sql`(SELECT ${FOLDS[fold]}(FIND_IN_SET(${param(privilege)}, c.PRIVILEGES) > 0) FROM information_schema.COLUMNS c
+    WHERE c.TABLE_SCHEMA = t.TABLE_SCHEMA AND c.TABLE_NAME = t.TABLE_NAME)`;
+}
 
 function Relations(filter: Sql): Sql {
   return sql`SELECT t.TABLE_SCHEMA AS rel_schema, t.TABLE_NAME AS rel_name, t.TABLE_TYPE AS rel_type,
     t.CREATE_OPTIONS AS rel_options, t.TABLE_ROWS AS rel_rows, t.TABLE_COMMENT AS rel_comment,
-    ${Privilege("SELECT")} AS can_select, ${SOME_COLUMNS} AS some_columns,
-    ${Privilege("INSERT")} AS can_insert, ${Privilege("UPDATE")} AS can_update,
-    ${Privilege("DELETE")} AS can_delete
+    ${ColumnPrivilege("every", "select")} AS can_select, ${ColumnPrivilege("some", "select")} AS some_columns,
+    ${ColumnPrivilege("every", "insert")} AS can_insert, ${ColumnPrivilege("every", "update")} AS can_update
     FROM information_schema.TABLES t
     WHERE t.TABLE_TYPE IN ('BASE TABLE', 'VIEW') AND t.TABLE_SCHEMA NOT IN ${SYSTEM_SCHEMAS} AND ${filter}
     ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME`;
@@ -102,7 +100,6 @@ function ParseRelation(row: Row): RelationRow {
     someColumns: Flag(row, "some_columns"),
     insert: Flag(row, "can_insert"),
     update: Flag(row, "can_update"),
-    delete: Flag(row, "can_delete"),
     statistics:
       kind === "view" || rows === null || rows === undefined
         ? null
@@ -276,6 +273,10 @@ export function ExternalCatalogOf(flavour: Flavour): ExternalCatalogSyntax {
       database: Text(row, "current_database"),
       role: UserOf(Text(row, "account")),
     }),
+    selection: (schema, table) =>
+      sql`SELECT * FROM ${ident(schema)}.${ident(table)}`,
+    deletion: (schema, table) =>
+      sql`DELETE FROM ${ident(schema)}.${ident(table)}`,
     plannedRows: (schema, table) =>
       sql`EXPLAIN FORMAT=TRADITIONAL SELECT * FROM ${ident(schema)}.${ident(table)}`,
     parsePlannedRows: ParsePlannedRows,

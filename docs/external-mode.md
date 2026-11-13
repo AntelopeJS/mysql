@@ -40,7 +40,7 @@ Registration reads `information_schema` once per declared table, and does nothin
 - A declared field whose column does not exist.
 - A declared type that the column cannot be read as, such as `number` over a `VARCHAR`, and a column of a type no field type reads, such as `BLOB` or `GEOMETRY`.
 
-Registration reads privileges from `information_schema`, granted globally, on the database or on the table. A privilege granted only through a role is not seen.
+Registration reads privileges as the server works them out for the session. That covers grants made globally, on the database, on the table or on columns, both to the account and to the roles enabled for the session. A role a role holds counts too. A role counts only while it is enabled, so make it a default role of the account (`SET DEFAULT ROLE`). A table is readable when the server would prepare `SELECT *` on it.
 
 Registration accepts some pairings with a warning, because reading them loses something:
 

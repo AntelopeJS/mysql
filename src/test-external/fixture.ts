@@ -6,9 +6,18 @@
  */
 export const CLIENT_DATABASE = "sales";
 
-export const CLIENT_USER = "dms_client";
+/** The account the external suite connects as: its name holds the `@` that separates a host. */
+export const CLIENT_USER = "dms@client";
+
+const CLIENT_ACCOUNT = `'${CLIENT_USER}'@'%'`;
 
 export const READER_PASSWORD = "reader";
+
+/** The role every read grant goes to, which the account holds only through {@link ACCESS_ROLE}. */
+const READER_ROLE = "dms_reader";
+
+/** The role the account holds and enables at login: it holds {@link READER_ROLE} and the write grants. */
+const ACCESS_ROLE = "dms_access";
 
 /** Rows of the table above the sampling threshold, which the server's statistics only estimate. */
 export const BIG_EVENTS_ROWS = 1_100_000;
@@ -254,24 +263,49 @@ const WRITABLE_TABLES: readonly string[] = READABLE.filter((name) =>
   name.startsWith("w_"),
 );
 
-/** What a client grants the account the DMS writes with: rows of the writable tables. */
-export function WriterGrants(user: string): string[] {
+/** What a client grants `grantee` for the DMS to write with: rows of the writable tables. */
+function WriterGrants(grantee: string): string[] {
   return WRITABLE_TABLES.map(
-    (table) =>
-      `GRANT INSERT, UPDATE, DELETE ON sales.${table} TO '${user}'@'%'`,
+    (table) => `GRANT INSERT, UPDATE, DELETE ON sales.${table} TO ${grantee}`,
   );
 }
 
 /**
- * What a client grants the account the DMS reads with: each relation's rows, a view's definition
- * so the optimizer may estimate it, and only some of `people`'s columns.
+ * What a client grants `grantee` for the DMS to read with: each relation's rows, and a view's
+ * definition so the optimizer may estimate it.
  */
-export function ReaderGrants(user: string): string[] {
+function ReaderGrants(grantee: string): string[] {
   return [
     ...READABLE.map(
-      (relation) => `GRANT SELECT ON sales.${relation} TO '${user}'@'%'`,
+      (relation) => `GRANT SELECT ON sales.${relation} TO ${grantee}`,
     ),
-    ...VIEWS.map((view) => `GRANT SHOW VIEW ON sales.${view} TO '${user}'@'%'`),
-    `GRANT SELECT (id, name) ON sales.people TO '${user}'@'%'`,
+    ...VIEWS.map((view) => `GRANT SHOW VIEW ON sales.${view} TO ${grantee}`),
+  ];
+}
+
+/** How each engine enables a role at the account's login. */
+const DEFAULT_ROLE: Record<Engine, string> = {
+  mysql: `SET DEFAULT ROLE ${ACCESS_ROLE} TO ${CLIENT_ACCOUNT}`,
+  mariadb: `SET DEFAULT ROLE ${ACCESS_ROLE} FOR ${CLIENT_ACCOUNT}`,
+};
+
+/**
+ * The account the DMS connects with, as a client would set it up over the fixture's tables: it
+ * reads through a role it holds through another role, writes through the role it holds, and may
+ * read only some of `people`'s columns by a grant of its own.
+ */
+export function ClientAccount(engine: Engine): readonly string[] {
+  return [
+    `DROP USER IF EXISTS ${CLIENT_ACCOUNT}`,
+    `DROP ROLE IF EXISTS ${READER_ROLE}, ${ACCESS_ROLE}`,
+    `CREATE USER ${CLIENT_ACCOUNT} IDENTIFIED BY '${READER_PASSWORD}'`,
+    `CREATE ROLE ${READER_ROLE}`,
+    `CREATE ROLE ${ACCESS_ROLE}`,
+    ...ReaderGrants(READER_ROLE),
+    `GRANT ${READER_ROLE} TO ${ACCESS_ROLE}`,
+    `GRANT ${ACCESS_ROLE} TO ${CLIENT_ACCOUNT}`,
+    DEFAULT_ROLE[engine],
+    ...WriterGrants(ACCESS_ROLE),
+    `GRANT SELECT (id, name) ON sales.people TO ${CLIENT_ACCOUNT}`,
   ];
 }
