@@ -94,8 +94,8 @@ return out;`;
     const downResult = await down.run("call the catalog and a query with a url that does not answer", probe);
     context.expect(downResult.folder, [
       answered(downResult),
-      has("the catalog refuses with the reason it has no connection", JSON.stringify(pick(downResult.value, "info") ?? null), /MySQL adapter is not connected: the server is not answering at 127\.0\.0\.1:1 \(ECONNREFUSED\)/u),
-      has("a query refuses with the same reason", JSON.stringify(pick(downResult.value, "query") ?? null), /MySQL adapter is not connected: the server is not answering/u),
+      has("the catalog refuses with the reason it has no connection", JSON.stringify(pick(downResult.value, "info") ?? null), /MySQL or MariaDB adapter is not connected: the server is not answering at 127\.0\.0\.1:1 \(ECONNREFUSED\)/u),
+      has("a query refuses with the same reason", JSON.stringify(pick(downResult.value, "query") ?? null), /MySQL or MariaDB adapter is not connected: the server is not answering/u),
     ]);
     await close(down);
   },

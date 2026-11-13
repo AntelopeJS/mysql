@@ -236,7 +236,6 @@ async function Verify(
 export async function Connect(options?: Options) {
   await Disconnect();
   const resolved = SetOptions(options);
-  engineName = ConfiguredEngine(resolved.dialect);
   const created = createPool({
     ...resolved.pool,
     uri: resolved.url,
@@ -244,6 +243,7 @@ export async function Connect(options?: Options) {
     flags: [...MODULE_POOL_OPTIONS.flags],
   });
   created.on("connection", GuardConnection);
+  engineName = ConfiguredEngine(resolved.dialect);
   let engine: Dialect;
   try {
     engine = await Verify(created, resolved.dialect);
