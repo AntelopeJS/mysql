@@ -2,7 +2,7 @@ import { expect } from "chai";
 import type { PoolConnection } from "mysql2/promise";
 import { Schema } from "@antelopejs/interface-database/schema";
 
-import { ident, param, sql } from "../statement";
+import { type Sql, ident, int, lit, param, sql } from "../statement";
 import { AcquireConnection, GetDialect, Read } from "../connection";
 import { SessionOf } from "../implementations/database/locks";
 import { CHANGE_LOG } from "../implementations/database/registry";
@@ -18,34 +18,68 @@ const ordered = new Schema<{ rows: Row }>(SCHEMA_ID, {
 
 /**
  * Ten to this power is how many log rows an open transaction holds, which a pass has to read past
- * before it reaches the rows logged after them: about a second's reading on 8.4 and 9.7.
+ * before it reaches the rows logged after them: about 1.5 s of reading on MySQL and 90 ms on
+ * MariaDB, against the millisecond the server takes to commit both writes once the pass scans.
  */
 const BACKLOG_PLACES = 6;
 
-/** Long enough for a pass that started reading the log to have read past its first row. */
-const SCAN_HEAD_MS = 50;
+/**
+ * How often the test reads the server's state: longer than InnoDB keeps the snapshot it answers
+ * `INNODB_TRX` from, which it takes again only once the table has gone unread for 100 ms.
+ */
+const POLL_MS = 150;
 
-const POLL_MS = 2;
+/** Longer than a statement takes to reach the state a test waits for, once its connection is free. */
+const STATE_DEADLINE_MS = 30_000;
 
-/** Longer than a pass takes to start once its connection is free. */
-const START_DEADLINE_MS = 30_000;
+/** The procedure that commits its caller's transaction once a given connection scans the log. */
+const COMMIT_ON_SCAN = ident("feeds_row_order_commit_on_scan");
 
-/** Whether the connection `id` is running a `SELECT` that reads the change log. */
-async function ReadingLog(id: number): Promise<boolean> {
-  const rows = await Read(
-    sql`SELECT 1 AS reading FROM information_schema.PROCESSLIST WHERE ID = ${param(id)} AND INFO LIKE 'SELECT%' AND LOCATE(${param(CHANGE_LOG.log)}, INFO) > 0`,
-  );
-  return rows.length > 0;
+/**
+ * Whether the connection `id` is scanning the change log in a `SELECT`: MySQL names a running scan
+ * `executing` and MariaDB `Sending data`, while the statement before them is still being prepared.
+ */
+function Scanning(id: Sql): Sql {
+  return sql`EXISTS (SELECT 1 FROM information_schema.PROCESSLIST WHERE ID = ${id} AND STATE IN ('executing', 'Sending data') AND INFO LIKE 'SELECT%' AND LOCATE(${lit(CHANGE_LOG.log)}, INFO) > 0)`;
 }
 
-async function StartedReadingLog(id: number): Promise<void> {
-  const deadline = Date.now() + START_DEADLINE_MS;
-  while (!(await ReadingLog(id))) {
+/** Waits until `state` answers a row, and fails naming `premise` when it never does. */
+async function Until(state: Sql, premise: string): Promise<void> {
+  const deadline = Date.now() + STATE_DEADLINE_MS;
+  for (;;) {
+    if ((await Read(state)).length > 0) {
+      return;
+    }
     if (Date.now() > deadline) {
-      expect.fail("the sequencer pass reads the change log");
+      expect.fail(premise);
     }
     await Pause(POLL_MS);
   }
+}
+
+/** Raises `premise` as the error of the statement that broke it. */
+function Refuted(premise: string): Sql {
+  return sql`SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = ${lit(premise)}`;
+}
+
+/**
+ * Creates the procedure that commits the caller's transaction once the connection `pass` scans the
+ * log, waits until the document in `table` reads as its second write, and refuses unless `pass`
+ * still scans then. The server runs every step, so no round trip to a loaded client sits between
+ * them.
+ */
+function CreateCommitOnScan(table: string): Sql {
+  return sql`CREATE PROCEDURE ${COMMIT_ON_SCAN} (IN pass BIGINT UNSIGNED) BEGIN
+  DECLARE deadline DATETIME(6) DEFAULT SYSDATE(6) + INTERVAL ${int(STATE_DEADLINE_MS)} * 1000 MICROSECOND;
+  WHILE NOT ${Scanning(ident("pass"))} DO
+    IF SYSDATE(6) > deadline THEN ${Refuted("the sequencer pass scans the change log")}; END IF;
+  END WHILE;
+  COMMIT;
+  WHILE NOT EXISTS (SELECT 1 FROM ${ident(table)} WHERE _instance = '' AND _id = 'twice' AND label = 'second') DO
+    IF SYSDATE(6) > deadline THEN ${Refuted("the second write commits once the first has")}; END IF;
+  END WHILE;
+  IF NOT ${Scanning(ident("pass"))} THEN ${Refuted("the pass still reads the log once the second write has committed")}; END IF;
+END`;
 }
 
 describe("a sequencer pass reading the log while one document is written twice", function () {
@@ -53,6 +87,7 @@ describe("a sequencer pass reading the log while one document is written twice",
 
   let writer: PoolConnection;
   let backlog: PoolConnection;
+  let rewriter: PoolConnection;
   let sequencer: PoolConnection;
   let feed: Feed;
 
@@ -63,7 +98,10 @@ describe("a sequencer pass reading the log while one document is written twice",
   before(async () => {
     writer = await AcquireConnection();
     backlog = await AcquireConnection();
+    rewriter = await AcquireConnection();
     sequencer = await AcquireConnection();
+    await Run(sql`DROP PROCEDURE IF EXISTS ${COMMIT_ON_SCAN}`);
+    await Run(CreateCommitOnScan(PhysicalTable(SCHEMA_ID, "rows")));
     const rows = ordered.instance().table("rows");
     feed = await Opened(rows, "probe");
     await rows.insert({ _id: "twice", label: "initial" });
@@ -72,16 +110,19 @@ describe("a sequencer pass reading the log while one document is written twice",
 
   after(async () => {
     await feed.return?.();
+    await Run(sql`DROP PROCEDURE IF EXISTS ${COMMIT_ON_SCAN}`);
     writer.release();
     backlog.release();
+    rewriter.release();
     sequencer.release();
   });
 
   /**
-   * The first write commits after the pass began reading the log, and the second one, which waited
-   * on the document's lock, commits while the pass still reads. A pass that judges each row as it
-   * reaches it skips the first one, still open when read, and numbers the second, so the feed
-   * delivers the document's second write before its first.
+   * The first write commits after the pass began scanning the log, and the second one, already
+   * waiting on the document's lock, commits on the server as soon as the first does, while the pass
+   * still reads past the backlog. A pass that judges each row as it reaches it skips the first one,
+   * still open when read, and numbers the second, so the feed delivers the document's second write
+   * before its first.
    */
   it("numbers the first write before the second, though both commit while the pass reads", async () => {
     await Run(sql`START TRANSACTION`, writer);
@@ -91,18 +132,26 @@ describe("a sequencer pass reading the log while one document is written twice",
       sql`INSERT INTO ${ident(CHANGE_LOG.log)} (tbl, inst, op) SELECT 'backlog', '', 'added' FROM ${Numbers(BACKLOG_PLACES)} AS numbers`,
       backlog,
     );
-    const pass = SequenceOnce(SessionOf(sequencer), GetDialect(), "wait");
+    const second = Run(Relabel("second"), rewriter);
+    let pass: Promise<unknown> = Promise.resolve();
     try {
-      await StartedReadingLog(sequencer.threadId);
-      await Pause(SCAN_HEAD_MS);
-      await Run(sql`COMMIT`, writer);
-      await Run(Relabel("second"));
-      expect(
-        await ReadingLog(sequencer.threadId),
-        "the pass still reads the log once the second write has committed",
-      ).to.equal(true);
+      await Until(
+        sql`SELECT 1 FROM information_schema.INNODB_TRX WHERE trx_mysql_thread_id = ${param(rewriter.threadId)} AND trx_state = 'LOCK WAIT'`,
+        "the second write waits on the document's lock",
+      );
+      const committing = Run(
+        sql`CALL ${COMMIT_ON_SCAN} (${param(sequencer.threadId)})`,
+        writer,
+      );
+      await Until(
+        sql`SELECT 1 FROM information_schema.PROCESSLIST WHERE ID = ${param(writer.threadId)} AND INFO LIKE 'CALL%'`,
+        "the procedure watches for the pass before the pass starts",
+      );
+      pass = SequenceOnce(SessionOf(sequencer), GetDialect(), "wait");
+      await committing;
     } finally {
-      await pass;
+      await Run(sql`ROLLBACK`, writer);
+      await Promise.all([second, pass]);
       await Run(sql`ROLLBACK`, backlog);
     }
     const one = await Delivered(feed.next());
