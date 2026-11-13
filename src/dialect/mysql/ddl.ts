@@ -295,9 +295,11 @@ function CreateInstances(engine: Engine, registry: InstancesTable): Sql {
 
 /** A server error has a positive `errno`; a driver error that ended the connection is `fatal`. */
 function Failure(error: Error): DdlFailure {
+  if ("fatal" in error && error.fatal === true) {
+    return "disconnected";
+  }
   const errno = "errno" in error ? Number(error.errno) : 0;
-  const fatal = "fatal" in error && error.fatal === true;
-  if (fatal || !Number.isInteger(errno) || errno <= 0) {
+  if (!Number.isInteger(errno) || errno <= 0) {
     return "broken";
   }
   return FAILURES.get(errno) ?? "refused";

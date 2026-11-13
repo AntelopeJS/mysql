@@ -170,7 +170,11 @@ export interface PhaseHooks {
 /** One attempt at a lock: what the work answered, or nothing while another session holds the lock. */
 type Attempt<T> = { readonly result: T } | undefined;
 
-async function PauseUnlessStopped(ms: number, stop: AbortSignal | undefined) {
+/** Waits `ms`, or less once `stop` aborts. */
+export async function PauseUnlessStopped(
+  ms: number,
+  stop: AbortSignal | undefined,
+) {
   await delay(ms, undefined, { signal: stop }).catch(() => undefined);
 }
 

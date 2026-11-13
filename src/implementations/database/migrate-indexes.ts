@@ -16,6 +16,7 @@ import {
   FailureOf,
   Interrupt,
   LOCK_ATTEMPTS,
+  PauseUnlessStopped,
   RetryDelayMs,
   WithIndexesLock,
 } from "./locks";
@@ -29,6 +30,21 @@ interface IndexBuild {
 const INDEX_BUILD_STOPPED = new Error(
   "MySQL index build stopped: the adapter is disconnecting",
 );
+
+/** The pause before an index phase the server stopped starts again, doubled at each attempt. */
+const RESTART_FIRST_MS = 1000;
+
+/** The longest pause between two attempts at an index phase the server keeps stopping. */
+const RESTART_MAX_MS = 30_000;
+
+/**
+ * How the server stops a build without refusing it: a killed statement, as a shutdown or `KILL QUERY`
+ * stops it, or an ended connection, as a restart, a network drop or `KILL` ends it.
+ */
+const STOPPED_BY_SERVER: ReadonlySet<DdlFailure> = new Set([
+  "interrupted",
+  "disconnected",
+]);
 
 const builds = new Set<IndexBuild>();
 const phases = new Set<Promise<void>>();
@@ -63,7 +79,7 @@ function Recover(failure: DdlFailure, attempts: number): Recovery {
  * Brings one table's indexes and key columns in line with its plan, one statement at a time,
  * reading the catalog again before each. A statement the server refuses, such as a unique index over
  * duplicates, is logged and left for the next registration while the others proceed; a killed
- * statement or a broken session ends the phase.
+ * statement or a broken session ends this attempt at the phase.
  */
 export async function ConvergeIndexes(
   session: ConvergenceSession,
@@ -130,6 +146,54 @@ async function HoldsEveryUniqueIndex(
   return true;
 }
 
+/** The pause before attempt `attempt + 1` at an index phase the server stopped. */
+function RestartDelayMs(attempt: number): number {
+  return Math.min(RESTART_FIRST_MS * 2 ** (attempt - 1), RESTART_MAX_MS);
+}
+
+/** One attempt at the index phase, on a connection of its own under the schema's indexes lock. */
+async function AttemptIndexPhase(
+  schemaId: string,
+  plans: readonly TablePlan[],
+  holdsUnique: () => void,
+  build: IndexBuild,
+): Promise<void> {
+  const isStopping = () => build.stop.signal.aborted;
+  const opened = async (session: ConvergenceSession) => {
+    if (await HoldsEveryUniqueIndex(session, plans)) {
+      holdsUnique();
+    }
+  };
+  const steps = await WithIndexesLock(
+    SchemaKey(schemaId),
+    { opened, stop: build.stop.signal },
+    async (session) => {
+      build.session = session;
+      try {
+        let total = 0;
+        for (const plan of plans) {
+          total += await ConvergeIndexes(session, plan, isStopping);
+        }
+        return total;
+      } finally {
+        build.session = undefined;
+      }
+    },
+  );
+  if (steps) {
+    Logger.Info(
+      `converged the indexes of schema '${schemaId}' in ${steps} statements`,
+    );
+  }
+}
+
+/**
+ * Runs the index phase until it ends, starting it again on a connection of the pool each time the
+ * server stops it, after a pause of {@link RESTART_FIRST_MS} doubled at each attempt up to
+ * {@link RESTART_MAX_MS}, with no limit on attempts. The pool replaces a lost connection, so a
+ * server restart, a network drop or a `KILL` only delays the build, and the writes the unique gate
+ * holds wait for it. A disconnect of the adapter ends the phase; any other failure rejects.
+ */
 async function RunIndexPhase(
   schemaId: string,
   plans: readonly TablePlan[],
@@ -137,37 +201,24 @@ async function RunIndexPhase(
 ): Promise<void> {
   const build: IndexBuild = { stop: new AbortController() };
   builds.add(build);
-  const isStopping = () => build.stop.signal.aborted;
   try {
-    const opened = async (session: ConvergenceSession) => {
-      if (await HoldsEveryUniqueIndex(session, plans)) {
-        holdsUnique();
-      }
-    };
-    const steps = await WithIndexesLock(
-      SchemaKey(schemaId),
-      { opened, stop: build.stop.signal },
-      async (session) => {
-        build.session = session;
-        try {
-          let total = 0;
-          for (const plan of plans) {
-            total += await ConvergeIndexes(session, plan, isStopping);
-          }
-          return total;
-        } finally {
-          build.session = undefined;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await AttemptIndexPhase(schemaId, plans, holdsUnique, build);
+        return;
+      } catch (err) {
+        if (build.stop.signal.aborted) {
+          return;
         }
-      },
-    );
-    if (steps) {
-      Logger.Info(
-        `converged the indexes of schema '${schemaId}' in ${steps} statements`,
-      );
-    }
-  } catch (err) {
-    if (!isStopping()) {
-      throw err;
+        if (!STOPPED_BY_SERVER.has(FailureOf(err))) {
+          throw err;
+        }
+        const pause = RestartDelayMs(attempt);
+        Logger.Warn(
+          `The server stopped the index phase of schema '${schemaId}' (${Describe(err)}); it starts again on a connection of the pool in ${pause} ms`,
+        );
+        await PauseUnlessStopped(pause, build.stop.signal);
+      }
     }
   } finally {
     builds.delete(build);
@@ -188,7 +239,8 @@ export interface IndexPhase {
 /**
  * Converges a schema's secondary indexes and key columns, once its tables converged. Meant to run in
  * the background: queries never wait for it, and their results never depend on whether an index
- * exists yet. `done` never rejects; a failure is logged and repaired by the next registration.
+ * exists yet. `done` never rejects; a failure is logged and repaired by the next registration. A
+ * build the server stops, with its statement or its connection, starts again on the pool instead.
  *
  * A btree index builds with writes flowing, and carries its signature from the statement that
  * builds it, so there is no unsigned window and a failed build leaves no index behind. Processes
