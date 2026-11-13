@@ -238,7 +238,7 @@ function Absent(dialect: Dialect, pair: CompiledPair) {
   if (!IsJsonBacked(pair.type)) {
     return pair.left.sql;
   }
-  return sql`NULLIF(${pair.left.sql}, ${dialect.sql.json.null})`;
+  return dialect.sql.json.present(pair.left.sql);
 }
 
 /**

@@ -425,6 +425,7 @@ export function JsonOf(flavour: Flavour): JsonSyntax {
     parse,
     text,
     null: flavour.json(lit("null")),
+    present: (value) => flavour.present(value),
     emptyObject: EMPTY_OBJECT,
     emptyArray: sql`JSON_ARRAY()`,
     object: (entries) => sql`JSON_OBJECT(${Entries(entries)})`,

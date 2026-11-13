@@ -170,6 +170,16 @@ function JsonEquals(left: Sql, right: Sql): Sql {
 }
 
 /**
+ * A JSON value, or SQL NULL where it is the JSON `null`. MariaDB compares a JSON string by its
+ * unquoted text, where `"null"` equals the JSON `null`, so the value is compared as bytes and read
+ * back as JSON. It is compacted first: MariaDB keeps the text a client wrote to a JSON column,
+ * whitespace around a `null` included.
+ */
+function Present(value: Sql): Sql {
+  return Json(sql`NULLIF(CAST(JSON_COMPACT(${value}) AS BINARY), 'null')`);
+}
+
+/**
  * Whether one element of the array equals the element as JSON does. `JSON_CONTAINS` would also
  * find it inside a nested array or object, and MariaDB has no `MEMBER OF`. The element goes through
  * `JSON_ARRAY` so a scalar and a JSON value both arrive as JSON. A value that is not an array holds
@@ -354,6 +364,7 @@ const MARIADB: Flavour = {
   jsonEquals: JsonEquals,
   json: Json,
   escapedKeys: ESCAPED_KEYS,
+  present: Present,
   number: JsonNumber,
   keepsInText: (value) => !Object.is(value, -0),
   boolean: (truth) =>

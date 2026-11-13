@@ -50,6 +50,7 @@ const MASKED_JSON: JsonSyntax = {
   parse: (text) => Marked(text),
   text: (value) => Marked(value),
   null: Marked(),
+  present: (value) => Marked(value),
   emptyObject: Marked(),
   emptyArray: Marked(),
   object: (entries) => Marked(...entries.map(([, value]) => value)),
