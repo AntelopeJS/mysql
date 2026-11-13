@@ -102,7 +102,9 @@ const ORDINAL_DIGITS = 20;
  * doubles of 17 significant digits as a neighbour. `JSON_ARRAYAGG` takes no order, so an ordered
  * array is first an object keyed by each row's ordinal at a fixed width: the server keeps an
  * object's keys sorted, and `$.*` reads its members in that order. A dedup keys each element by its
- * text instead, which keeps one element per text. An absent element is a JSON null either way.
+ * text instead, which keeps one element per text, and an absent element by the empty key, which no
+ * JSON text is, so it stays apart from a JSON null as a dedup at the top does. An absent element
+ * reads back as a JSON null either way.
  */
 function Collect(
   element: Sql,
@@ -115,7 +117,7 @@ function Collect(
   }
   const key =
     ordinal === undefined
-      ? sql`COALESCE(${textOf(element)}, 'null')`
+      ? sql`COALESCE(${textOf(element)}, '')`
       : sql`LPAD(${ordinal}, ${int(ORDINAL_DIGITS)}, '0')`;
   return sql`COALESCE(JSON_EXTRACT(JSON_OBJECTAGG(${key}, ${element}), '$.*'), JSON_ARRAY())`;
 }

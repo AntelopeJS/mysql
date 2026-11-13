@@ -96,9 +96,9 @@ function JsonNumber(value: Sql): Sql {
 }
 
 /**
- * `JSON_ARRAYAGG` takes an order on MariaDB. A dedup keeps one element per text, as MySQL's does,
- * an absent element being a JSON null; MariaDB keeps an object's keys in the order they were
- * written, so two objects that differ only in that order are both kept.
+ * `JSON_ARRAYAGG` takes an order on MariaDB. A dedup keeps one element per text and one absent
+ * element, apart from a JSON null, as MySQL's does; MariaDB keeps an object's keys in the order they
+ * were written, so two objects that differ only in that order are both kept.
  */
 function Collect(
   element: Sql,
@@ -106,8 +106,7 @@ function Collect(
   distinct: boolean,
 ): Sql {
   if (distinct) {
-    const present = sql`COALESCE(${element}, ${Json(lit("null"))})`;
-    return sql`COALESCE(JSON_ARRAYAGG(DISTINCT ${present}), JSON_ARRAY())`;
+    return sql`COALESCE(JSON_ARRAYAGG(DISTINCT ${element}), JSON_ARRAY())`;
   }
   const order = ordinal === undefined ? sql`` : sql` ORDER BY ${ordinal}`;
   return sql`COALESCE(JSON_ARRAYAGG(${element}${order}), JSON_ARRAY())`;
