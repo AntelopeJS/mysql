@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 /**
  * Compiles this folder with the `src/` it imports into a scratch folder and
- * runs `check.ts` there, passing the arguments through. Exits as the check
- * does: 0 when every rule matches the record in SKILL.md, 1 when a rule
+ * runs `check.ts` there, passing the arguments through. The scratch folder
+ * holds a `package.json` of `"type": "commonjs"`, so a `package.json` above
+ * the temp directory cannot load the CommonJS output as ES modules. Exits as
+ * the check does: 0 when every rule matches the record in SKILL.md, 1 when a rule
  * changed, 2 when the check could not run. SIGINT, SIGTERM and SIGHUP stop
  * the compile or the check and remove the scratch folder.
  */
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -72,6 +74,7 @@ function run(/** @type {string} */ command, /** @type {string[]} */ args) {
 stopOn("SIGINT", 130);
 stopOn("SIGTERM", 143);
 stopOn("SIGHUP", 129);
+writeFileSync(path.join(out, "package.json"), '{ "type": "commonjs" }\n');
 symlinkSync(path.join(root, "node_modules"), path.join(out, "node_modules"), "dir");
 const tsc = path.join(root, "node_modules", ".bin", "tsc");
 const compiled = await run(tsc, ["-p", path.join(skill, "tsconfig.json"), "--outDir", out]);
