@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.1.2
+
+[compare changes](https://github.com/AntelopeJS/mysql/compare/v0.1.1...v0.1.2)
+
+### 🔥 Performance
+
+- **dialect:** Look up an unindexed join on JSON-compared keys by a hash of each row's key on MariaDB ([#32](https://github.com/AntelopeJS/mysql/pull/32))
+
+### ❤️ Contributors
+
+- Antony Rizzitelli ([@Upd4ting](http://github.com/Upd4ting))
+
 ## v0.1.1
 
 [compare changes](https://github.com/AntelopeJS/mysql/compare/v0.1.0...v0.1.1)
