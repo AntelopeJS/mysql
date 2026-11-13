@@ -2,7 +2,11 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { Logger } from "../../logger";
 import type { DdlFailure } from "../../dialect";
-import { GetDialect, RegisterBeforeDisconnect } from "../../connection";
+import {
+  GetDialect,
+  PoolGeneration,
+  RegisterBeforeDisconnect,
+} from "../../connection";
 import { Observe } from "./observe";
 import { SchemaKey } from "./registry";
 import type { TablePlan } from "./plan";
@@ -49,6 +53,15 @@ const STOPPED_BY_SERVER: ReadonlySet<DdlFailure> = new Set([
 
 const builds = new Set<IndexBuild>();
 const phases = new Set<Promise<IndexPhaseEnd>>();
+
+/** The pool the latest disconnect ends, from the moment it stops the running index builds. */
+let ending: number | undefined;
+
+/** Whether no pool is open, or a disconnect is ending the open one, so a phase cannot run on it. */
+function IsPoolEnding(): boolean {
+  const open = PoolGeneration();
+  return open === undefined || open === ending;
+}
 
 function Describe(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
@@ -190,6 +203,9 @@ async function RunIndexPhase(
   plans: readonly TablePlan[],
   holdsUnique: () => void,
 ): Promise<"converged" | "stopped"> {
+  if (IsPoolEnding()) {
+    return "stopped";
+  }
   const build: IndexBuild = { stop: new AbortController() };
   builds.add(build);
   const isStopping = () => build.stop.signal.aborted;
@@ -292,8 +308,12 @@ export function BuildIndexes(
   return { done, unique };
 }
 
-/** Stops every running index build, killing its statement, and waits for each to give its connection back. */
+/**
+ * Stops every running index build, killing its statement, and waits for each to give its connection
+ * back. A phase that would start on the pool being ended stops before it runs.
+ */
 async function StopIndexBuilds(): Promise<void> {
+  ending = PoolGeneration();
   const running = [...builds];
   for (const build of running) {
     build.stop.abort();
