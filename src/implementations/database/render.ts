@@ -151,11 +151,16 @@ const BODY: ClauseBuilder[] = [
   GroupByClause,
 ];
 
+function LockClause(relation: Relation): Sql | undefined {
+  return relation.locked ? sql`FOR UPDATE` : undefined;
+}
+
 const CLAUSES: ClauseBuilder[] = [
   SelectClause,
   ...BODY,
   OrderByClause,
   LimitClause,
+  LockClause,
 ];
 
 function RenderClauses(relation: Relation, builders: ClauseBuilder[]): Sql {
@@ -227,7 +232,8 @@ export interface NumberedRows {
  * Numbers the relation's rows in its own order and starts a fresh relation over them, ordered by
  * that number, so a row bound the statement computes can be a comparison with it: the engine takes
  * only a constant or a bound value as a `LIMIT`. The window runs after every clause of the select
- * it is in, so the caller has wrapped a row bound, an aggregate and a dedup first.
+ * it is in, so the caller has wrapped a row bound, an aggregate and a dedup first. A block a write
+ * locks keeps its lock in the numbering select, which reads the table.
  */
 export function Numbered(
   relation: Relation,
@@ -237,7 +243,7 @@ export function Numbered(
   const terms = OrderTerms(relation);
   const order = terms === undefined ? sql`` : sql`ORDER BY ${terms}`;
   const select = sql`${SelectClause(relation)}, ROW_NUMBER() OVER (${order}) AS ${ident(column)}`;
-  const body = RenderClauses(relation, BODY);
+  const body = RenderClauses(relation, [...BODY, LockClause]);
   const numbered = Wrapped(relation, sql`(${select} ${body})`, context);
   const rowNumber = QualifiedColumn(numbered.alias, column);
   numbered.orderBy = [{ sql: rowNumber, descending: false }];

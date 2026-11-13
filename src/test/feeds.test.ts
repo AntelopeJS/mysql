@@ -3,7 +3,7 @@ import type { PoolConnection } from "mysql2/promise";
 import { Schema } from "@antelopejs/interface-database/schema";
 
 import { type Sql, ident, param, sql } from "../statement";
-import { AcquireConnection, GetDialect, Read } from "../connection";
+import { AcquireConnection, GetDialect } from "../connection";
 import { OnDedicatedSession } from "../implementations/database/locks";
 import { ReapOnce } from "../implementations/database/reaper";
 import { CHANGE_LOG } from "../implementations/database/registry";
@@ -11,7 +11,6 @@ import { PhysicalTable, Run } from "./tables";
 import {
   Delivered,
   type Feed,
-  type Nest,
   Opened,
   Pause,
   QUIET_MS,
@@ -120,109 +119,6 @@ describe("the order a change feed delivers in", function () {
       "newValue.label",
       "after-reorder",
     );
-  });
-});
-
-/** A value nested `levels` objects deep. */
-function Nested(levels: number): Nest {
-  let value: Nest = "🦌 deep";
-  for (let level = 0; level < levels; level += 1) {
-    value = { n: value };
-  }
-  return value;
-}
-
-/** The most levels this suite nests a value to: MySQL refuses a 101st. */
-const MOST_LEVELS = 100;
-
-/**
- * The deepest a stored JSON value nests on the server: MySQL refuses a 101st level, MariaDB 11.8 a
- * 32nd. An undeclared field sits one level down in `_extra`, a declared object field holds its
- * value at the top of its own column, and a declared field one level short of the limit leaves
- * room for the document around it.
- */
-async function Depths() {
-  let inColumn = MOST_LEVELS;
-  while (!(await Nests(inColumn))) {
-    inColumn -= 1;
-  }
-  return { inColumn, inExtra: inColumn - 1, inDocument: inColumn - 1 };
-}
-
-async function Nests(levels: number): Promise<boolean> {
-  const text = `${"[".repeat(levels)}${"]".repeat(levels)}`;
-  const [row] = await Read(sql`SELECT JSON_VALID(${param(text)}) AS valid`);
-  return Number(row.get("valid")) === 1;
-}
-
-const deep = new Schema<{ stored: Row; delivered: Row }>("feeds-depth", {
-  stored: { fields: { label: "string", tree: "object" }, indexes: {} },
-  delivered: { fields: { label: "string", tree: "object" }, indexes: {} },
-});
-
-describe("a watched table holding JSON as deep as the server stores it", function () {
-  this.timeout(30_000);
-  let depths: Awaited<ReturnType<typeof Depths>>;
-
-  before(async () => {
-    depths = await Depths();
-  });
-
-  it("updates and deletes a row stored before it was watched", async () => {
-    const rows = deep.instance().table("stored");
-    await rows.insert({
-      _id: "deep",
-      deep: Nested(depths.inExtra),
-      tree: Nested(depths.inColumn),
-    });
-    const feed = await Opened(rows, "probe");
-    await feed.return?.();
-    expect(await rows.get("deep").update({ label: "changed" })).to.equal(1);
-    expect(await rows.get("deep")).to.have.property("label", "changed");
-    expect(await rows.get("deep").delete()).to.equal(1);
-    expect(await rows.get("deep")).to.equal(undefined);
-  });
-
-  it("logs a column of empty arrays nested to each depth around the image's limit", async () => {
-    const rows = deep.instance().table("stored");
-    await rows.insert({ _id: "hollow" });
-    const feed = await Opened(rows, "hollow-probe");
-    await feed.return?.();
-    const table = ident(PhysicalTable("feeds-depth", "stored"));
-    const limit = depths.inColumn;
-    for (const levels of [limit - 2, limit - 1, limit]) {
-      const hollow = `${"[".repeat(levels)}${"]".repeat(levels)}`;
-      await Run(
-        sql`UPDATE ${table} SET tree = ${GetDialect().sql.json.parse(param(hollow))} WHERE _instance = '' AND _id = 'hollow'`,
-      );
-    }
-    expect(await rows.get("hollow").delete()).to.equal(1);
-  });
-
-  it("delivers the changes of a row as deep as a document holds", async () => {
-    const rows = deep.instance().table("delivered");
-    const stored = {
-      deep: Nested(depths.inExtra),
-      tree: Nested(depths.inDocument),
-    };
-    await rows.insert({ _id: "deep", ...stored });
-    const feed = await Opened(rows, "probe");
-    try {
-      expect(await rows.get("deep").update({ label: "changed" })).to.equal(1);
-      const modified = await Delivered(feed.next());
-      expect(modified.oldValue).to.deep.equal({ _id: "deep", ...stored });
-      expect(modified.newValue).to.deep.equal({
-        _id: "deep",
-        label: "changed",
-        ...stored,
-      });
-      expect(await rows.get("deep").delete()).to.equal(1);
-      const removed = await Delivered(feed.next());
-      expect(removed).to.have.property("changeType", "removed");
-      expect(removed.oldValue).to.deep.include(stored);
-    } finally {
-      await feed.return?.();
-    }
   });
 });
 

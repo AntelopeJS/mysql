@@ -21,7 +21,7 @@ import {
   type WriteTarget,
   WriteTargetOf,
 } from "./writes-shared";
-import { CompileWrite, SplitWrite, type WriteSplit } from "./writes";
+import { CompileWrite, SplitWrite, type WriteSplit, WriteRead } from "./writes";
 import { ATOMIC_MUTATION, ExecuteAtomicWrite } from "./writes-atomic";
 import { InTransaction } from "./transaction";
 import { ID_COLUMN, OptionsOf } from "./utils";
@@ -243,7 +243,11 @@ function CompileQuery(
   }
   const root = BuildRoot(stages, context);
   const split = SplitWrite(root.rest);
-  const relation = ApplyStages(root.relation, split.pipeline, context);
+  const relation = ApplyStages(
+    WriteRead(root.relation, split),
+    split.pipeline,
+    context,
+  );
   return { context, root, split, relation };
 }
 

@@ -5,6 +5,8 @@ covers:
   - src/dialect/types.ts
   - src/dialect/mysql/index.ts
   - src/dialect/mysql/session.ts
+  - src/dialect/mysql/flavour.ts
+  - src/dialect/mariadb/**
 docs:
   - README.md
   - docs/configuration.md

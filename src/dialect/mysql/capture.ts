@@ -76,14 +76,33 @@ function CurrentLogId(tables: ChangeLogTables): Sql {
   return sql`(SELECT LEFT(SHA2(CONCAT_WS(':', TABLE_COMMENT, UNIX_TIMESTAMP(CREATE_TIME)), 256), ${int(LOG_ID_CHARS)}) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${lit(tables.log)})`;
 }
 
+/** The `seq` of the log's birth row, below every `seq` the clock hands out. */
+const BIRTH_SEQ = sql`0`;
+
+/**
+ * Writes the log's birth row if it has none: a row no table logs, under a `seq` no pass hands out
+ * or reaps, holding a marker of its own. Only a `TRUNCATE` or a hand-made delete takes it away.
+ */
+function Birth(tables: ChangeLogTables): Sql {
+  return sql`INSERT IGNORE INTO ${ident(tables.log)} (${SEQ}, ${TABLE}, ${INSTANCE}, ${OPERATION}) VALUES (${BIRTH_SEQ}, '', UUID(), 'born')`;
+}
+
+/**
+ * The epoch a feed reads: the clock's own, the identity of the log as it stands, and the marker of
+ * its birth row. A log created again or altered has another identity, and an emptied log has lost
+ * its birth row, so each reads as another epoch, and a feed that opened before it ends.
+ */
+function LogEpoch(tables: ChangeLogTables, clockEpoch: Sql): Sql {
+  const birth = sql`(SELECT b.${INSTANCE} FROM ${ident(tables.log)} AS b WHERE b.${SEQ} = ${BIRTH_SEQ})`;
+  return sql`CONCAT_WS(':', ${clockEpoch}, ${CurrentLogId(tables)}, ${birth})`;
+}
+
 /**
  * The clock is seeded with `INSERT IGNORE`, which only reads the row it finds: an upsert would take
  * that row's lock shared and then exclusive, and two registrations doing so at once deadlock.
  *
  * The log carries an identity, from a comment chosen when the module creates it and the time the
- * server created it at, and the clock records the identity of the log it numbers. A log dropped and
- * created again has another, and the first bootstrap that sees it renews the epoch, once: the
- * update matches only while the two differ.
+ * server created or last altered it at, and a birth row. A feed reads both with every epoch.
  */
 function Bootstrap(
   flavour: Flavour,
@@ -123,7 +142,7 @@ function Bootstrap(
     sql`CREATE TABLE IF NOT EXISTS ${ident(tables.clock)} (${join(clock, COMMA)}) ${options}`,
     sql`CREATE TABLE IF NOT EXISTS ${ident(tables.reaped)} (${join(reaped, COMMA)}) ${options}`,
     sql`INSERT IGNORE INTO ${ident(tables.clock)} (${ID}, ${NEXT_SEQ}, ${EPOCH}, ${LOG_ID}) VALUES (${CLOCK_ROW}, 1, UUID(), ${current})`,
-    sql`UPDATE ${ident(tables.clock)} SET ${EPOCH} = UUID(), ${LOG_ID} = ${current} WHERE ${ID} = ${CLOCK_ROW} AND ${LOG_ID} <> ${current}`,
+    Birth(tables),
   ];
 }
 
@@ -251,6 +270,21 @@ function Side(alias: Sql, image: string, statement: Sql): Sql {
 }
 
 /**
+ * Whether either side of the polled event passed the feed's stages. MySQL builds a side's document
+ * whenever it is read, and fails the statement on one nested too deep, so a side is read only for
+ * an event the feed delivers.
+ */
+function Admitted(
+  alias: Sql,
+  tables: ChangeLogTables,
+  request: PollRequest,
+): Sql {
+  const old = Side(alias, tables.oldImage, request.matches.old);
+  const now = Side(alias, tables.newImage, request.matches.new);
+  return sql`(COALESCE(${old}, FALSE) OR COALESCE(${now}, FALSE))`;
+}
+
+/**
  * The clock's row, then the events up to its frontier. Where the engine has no lateral join, the
  * events read the frontier from the clock themselves, which one statement reads at one point.
  */
@@ -260,16 +294,19 @@ function Poll(
   request: PollRequest,
 ): Sql {
   const ev = ident(request.alias);
+  const admitted = Admitted(ev, tables, request);
+  const side = (image: string, statement: Sql) =>
+    sql`CASE WHEN ${admitted} THEN ${Side(ev, image, statement)} END`;
   const table = param(request.table);
   const scope =
     request.instance === undefined
       ? sql``
       : sql` AND ${ev}.${INSTANCE} = ${param(request.instance)}`;
-  const header = sql`SELECT k.${EPOCH} AS epoch, k.${NEXT_SEQ} - 1 AS frontier, (SELECT r.${HIGH_WATER} FROM ${ident(tables.reaped)} AS r WHERE r.${TABLE} = ${table}) AS high_water FROM ${ident(tables.clock)} AS k WHERE k.${ID} = ${CLOCK_ROW}`;
+  const header = sql`SELECT ${LogEpoch(tables, sql`k.${EPOCH}`)} AS epoch, k.${NEXT_SEQ} - 1 AS frontier, (SELECT r.${HIGH_WATER} FROM ${ident(tables.reaped)} AS r WHERE r.${TABLE} = ${table}) AS high_water FROM ${ident(tables.clock)} AS k WHERE k.${ID} = ${CLOCK_ROW}`;
   const frontier = flavour.lateral
     ? sql`c.frontier`
     : sql`(SELECT f.${NEXT_SEQ} - 1 FROM ${ident(tables.clock)} AS f WHERE f.${ID} = ${CLOCK_ROW})`;
-  const events = sql`SELECT ${ev}.${SEQ} AS seq, ${ev}.${OPERATION} AS op, ${Side(ev, tables.oldImage, request.old)} AS old_side, ${Side(ev, tables.newImage, request.new)} AS new_side FROM ${ident(tables.log)} AS ${ev} WHERE ${ev}.${TABLE} = ${table}${scope} AND ${ev}.${SEQ} > ${Seq(request.after)} AND ${ev}.${SEQ} <= ${frontier} ORDER BY ${ev}.${SEQ} LIMIT ${int(request.limit)}`;
+  const events = sql`SELECT ${ev}.${SEQ} AS seq, ${ev}.${OPERATION} AS op, ${side(tables.oldImage, request.old)} AS old_side, ${side(tables.newImage, request.new)} AS new_side FROM ${ident(tables.log)} AS ${ev} WHERE ${ev}.${TABLE} = ${table}${scope} AND ${ev}.${SEQ} > ${Seq(request.after)} AND ${ev}.${SEQ} <= ${frontier} ORDER BY ${ev}.${SEQ} LIMIT ${int(request.limit)}`;
   const join = flavour.lateral ? sql`LEFT JOIN LATERAL` : sql`LEFT JOIN`;
   return sql`SELECT c.epoch AS epoch, c.frontier AS frontier, c.high_water AS high_water, e.seq AS seq, e.op AS op, e.old_side AS old_side, e.new_side AS new_side FROM (${header}) AS c ${join} (${events}) AS e ON TRUE ORDER BY e.seq`;
 }
@@ -302,6 +339,11 @@ function TriggerRefusal(error: Error): string | undefined {
   return refused ? TRIGGER_REFUSAL : undefined;
 }
 
+/** The numbered rows a reap through `through` takes, which never include the birth row. */
+function Reaped(through: bigint): Sql {
+  return sql`${SEQ} > ${BIRTH_SEQ} AND ${SEQ} <= ${Seq(through)}`;
+}
+
 /** Microseconds in a millisecond, which `INTERVAL` takes the retention in. */
 const MICROSECONDS_PER_MS = 1000;
 
@@ -321,6 +363,8 @@ export function CaptureOf(flavour: Flavour, syntax: SqlSyntax): CaptureSyntax {
       sql`CREATE TRIGGER ${ident(name)} AFTER ${EVENTS[trigger.operation]} ON ${ident(table)} FOR EACH ROW ${trigger.body}`,
     dropTrigger: (name) => sql`DROP TRIGGER IF EXISTS ${ident(name)}`,
     triggerRefusal: TriggerRefusal,
+    tooDeep: (error) =>
+      "errno" in error && error.errno === flavour.tooDeepErrno,
     lockTable: (table) => sql`LOCK TABLES ${ident(table)} WRITE`,
     unlockTables: sql`UNLOCK TABLES`,
     markMoves: sql`SET ${MOVING} = 1`,
@@ -335,8 +379,9 @@ export function CaptureOf(flavour: Flavour, syntax: SqlSyntax): CaptureSyntax {
     stamp: Stamp,
     advance: (tables, count) =>
       sql`UPDATE ${ident(tables.clock)} SET ${NEXT_SEQ} = ${NEXT_SEQ} + ${int(count)} WHERE ${ID} = ${CLOCK_ROW}`,
+    birth: Birth,
     frontier: (tables) =>
-      sql`SELECT ${EPOCH} AS epoch, ${NEXT_SEQ} - 1 AS frontier, EXISTS (SELECT 1 FROM ${ident(tables.log)} WHERE ${SEQ} IS NULL) AS pending FROM ${ident(tables.clock)} WHERE ${ID} = ${CLOCK_ROW}`,
+      sql`SELECT ${LogEpoch(tables, EPOCH)} AS epoch, ${NEXT_SEQ} - 1 AS frontier, EXISTS (SELECT 1 FROM ${ident(tables.log)} WHERE ${SEQ} IS NULL) AS pending FROM ${ident(tables.clock)} WHERE ${ID} = ${CLOCK_ROW}`,
     changedTables: (tables, after) =>
       sql`SELECT DISTINCT ${TABLE} AS tbl FROM ${ident(tables.log)} WHERE ${SEQ} > ${Seq(after)}`,
     poll: (tables, request) => Poll(flavour, tables, request),
@@ -344,9 +389,9 @@ export function CaptureOf(flavour: Flavour, syntax: SqlSyntax): CaptureSyntax {
       sql`SELECT MAX(b.${SEQ}) AS through FROM (SELECT ${SEQ} FROM ${ident(tables.log)} WHERE ${SEQUENCED_AT} < UTC_TIMESTAMP(6) - INTERVAL ${int(retentionMs * MICROSECONDS_PER_MS)} MICROSECOND ORDER BY ${SEQUENCED_AT} LIMIT ${int(limit)}) AS b`,
     raiseReaped: (tables, through) => {
       const reaped = ident(tables.reaped);
-      return sql`INSERT INTO ${reaped} (${TABLE}, ${HIGH_WATER}) SELECT d.${TABLE}, d.${HIGH_WATER} FROM (SELECT ${TABLE}, MAX(${SEQ}) AS ${HIGH_WATER} FROM ${ident(tables.log)} WHERE ${SEQ} <= ${Seq(through)} GROUP BY ${TABLE}) AS d ON DUPLICATE KEY UPDATE ${HIGH_WATER} = GREATEST(${reaped}.${HIGH_WATER}, d.${HIGH_WATER})`;
+      return sql`INSERT INTO ${reaped} (${TABLE}, ${HIGH_WATER}) SELECT d.${TABLE}, d.${HIGH_WATER} FROM (SELECT ${TABLE}, MAX(${SEQ}) AS ${HIGH_WATER} FROM ${ident(tables.log)} WHERE ${Reaped(through)} GROUP BY ${TABLE}) AS d ON DUPLICATE KEY UPDATE ${HIGH_WATER} = GREATEST(${reaped}.${HIGH_WATER}, d.${HIGH_WATER})`;
     },
     reap: (tables, through) =>
-      sql`DELETE FROM ${ident(tables.log)} WHERE ${SEQ} <= ${Seq(through)}`,
+      sql`DELETE FROM ${ident(tables.log)} WHERE ${Reaped(through)}`,
   };
 }

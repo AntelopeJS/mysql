@@ -9,7 +9,7 @@ import { DecodingContext } from "./context";
 import { CompileSubquery } from "./subquery";
 import { QualifiedColumn } from "./sql";
 import { CompileExpression } from "./expression";
-import { OPAQUE, type SqlType } from "./types";
+import { BOOL, OPAQUE, type SqlType } from "./types";
 import { ApplyStages, CompileRelation, IsPipelineStage } from "./pipeline";
 import {
   CurrentValue,
@@ -55,11 +55,18 @@ const ACCEPTED = new Set(FEED_STAGES);
 /**
  * What the stages compile to, one statement per side of an event. Each answers one row whose one
  * column is `{doc, matched}`: what the side projects, and whether it passed the stages' predicates.
+ * `matches` answers `matched` alone, without building the document.
  */
 export interface FeedPlan {
   readonly old: Sql;
   readonly new: Sql;
+  readonly matches: { readonly old: Sql; readonly new: Sql };
   readonly type: SqlType;
+  /**
+   * Whether a side's document is the row itself, which no stage projects. A row always builds a
+   * document, so a side answering none is one the server could not build.
+   */
+  readonly whole: boolean;
 }
 
 function IsKnownStage(stage: QueryStage): boolean {
@@ -114,6 +121,15 @@ function Side(folded: Relation): Relation {
       ]),
       type: OPAQUE,
     },
+  };
+}
+
+/** One side's select list as `Side` reads it, with `matched` alone as a SQL boolean. */
+function Match(folded: Relation): Relation {
+  return {
+    ...folded,
+    where: [],
+    projection: { sql: Matches(folded.where), type: BOOL },
   };
 }
 
@@ -177,6 +193,8 @@ export function CompileFeed(
   return {
     old: Render(Side(before)),
     new: Render(Side(after)),
+    matches: { old: Render(Match(before)), new: Render(Match(after)) },
     type: CurrentValue(before).type,
+    whole: before.projection === undefined,
   };
 }

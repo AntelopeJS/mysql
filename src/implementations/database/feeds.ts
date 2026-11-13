@@ -10,13 +10,16 @@ import {
   Read,
   RegisterBeforeDisconnect,
   type Row,
+  Write,
 } from "../../connection";
 import type { TablePlan } from "./plan";
+import type { TableModel } from "./fields";
 import type { RowObject } from "./result";
 import type { TableOrigin } from "./relation";
 import { WaitForSchemaReady } from "./schema";
 import { RegisteredOrigin } from "./selection";
 import { EnsureTriggers } from "./change-log";
+import { CHANGE_LOG } from "./registry";
 import { OnDedicatedSession } from "./locks";
 import { SubscribeToChanges } from "./change-loop";
 import { type Frontier, ReadFrontier, Sequence } from "./sequencer";
@@ -33,12 +36,14 @@ import { IsString } from "./guards";
 /**
  * Why a feed stopped, and therefore what a read arriving after it is told.
  * `lapsed` and `restarted` are losses and raise, naming the feed and the range that went;
- * `closed` is an ending and resolves `done`.
+ * `tooDeep` raises, naming the last `seq` the feed got past; `closed` is an ending and resolves
+ * `done`.
  */
 type FeedEnd =
   | { reason: "closed" }
   | { reason: "restarted"; target: FeedTarget }
-  | { reason: "lapsed"; target: FeedTarget; gap: FeedGap };
+  | { reason: "lapsed"; target: FeedTarget; gap: FeedGap }
+  | { reason: "tooDeep"; target: FeedTarget; after: bigint };
 
 const CLOSED: FeedEnd = { reason: "closed" };
 
@@ -49,6 +54,9 @@ const EMPTY = 0;
  * every row of its table, so this only bounds what a lost wake could cost.
  */
 const FALLBACK_WAIT_MS = 5000;
+
+/** The events a narrow poll reads, so the one it fails on is the one too deep to build. */
+const NARROW_LIMIT = 1;
 
 const POLL_FAILED = "a MySQL change feed's poll failed and will be retried";
 
@@ -76,7 +84,10 @@ export interface FeedEnvironment {
 const LIVE: FeedEnvironment = {
   dialect: GetDialect,
   origin: RegisteredOrigin,
-  install: EnsureTriggers,
+  install: async (plan) => {
+    await EnsureTriggers(plan);
+    await Write(GetDialect().capture.birth(CHANGE_LOG));
+  },
   open: () =>
     OnDedicatedSession(async (session) => {
       const dialect = GetDialect();
@@ -97,6 +108,8 @@ interface FeedState {
   chain: Promise<unknown>;
   target?: FeedTarget;
   plan?: FeedPlan;
+  /** The declaration `plan` was compiled from, which a registration of the table replaces. */
+  model?: TableModel;
   watermark: bigint;
   epoch?: string;
   buffer: RowObject[];
@@ -104,6 +117,11 @@ interface FeedState {
   wake?: () => void;
   woken: boolean;
   full: boolean;
+  /**
+   * Whether the feed polls one event at a time, as it does from the first poll that failed on a
+   * document deeper than the server builds, so it delivers every event before that one.
+   */
+  narrow: boolean;
   ending: Promise<void>;
   endNow: () => void;
   unsubscribe?: () => void;
@@ -114,10 +132,15 @@ interface FeedState {
 interface OpenFeed extends FeedState {
   target: FeedTarget;
   plan: FeedPlan;
+  model: TableModel;
 }
 
 function IsOpen(state: FeedState): state is OpenFeed {
-  return state.target !== undefined && state.plan !== undefined;
+  return (
+    state.target !== undefined &&
+    state.plan !== undefined &&
+    state.model !== undefined
+  );
 }
 
 /**
@@ -142,8 +165,12 @@ function LapsedMessage(target: FeedTarget, gap: FeedGap): string {
   return `change feed on '${Named(target)}' fell behind the retention window (changeRetentionMs): events ${gap.from} through ${gap.to} were reaped before it read them, so it cannot continue; re-open the feed`;
 }
 
+function TooDeepMessage(target: FeedTarget, after: bigint): string {
+  return `change feed on '${Named(target)}' cannot deliver its next event after seq ${after}: the event's document nests deeper than the server builds a JSON document (100 levels on MySQL), so it cannot continue; re-open the feed to read on from the newest event`;
+}
+
 function RestartedMessage(target: FeedTarget): string {
-  return `change feed on '${Named(target)}' cannot continue: the change log was recreated, so every event it had not read is gone; re-open the feed`;
+  return `change feed on '${Named(target)}' cannot continue: the change log was recreated, altered or emptied, so the events it had not read may be gone; re-open the feed`;
 }
 
 function Registered(reqId: number, env?: FeedEnvironment): FeedState {
@@ -161,6 +188,7 @@ function Registered(reqId: number, env?: FeedEnvironment): FeedState {
     buffer: [],
     woken: false,
     full: false,
+    narrow: false,
     ending,
     endNow,
     env: env ?? LIVE,
@@ -248,11 +276,25 @@ function Delivered(event: LoggedEvent): RowObject {
 }
 
 /**
+ * Whether the server answered no document for a side of an event the feed delivers. Only a feed
+ * whose documents are whole rows can tell: MariaDB 11.8 answers SQL NULL for a document nested
+ * deeper than it builds, and a row is never null.
+ */
+function Unbuilt(plan: FeedPlan, event: LoggedEvent): boolean {
+  return (
+    plan.whole &&
+    Admitted(event) &&
+    (event.old?.doc === null || event.new?.doc === null)
+  );
+}
+
+/**
  * One poll: read what was numbered, check nothing was lost, and buffer what arrived.
  *
  * A batch that was not full moves the watermark to the frontier the same statement read, so a feed
  * whose table is quiet moves with the log. A full one moves it to the last row it scanned, admitted
- * or not, and the next poll reads on from there.
+ * or not, and the next poll reads on from there. A batch that reaches an event the server built no
+ * document for is cut before it, so the next poll starts at that event and ends the feed.
  */
 async function Poll(
   reqId: number,
@@ -260,7 +302,7 @@ async function Poll(
   options: ResolvedOptions,
 ): Promise<void> {
   const { target, plan } = state;
-  const limit = options.changeBatchSize;
+  const limit = state.narrow ? NARROW_LIMIT : options.changeBatchSize;
   const statement = PollStatement(
     state.env.dialect(),
     plan,
@@ -279,18 +321,45 @@ async function Poll(
     Retire(reqId, state, { reason: "lapsed", target, gap });
     return;
   }
-  state.full = answer.scanned.length >= limit;
-  for (const event of answer.scanned) {
+  const unbuilt = answer.scanned.findIndex((event) => Unbuilt(plan, event));
+  if (unbuilt === 0) {
+    Retire(reqId, state, { reason: "tooDeep", target, after: state.watermark });
+    return;
+  }
+  const scanned =
+    unbuilt === -1 ? answer.scanned : answer.scanned.slice(0, unbuilt);
+  state.full = unbuilt !== -1 || scanned.length >= limit;
+  for (const event of scanned) {
     if (Admitted(event)) {
       state.buffer.push(Delivered(event));
     }
   }
-  const last = answer.scanned.at(-1);
+  const last = scanned.at(-1);
   if (state.full && last) {
     state.watermark = last.seq;
   } else if (answer.frontier > state.watermark) {
     state.watermark = answer.frontier;
   }
+}
+
+/**
+ * Polls with the table's declaration as it is registered now. A registration of the table since the
+ * plan was compiled gives it another model, and the stages are compiled again against it, so a field
+ * declared since then is read from its column once values move there.
+ */
+async function Polled(
+  reqId: number,
+  state: OpenFeed,
+  stages: QueryStage[],
+  options: ResolvedOptions,
+): Promise<void> {
+  const { schemaId, tableId } = state.target;
+  const origin = state.env.origin(schemaId, tableId);
+  if (origin.model !== state.model) {
+    state.plan = CompileFeed(Between(stages), origin, state.env.dialect());
+    state.model = origin.model;
+  }
+  return Poll(reqId, state, options);
 }
 
 const ROOT_LENGTH = 3;
@@ -350,6 +419,7 @@ async function Open(state: FeedState, stages: QueryStage[]): Promise<void> {
   };
   state.target = target;
   state.plan = plan;
+  state.model = origin.model;
   state.epoch = opened.epoch;
   state.watermark = opened.frontier;
   if (!state.end) {
@@ -357,15 +427,36 @@ async function Open(state: FeedState, stages: QueryStage[]): Promise<void> {
   }
 }
 
-function Ended(end: FeedEnd): IteratorResult<RowObject, void> {
-  if (end.reason === "closed") {
-    return { done: true, value: undefined };
+/**
+ * Answers a poll that failed on a document deeper than the server builds. A poll of a batch says
+ * only that some event in it is too deep, so the feed reads on one event at a time, at once, and
+ * delivers every event before that one. A poll of one event names it, and ends the feed after the
+ * last event it got past.
+ */
+function Deepened(reqId: number, state: OpenFeed): void {
+  if (!state.narrow) {
+    state.narrow = true;
+    state.full = true;
+    return;
   }
-  throw new Error(
-    end.reason === "lapsed"
-      ? LapsedMessage(end.target, end.gap)
-      : RestartedMessage(end.target),
-  );
+  Retire(reqId, state, {
+    reason: "tooDeep",
+    target: state.target,
+    after: state.watermark,
+  });
+}
+
+function Ended(end: FeedEnd): IteratorResult<RowObject, void> {
+  switch (end.reason) {
+    case "closed":
+      return { done: true, value: undefined };
+    case "lapsed":
+      throw new Error(LapsedMessage(end.target, end.gap));
+    case "restarted":
+      throw new Error(RestartedMessage(end.target));
+    case "tooDeep":
+      throw new Error(TooDeepMessage(end.target, end.after));
+  }
 }
 
 /**
@@ -394,9 +485,12 @@ async function Advance(
       continue;
     }
     state.woken = false;
+    const open = state;
     await Promise.race([
-      Poll(reqId, state, options).catch((err: unknown) => {
-        if (!state.end) {
+      Polled(reqId, open, stages, options).catch((err: unknown) => {
+        if (err instanceof Error && open.env.dialect().capture.tooDeep(err)) {
+          Deepened(reqId, open);
+        } else if (!open.end) {
           Logger.Warn(POLL_FAILED, err);
         }
       }),

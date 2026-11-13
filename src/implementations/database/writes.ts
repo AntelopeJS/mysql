@@ -10,6 +10,7 @@ import type {
   WriteStatement,
   WriteTarget,
 } from "./writes-shared";
+import { type Relation, RequireOrigin } from "./relation";
 
 /**
  * One terminal stage, and whether it reads the rows it is applied to: a write that ignores the
@@ -25,6 +26,19 @@ interface WriteSpec {
 export interface WriteSplit {
   pipeline: QueryStage[];
   write?: QueryStage;
+}
+
+/**
+ * The table read a query's stages fold from. An owned table's write locks each row exclusively as
+ * its read reaches it, in the block that reads the table however deep a stage nests that block: a
+ * read nested in a write statement otherwise takes shared locks, and two writers that each hold one
+ * and wait to upgrade it deadlock however often they run again.
+ */
+export function WriteRead(table: Relation, split: WriteSplit): Relation {
+  const owned = !RequireOrigin(table).model.external;
+  return split.write !== undefined && owned
+    ? { ...table, locked: true }
+    : table;
 }
 
 /** The terminal stages, each compiling a statement that is not a `SELECT`. */

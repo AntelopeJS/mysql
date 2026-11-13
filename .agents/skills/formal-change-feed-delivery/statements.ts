@@ -33,6 +33,19 @@ const CLOCK = "`__antelope_change_clock`";
 const REAPED = "`__antelope_change_reaped`";
 const BIGINT_ARG = "CAST\\(\\? AS UNSIGNED\\)";
 
+/**
+ * The epoch a feed reads, around the clock's own epoch column: the log's catalog identity and its
+ * birth row. Neither changes in a scenario, so the model answers the clock's epoch for it.
+ */
+function Epoch(clockEpoch: string): string {
+  const identity = `\\(SELECT LEFT\\(SHA2\\(CONCAT_WS\\(':', TABLE_COMMENT, UNIX_TIMESTAMP\\(CREATE_TIME\\)\\), 256\\), 36\\) FROM information_schema\\.TABLES WHERE TABLE_SCHEMA = DATABASE\\(\\) AND TABLE_NAME = '__antelope_changes'\\)`;
+  const birth = `\\(SELECT b\\.\`inst\` FROM ${LOG} AS b WHERE b\\.\`seq\` = 0\\)`;
+  return `CONCAT_WS\\(':', ${clockEpoch}, ${identity}, ${birth}\\)`;
+}
+
+/** The seq range a reap through a bound seq takes, past the birth row. */
+const REAPED_RANGE = `\`seq\` > 0 AND \`seq\` <= ${BIGINT_ARG}`;
+
 /** One pattern of the table: the statement it recognises and the step it becomes. */
 type Parser = (match: RegExpExecArray, bound: Bound, db: InnoDb, session: SessionState) => Op;
 
@@ -73,7 +86,7 @@ const STATEMENTS: readonly (readonly [RegExp, Parser])[] = [
   ],
   [
     new RegExp(
-      `^SELECT \`epoch\` AS epoch, \`next_seq\` - 1 AS frontier, EXISTS \\(SELECT 1 FROM ${LOG} WHERE \`seq\` IS NULL\\) AS pending FROM ${CLOCK} WHERE \`id\` = 1$`,
+      `^SELECT ${Epoch("`epoch`")} AS epoch, \`next_seq\` - 1 AS frontier, EXISTS \\(SELECT 1 FROM ${LOG} WHERE \`seq\` IS NULL\\) AS pending FROM ${CLOCK} WHERE \`id\` = 1$`,
     ),
     (_, __, db) => frontier(db),
   ],
@@ -85,12 +98,12 @@ const STATEMENTS: readonly (readonly [RegExp, Parser])[] = [
   ],
   [
     new RegExp(
-      `^INSERT INTO ${REAPED} \\(\`tbl\`, \`high_water\`\\) SELECT d\\.\`tbl\`, d\\.\`high_water\` FROM \\(SELECT \`tbl\`, MAX\\(\`seq\`\\) AS \`high_water\` FROM ${LOG} WHERE \`seq\` <= ${BIGINT_ARG} GROUP BY \`tbl\`\\) AS d ON DUPLICATE KEY UPDATE \`high_water\` = GREATEST\\(${REAPED}\\.\`high_water\`, d\\.\`high_water\`\\)$`,
+      `^INSERT INTO ${REAPED} \\(\`tbl\`, \`high_water\`\\) SELECT d\\.\`tbl\`, d\\.\`high_water\` FROM \\(SELECT \`tbl\`, MAX\\(\`seq\`\\) AS \`high_water\` FROM ${LOG} WHERE ${REAPED_RANGE} GROUP BY \`tbl\`\\) AS d ON DUPLICATE KEY UPDATE \`high_water\` = GREATEST\\(${REAPED}\\.\`high_water\`, d\\.\`high_water\`\\)$`,
     ),
     (_, bound, db) => raiseReaped(db, BigInt(text(bound.args[0], "the reaped seq"))),
   ],
   [
-    new RegExp(`^DELETE FROM ${LOG} WHERE \`seq\` <= ${BIGINT_ARG}$`),
+    new RegExp(`^DELETE FROM ${LOG} WHERE ${REAPED_RANGE}$`),
     (_, bound, db) => reap(db, BigInt(text(bound.args[0], "the reaped seq"))),
   ],
   [
@@ -106,7 +119,7 @@ const STATEMENTS: readonly (readonly [RegExp, Parser])[] = [
   [/^SELECT RELEASE_LOCK\('([^']+)'\) AS released$/, (match, _, db, session) => releaseLock(db, session, match[1] ?? "")],
   [
     new RegExp(
-      `^SELECT c\\.epoch AS epoch, c\\.frontier AS frontier, c\\.high_water AS high_water, e\\.seq AS seq, e\\.op AS op, e\\.old_side AS old_side, e\\.new_side AS new_side FROM \\(SELECT k\\.\`epoch\` AS epoch, k\\.\`next_seq\` - 1 AS frontier, \\(SELECT r\\.\`high_water\` FROM ${REAPED} AS r WHERE r\\.\`tbl\` = \\?\\) AS high_water FROM ${CLOCK} AS k WHERE k\\.\`id\` = 1\\) AS c LEFT JOIN LATERAL \\(SELECT \`ev\`\\.\`seq\` AS seq, \`ev\`\\.\`op\` AS op, CASE WHEN \`ev\`\\.\`old_row\` IS NOT NULL THEN \\(.*\\) END AS old_side, CASE WHEN \`ev\`\\.\`new_row\` IS NOT NULL THEN \\(.*\\) END AS new_side FROM ${LOG} AS \`ev\` WHERE \`ev\`\\.\`tbl\` = \\?( AND \`ev\`\\.\`inst\` = \\?)? AND \`ev\`\\.\`seq\` > ${BIGINT_ARG} AND \`ev\`\\.\`seq\` <= c\\.frontier ORDER BY \`ev\`\\.\`seq\` LIMIT (\\d+)\\) AS e ON TRUE ORDER BY e\\.seq$`,
+      `^SELECT c\\.epoch AS epoch, c\\.frontier AS frontier, c\\.high_water AS high_water, e\\.seq AS seq, e\\.op AS op, e\\.old_side AS old_side, e\\.new_side AS new_side FROM \\(SELECT ${Epoch("k\\.`epoch`")} AS epoch, k\\.\`next_seq\` - 1 AS frontier, \\(SELECT r\\.\`high_water\` FROM ${REAPED} AS r WHERE r\\.\`tbl\` = \\?\\) AS high_water FROM ${CLOCK} AS k WHERE k\\.\`id\` = 1\\) AS c LEFT JOIN LATERAL \\(SELECT \`ev\`\\.\`seq\` AS seq, \`ev\`\\.\`op\` AS op, CASE WHEN \\(.*\\) THEN CASE WHEN \`ev\`\\.\`old_row\` IS NOT NULL THEN \\(.*\\) END END AS old_side, CASE WHEN \\(.*\\) THEN CASE WHEN \`ev\`\\.\`new_row\` IS NOT NULL THEN \\(.*\\) END END AS new_side FROM ${LOG} AS \`ev\` WHERE \`ev\`\\.\`tbl\` = \\?( AND \`ev\`\\.\`inst\` = \\?)? AND \`ev\`\\.\`seq\` > ${BIGINT_ARG} AND \`ev\`\\.\`seq\` <= c\\.frontier ORDER BY \`ev\`\\.\`seq\` LIMIT (\\d+)\\) AS e ON TRUE ORDER BY e\\.seq$`,
       "s",
     ),
     (match, bound, db) => poll(db, bound.args, match[1] !== undefined, Number(match[2])),

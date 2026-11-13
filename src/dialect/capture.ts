@@ -43,6 +43,8 @@ export interface PollRequest {
   /** Each side: a statement answering one row of one JSON column, `{doc, matched}`. */
   readonly old: Sql;
   readonly new: Sql;
+  /** Each side's `matched` alone: a statement answering one row of one boolean column. */
+  readonly matches: { readonly old: Sql; readonly new: Sql };
 }
 
 /**
@@ -56,11 +58,12 @@ export interface PollRequest {
  */
 export interface CaptureSyntax {
   /**
-   * Creates the log, the clock and the reaped table where absent, and seeds the clock once. A log
-   * created now is named `logId`, and the clock renews its epoch whenever the log it numbers is not
-   * the one it last saw, so a log created again ends every feed that read the one before.
+   * Creates the log, the clock and the reaped table where absent, seeds the clock once, and writes
+   * the log's birth row where it has none. A log created now is named `logId`.
    */
   bootstrap(tables: ChangeLogTables, logId: string): readonly Sql[];
+  /** Writes the log's birth row where it has none, as an emptied log has not. */
+  birth(tables: ChangeLogTables): Sql;
   /**
    * The bodies of the three triggers that log a table's writes. An image is a JSON object of
    * `columns`, a JSON-backed column boxed so its SQL NULL stays apart from a JSON null, as a value
@@ -79,6 +82,8 @@ export interface CaptureSyntax {
    * a server setting, naming the cause and every remedy; `undefined` for any other failure.
    */
   triggerRefusal(error: Error): string | undefined;
+  /** Whether a statement failed because a JSON document it built nests deeper than the engine allows. */
+  tooDeep(error: Error): boolean;
   /** Holds a table against every other session, so no write runs while its triggers change. */
   lockTable(table: string): Sql;
   readonly unlockTables: Sql;
@@ -114,7 +119,8 @@ export interface CaptureSyntax {
   advance(tables: ChangeLogTables, count: number): Sql;
   /**
    * One row: `epoch`, the `frontier` (the highest `seq` handed out) and `pending`, whether a
-   * committed row still waits for its number.
+   * committed row still waits for its number. The epoch, here and in a poll, is another one once
+   * the log is created again, altered or emptied.
    */
   frontier(tables: ChangeLogTables): Sql;
   /** The tables, as `tbl`, with a row numbered after `after`. */
@@ -123,7 +129,8 @@ export interface CaptureSyntax {
    * The frontier's row with the table's reaped `high_water`, joined to the rows of `request`
    * numbered after `after` and at most the frontier, in `seq` order, up to the limit; one row with
    * no event when there is none. Everything is read in one statement, so the rows, the frontier
-   * and the high-water agree.
+   * and the high-water agree. An event neither side of which `matches` answers neither side, so the
+   * statement never builds a document the feed does not deliver.
    */
   poll(tables: ChangeLogTables, request: PollRequest): Sql;
   /**

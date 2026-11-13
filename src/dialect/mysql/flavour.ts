@@ -23,6 +23,8 @@ export interface Flavour {
   readonly jsonType: Sql;
   /** The most containers a stored JSON document nests. */
   readonly maxJsonNesting: number;
+  /** The errno a statement fails with when a JSON document it reads or builds nests too deep. */
+  readonly tooDeepErrno: number;
   /** Whether a `multi` index over a JSON array can be built as a multi-valued index. */
   readonly multiValuedIndex: boolean;
   /** Session assignments of the engine's own that the pin adds to the family's. */
@@ -139,6 +141,7 @@ export const MYSQL: Flavour = {
   binaryCollation: "utf8mb4_0900_bin",
   jsonType: sql`JSON`,
   maxJsonNesting: 100,
+  tooDeepErrno: 3157,
   multiValuedIndex: true,
   pinned: [],
   readTimeout: (ms) => sql`max_execution_time = ${int(ms)}`,

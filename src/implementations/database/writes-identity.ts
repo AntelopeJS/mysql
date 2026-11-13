@@ -65,10 +65,11 @@ interface Targeted {
  * merged. Being materialized also means it holds every row as it was before the statement, which
  * is what the values a write computes read.
  *
- * The read locks the rows it selects exclusively as it reads them. Without the lock, the server
- * reads them shared, or from a snapshot: two writes of one row then each wait to upgrade the
- * other's shared lock, which deadlocks however often it is run again, or each compute from the
- * same old value and lose all but one change, answering 0 for the rest.
+ * The read locks the rows it selects exclusively as it reads them, in the block that reads the
+ * table (see `locked` on the relation). Without the lock, the server reads them shared, or from a
+ * snapshot: two writes of one row then each wait to upgrade the other's shared lock, which
+ * deadlocks however often it is run again, or each compute from the same old value and lose all but
+ * one change, answering 0 for the rest.
  */
 function TargetedRows(target: WriteTarget, alias: string): Targeted {
   const on = IDENTITY.map(
@@ -78,7 +79,7 @@ function TargetedRows(target: WriteTarget, alias: string): Targeted {
   return {
     alias,
     hint: target.relation.dialect.sql.rows.materialize(alias),
-    from: sql`${WriteTable(target.origin)} JOIN (${Render(target.relation)} FOR UPDATE) AS ${ident(alias)} ON ${join(on, sql` AND `)}`,
+    from: sql`${WriteTable(target.origin)} JOIN (${Render(target.relation)}) AS ${ident(alias)} ON ${join(on, sql` AND `)}`,
   };
 }
 

@@ -38,13 +38,14 @@ describe("A driver error", () => {
     ).to.deep.equal({ kind: "duplicate", key: "directory__people.title" });
   });
 
-  it("reads a deadlock and a lock wait as worth another attempt", () => {
+  /** A classifier that read both as one kind would give a lock wait the deadlock's many quick tries. */
+  it("reads a deadlock and a lock wait apart", () => {
     expect(classify(ServerError(1213, "Deadlock found"))).to.deep.equal({
-      kind: "retry",
+      kind: "deadlock",
     });
     expect(
       classify(ServerError(1205, "Lock wait timeout exceeded")),
-    ).to.deep.equal({ kind: "retry" });
+    ).to.deep.equal({ kind: "lockWait" });
   });
 
   it("reads an error with no SQL state, or one that ended the connection, as the connection's", () => {

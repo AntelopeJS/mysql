@@ -34,6 +34,7 @@ import { Render } from "../../implementations/database/render";
 import {
   CompileWrite,
   SplitWrite,
+  WriteRead,
 } from "../../implementations/database/writes";
 import {
   type WriteStatement,
@@ -235,7 +236,11 @@ export function Written(
   const root = BuildRoot(query.build(), context);
   const split = SplitWrite(root.rest);
   assert(split.write, "this fixture compiles a query that ends in a write");
-  const relation = ApplyStages(root.relation, split.pipeline, context);
+  const relation = ApplyStages(
+    WriteRead(root.relation, split),
+    split.pipeline,
+    context,
+  );
   return CompileWrite(WriteTargetOf(root, relation), split.write, context);
 }
 

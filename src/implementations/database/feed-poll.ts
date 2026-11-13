@@ -24,7 +24,10 @@ interface LoggedSide {
   readonly matched: boolean;
 }
 
-/** One log row a poll scanned, with the sides its images have. */
+/**
+ * One log row a poll scanned, with the sides its images have. An event neither side of which
+ * passed the feed's stages has neither.
+ */
 export interface LoggedEvent {
   readonly seq: bigint;
   readonly op: ChangeOperation;
@@ -61,6 +64,7 @@ export function PollStatement(
     alias: EVENT_ALIAS,
     old: plan.old,
     new: plan.new,
+    matches: plan.matches,
   });
 }
 
