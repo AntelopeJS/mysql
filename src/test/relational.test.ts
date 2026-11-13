@@ -209,6 +209,35 @@ async function LookupMappedOrderedList(): Promise<void> {
   ]);
 }
 
+async function LookupOrderedListInNestedQuery(): Promise<void> {
+  const found = await Posts()
+    .map((post) => ({
+      id: post.key("_id"),
+      found: Posts()
+        .filter((own) => own.key("_id").eq(post.key("_id")))
+        .lookup(
+          Articles().orderBy("views", "desc").pluck("_id", "views"),
+          "articleIds",
+          "_id",
+        )
+        .map((own) => own.key("articleIds")),
+    }))
+    .run();
+  expect(found).to.have.deep.members([
+    {
+      id: "p1",
+      found: [
+        [
+          { _id: "a9", views: 9 },
+          { _id: "a7", views: 7 },
+        ],
+      ],
+    },
+    { id: "p2", found: [[]] },
+    { id: "p3", found: [[]] },
+  ]);
+}
+
 async function LookupPlan(): Promise<void> {
   const index = GetTablePlan(SCHEMA_ID, "articles").indexes.find(
     (planned) => planned.id === "titleFr",
@@ -326,6 +355,10 @@ describe("relational stages on a real server", function () {
   it(
     "keeps that order when the looked-up query is wrapped before its correlation",
     LookupMappedOrderedList,
+  );
+  it(
+    "keeps that order in a nested query whose own row filter reads the outer row",
+    LookupOrderedListInNestedQuery,
   );
   it(
     "serves a lookup on an indexed nested path with a ref on the other table's index",
