@@ -22,6 +22,8 @@ import {
   ValueRelation,
 } from "./relation";
 import {
+  HasFlag,
+  NestedInOrder,
   Numbered,
   type NumberedRows,
   OrderTerms,
@@ -157,6 +159,22 @@ function NumberedInPlace(
 }
 
 /**
+ * The relation a computed bound numbers. An ordered relation that a constant bound already cut is
+ * wrapped with its order kept, so the rows are numbered in that order. A dedup and an aggregate
+ * take no order after them, so neither reaches here ordered.
+ */
+function NumberingSource(
+  relation: Relation,
+  context: DecodingContext,
+): Relation {
+  const keepsOrder =
+    relation.orderBy.length > 0 && HasFlag(relation, NUMBERING_BLOCKERS);
+  return keepsOrder
+    ? NestedInOrder(relation, context)
+    : Prepare(relation, NUMBERING_BLOCKERS, context);
+}
+
+/**
  * Bounds the rows: a known count as a bound `LIMIT` and `OFFSET`, and a count the statement
  * computes as a range of the rows' numbers, since the engine takes only a constant there. Rows
  * that read the outer row are numbered in place where the engine needs it; a bound that reads it
@@ -182,7 +200,7 @@ function Bounded(
         inPlace,
         context,
       )
-    : Numbered(Prepare(relation, NUMBERING_BLOCKERS, context), context);
+    : Numbered(NumberingSource(relation, context), context);
   numbered.relation.where.push(
     RowRange(context.dialect, numbered.rowNumber, offset, count),
   );

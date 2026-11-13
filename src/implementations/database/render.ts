@@ -228,14 +228,40 @@ function Wrapped(
 const ROW_NUMBER_COLUMN = "_row";
 
 /** A name for one more column, free of every name the select list gives; MySQL folds their case. */
-function FreeColumn(relation: Relation): string {
+function FreeColumn(relation: Relation, base = ROW_NUMBER_COLUMN): string {
   const selected = relation.projection ? [OUTPUT_COLUMN] : RowNames(relation);
   const taken = new Set(selected.map((name) => name.toLowerCase()));
-  let name = ROW_NUMBER_COLUMN;
+  let name = base;
   while (taken.has(name)) {
     name = `_${name}`;
   }
   return name;
+}
+
+/**
+ * Wraps the relation as {@link Nested} does, and keeps its order: each sort term is selected beside
+ * the row, and the fresh relation sorts by those columns. A derived table's own `ORDER BY` orders
+ * nothing outside it, and MariaDB reads its rows in another order.
+ */
+export function NestedInOrder(
+  relation: Relation,
+  context: DecodingContext,
+): Relation {
+  const columns = relation.orderBy.map((term, index) => ({
+    term,
+    name: FreeColumn(relation, `_order${index}`),
+  }));
+  const selected = columns.map(
+    ({ term, name }) => sql`${term.sql} AS ${ident(name)}`,
+  );
+  const select = sql`${SelectClause(relation)}, ${join(selected, COMMA)}`;
+  const rest = RenderClauses(relation, [...BODY, OrderByClause, LimitClause]);
+  const wrapped = Wrapped(relation, sql`(${select} ${rest})`, context);
+  wrapped.orderBy = columns.map(({ term, name }) => ({
+    sql: QualifiedColumn(wrapped.alias, name),
+    descending: term.descending,
+  }));
+  return wrapped;
 }
 
 /** A relation whose rows are numbered in the order they had, and the column holding the number. */
