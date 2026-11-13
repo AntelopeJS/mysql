@@ -85,39 +85,45 @@ describe("writes to a table whose unique index the server refused", function () 
   });
 
   it("refuses an insert, naming the index and the reason, and stores nothing", async () => {
-    ExpectRefusal(await Outcome(items().insert({ _id: "d", price: 7 })));
-    expect(await items().get("d")).to.equal(undefined);
+    ExpectRefusal(await Outcome(items().insert({ _id: "d", price: 7 }).run()));
+    expect(await items().get("d").run()).to.equal(undefined);
   });
 
   it("refuses an update or a replace that sets the indexed field", async () => {
-    ExpectRefusal(await Outcome(items().get("c").update({ price: 7 })));
+    ExpectRefusal(await Outcome(items().get("c").update({ price: 7 }).run()));
     ExpectRefusal(
-      await Outcome(items().get("c").replace({ sku: "sku-c", price: 8 })),
+      await Outcome(items().get("c").replace({ sku: "sku-c", price: 8 }).run()),
     );
     ExpectRefusal(
       await Outcome(
-        items().atomicMutation("c", { ...REVISE_SKU, patch: { price: 7 } }),
+        items()
+          .atomicMutation("c", { ...REVISE_SKU, patch: { price: 7 } })
+          .run(),
       ),
     );
-    expect((await items().get("c"))?.price).to.equal(8);
+    expect((await items().get("c").run())?.price).to.equal(8);
   });
 
   it("keeps reads, deletes and updates of other fields working", async () => {
-    expect(await items().atomicMutation("c", REVISE_SKU)).to.equal("applied");
-    expect(await items().get("c").update({ sku: "renamed" })).to.equal(1);
-    expect((await items().get("c"))?.sku).to.equal("renamed");
-    expect(await items().get("b").delete()).to.equal(1);
-    expect(await items().get("b")).to.equal(undefined);
+    expect(await items().atomicMutation("c", REVISE_SKU).run()).to.equal(
+      "applied",
+    );
+    expect(await items().get("c").update({ sku: "renamed" }).run()).to.equal(1);
+    expect((await items().get("c").run())?.sku).to.equal("renamed");
+    expect(await items().get("b").delete().run()).to.equal(1);
+    expect(await items().get("b").run()).to.equal(undefined);
   });
 
   it("is built once the duplicates are gone and the schema registers again, and refuses the next duplicate", async () => {
     await Schemas.register(SCHEMA_ID, UNIQUE_PRICE);
     await WaitForIndexes(SCHEMA_ID);
     expect(await IndexNames()).to.deep.equal(["price"]);
-    expect(await Outcome(items().insert({ _id: "d", price: 9 }))).to.equal(
-      "stored",
+    expect(
+      await Outcome(items().insert({ _id: "d", price: 9 }).run()),
+    ).to.equal("stored");
+    const duplicate = await Outcome(
+      items().insert({ _id: "e", price: 7 }).run(),
     );
-    const duplicate = await Outcome(items().insert({ _id: "e", price: 7 }));
     expect(IsDuplicateKeyError(duplicate), String(duplicate)).to.equal(true);
   });
 });

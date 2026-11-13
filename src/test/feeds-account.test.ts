@@ -119,7 +119,7 @@ describe("change feeds for an application account", function () {
     await Reconnect({ ...admin, url: AccountUrl() });
     const after = new Schema<Tables>(SCHEMA_IDS[1], WIDE);
     const err = await Rejection(
-      (async () => after.instance().table("items").get("absent"))(),
+      (async () => after.instance().table("items").get("absent").run())(),
     );
     expect(Missing(err)).to.deep.equal([]);
     expect(ServerError(err)).to.have.property("errno", SERVER_REFUSAL);
@@ -132,7 +132,7 @@ describe("change feeds for an application account", function () {
     const schema = new Schema<Tables>(SCHEMA_IDS[2], NARROW);
     const items = schema.instance().table("items");
     const feed = await Opened(items, "probe");
-    await items.insert({ _id: "after", name: "after" });
+    await items.insert({ _id: "after", name: "after" }).run();
     const change = await DeliveredRow(feed, "after");
     await feed.return?.();
     expect(change).to.have.nested.property("newValue.name", "after");

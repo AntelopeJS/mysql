@@ -22,15 +22,18 @@ const INT32_OPERANDS: readonly (readonly [number, number])[] = [
 
 async function Bitwise(left: number, right: number) {
   return First(
-    table.rows().map(() => ({
-      and: ValueProxy.constant(left).band(right),
-      or: ValueProxy.constant(left).bor(right),
-      xor: ValueProxy.constant(left).bxor(right),
-      not: ValueProxy.constant(left).bnot(),
-      left: ValueProxy.constant(left).blshift(right),
-      right: ValueProxy.constant(left).brshift(right),
-      signed: ValueProxy.constant(left).brshiftPreserveSign(right),
-    })),
+    table
+      .rows()
+      .map(() => ({
+        and: ValueProxy.constant(left).band(right),
+        or: ValueProxy.constant(left).bor(right),
+        xor: ValueProxy.constant(left).bxor(right),
+        not: ValueProxy.constant(left).bnot(),
+        left: ValueProxy.constant(left).blshift(right),
+        right: ValueProxy.constant(left).brshift(right),
+        signed: ValueProxy.constant(left).brshiftPreserveSign(right),
+      }))
+      .run(),
   );
 }
 
@@ -64,10 +67,13 @@ describe("The numeric stages", function () {
   it("answer NULL for a zero divisor rather than failing the statement", async () => {
     assert.deepEqual(
       await First(
-        table.rows().map(() => ({
-          div: ValueProxy.constant(7).div(0),
-          mod: ValueProxy.constant(7).mod(0),
-        })),
+        table
+          .rows()
+          .map(() => ({
+            div: ValueProxy.constant(7).div(0),
+            mod: ValueProxy.constant(7).mod(0),
+          }))
+          .run(),
       ),
       { div: null, mod: null },
     );
@@ -76,13 +82,16 @@ describe("The numeric stages", function () {
   it("take the sign of the dividend for mod and round halves up, as JavaScript does", async () => {
     assert.deepEqual(
       await First(
-        table.rows().map(() => ({
-          mod: ValueProxy.constant(-7).mod(3),
-          halfUp: ValueProxy.constant(2.5).round(),
-          halfDown: ValueProxy.constant(-2.5).round(),
-          ceil: ValueProxy.constant(-1.5).ceil(),
-          floor: ValueProxy.constant(-1.5).floor(),
-        })),
+        table
+          .rows()
+          .map(() => ({
+            mod: ValueProxy.constant(-7).mod(3),
+            halfUp: ValueProxy.constant(2.5).round(),
+            halfDown: ValueProxy.constant(-2.5).round(),
+            ceil: ValueProxy.constant(-1.5).ceil(),
+            floor: ValueProxy.constant(-1.5).floor(),
+          }))
+          .run(),
       ),
       { mod: -1, halfUp: 3, halfDown: -2, ceil: -1, floor: -2 },
     );
@@ -92,11 +101,16 @@ describe("The numeric stages", function () {
     const born = new Date("2023-01-15T13:45:30.250Z");
     assert.deepEqual(
       await First(
-        table.rows().map((row) => ({
-          later: row.key("bornAt").add(1.5),
-          earlier: row.key("bornAt").sub(90),
-          elapsed: row.key("bornAt").sub(new Date("2023-01-15T13:44:00.000Z")),
-        })),
+        table
+          .rows()
+          .map((row) => ({
+            later: row.key("bornAt").add(1.5),
+            earlier: row.key("bornAt").sub(90),
+            elapsed: row
+              .key("bornAt")
+              .sub(new Date("2023-01-15T13:44:00.000Z")),
+          }))
+          .run(),
       ),
       {
         later: new Date(born.getTime() + 1500),
@@ -115,18 +129,21 @@ describe("The date stages", function () {
   it("read every part in UTC, with the weekday from Monday 1 and the fraction of a second", async () => {
     assert.deepEqual(
       await First(
-        table.rows().map((row) => ({
-          year: row.key("bornAt").year(),
-          month: row.key("bornAt").month(),
-          day: row.key("bornAt").day(),
-          weekday: row.key("bornAt").dayofweek(),
-          dayOfYear: row.key("bornAt").dayofyear(),
-          hours: row.key("bornAt").hours(),
-          minutes: row.key("bornAt").minutes(),
-          seconds: row.key("bornAt").seconds(),
-          timeOfDay: row.key("bornAt").timeofday(),
-          epoch: row.key("bornAt").epoch(),
-        })),
+        table
+          .rows()
+          .map((row) => ({
+            year: row.key("bornAt").year(),
+            month: row.key("bornAt").month(),
+            day: row.key("bornAt").day(),
+            weekday: row.key("bornAt").dayofweek(),
+            dayOfYear: row.key("bornAt").dayofyear(),
+            hours: row.key("bornAt").hours(),
+            minutes: row.key("bornAt").minutes(),
+            seconds: row.key("bornAt").seconds(),
+            timeOfDay: row.key("bornAt").timeofday(),
+            epoch: row.key("bornAt").epoch(),
+          }))
+          .run(),
       ),
       {
         year: 2023,
@@ -157,7 +174,8 @@ describe("The date stages", function () {
         .rows()
         .map(() =>
           texts.map((text) => ValueProxy.constant<string | Date>(text).epoch()),
-        ),
+        )
+        .run(),
     );
     assert.deepEqual(
       read,
@@ -176,7 +194,8 @@ describe("The date stages", function () {
               `2024-06-01T12:00:00${offset}`,
             ).epoch(),
           ),
-        ),
+        )
+        .run(),
     );
     assert.deepEqual(read, [
       Date.parse("2024-06-01T12:00:00-14:00") / 1000,
@@ -190,14 +209,17 @@ describe("The date stages", function () {
   it("read the parts in the zone named, a named one or an offset, and a date part after another stage in UTC again", async () => {
     assert.deepEqual(
       await First(
-        table.rows().map((row) => ({
-          named: row.key("bornAt").hours("America/New_York"),
-          offset: row.key("bornAt").minutes("+05:30"),
-          crossesDay: ValueProxy.constant(
-            new Date("2023-01-01T02:00:00Z"),
-          ).year("America/New_York"),
-          utc: row.key("bornAt").hours(),
-        })),
+        table
+          .rows()
+          .map((row) => ({
+            named: row.key("bornAt").hours("America/New_York"),
+            offset: row.key("bornAt").minutes("+05:30"),
+            crossesDay: ValueProxy.constant(
+              new Date("2023-01-01T02:00:00Z"),
+            ).year("America/New_York"),
+            utc: row.key("bornAt").hours(),
+          }))
+          .run(),
       ),
       { named: 8, offset: 15, crossesDay: 2022, utc: 13 },
     );
@@ -357,7 +379,7 @@ const CASES_PER_STATEMENT = 200;
 async function Answers(batch: readonly PatternCase[]): Promise<unknown[]> {
   const matches = () =>
     batch.map(([text, pattern]) => ValueProxy.constant(text).match(pattern));
-  const together = await First(table.rows().map(matches)).catch(
+  const together = await First(table.rows().map(matches).run()).catch(
     () => undefined,
   );
   if (together) {
@@ -367,7 +389,10 @@ async function Answers(batch: readonly PatternCase[]): Promise<unknown[]> {
   for (const [text, pattern] of batch) {
     alone.push(
       await First(
-        table.rows().map(() => ValueProxy.constant(text).match(pattern)),
+        table
+          .rows()
+          .map(() => ValueProxy.constant(text).match(pattern))
+          .run(),
       ).catch((err: unknown) => String(err)),
     );
   }
@@ -400,11 +425,14 @@ describe("The string stages", function () {
   it("change the case of non-ASCII text and count codepoints rather than code units", async () => {
     assert.deepEqual(
       await First(
-        table.rows().map(() => ({
-          upper: ValueProxy.constant("éa").upcase(),
-          lower: ValueProxy.constant("ÉA").downcase(),
-          length: ValueProxy.constant("a😀b").strlen(),
-        })),
+        table
+          .rows()
+          .map(() => ({
+            upper: ValueProxy.constant("éa").upcase(),
+            lower: ValueProxy.constant("ÉA").downcase(),
+            length: ValueProxy.constant("a😀b").strlen(),
+          }))
+          .run(),
       ),
       { upper: "ÉA", lower: "éa", length: 3 },
     );
@@ -429,7 +457,10 @@ describe("The string stages", function () {
   it("match against a pattern the statement computes, bound as it is", async () => {
     assert.equal(
       await First(
-        table.rows().map((row) => row.key("name").match(row.key("name"))),
+        table
+          .rows()
+          .map((row) => row.key("name").match(row.key("name")))
+          .run(),
       ),
       true,
     );
@@ -438,10 +469,13 @@ describe("The string stages", function () {
   it("concatenate with CONCAT, and answer NULL where an operand is NULL, never an OR", async () => {
     assert.deepEqual(
       await First(
-        table.rows().map((row) => ({
-          both: row.key("name").concat("!"),
-          missing: row.key("name").concat(row.key("name").add(null)),
-        })),
+        table
+          .rows()
+          .map((row) => ({
+            both: row.key("name").concat("!"),
+            missing: row.key("name").concat(row.key("name").add(null)),
+          }))
+          .run(),
       ),
       { both: "ada!", missing: null },
     );
@@ -471,7 +505,8 @@ describe("The string stages", function () {
         await First(
           table
             .rows()
-            .map(() => ValueProxy.constant(text).split(separator, maxSplits)),
+            .map(() => ValueProxy.constant(text).split(separator, maxSplits))
+            .run(),
         ),
         expected,
         `${JSON.stringify(text)} by ${JSON.stringify(separator)}`,
@@ -482,7 +517,10 @@ describe("The string stages", function () {
   it("split an absent text into NULL", async () => {
     assert.equal(
       await First(
-        table.rows().map((row) => row.key("name").add(null).split(",")),
+        table
+          .rows()
+          .map((row) => row.key("name").add(null).split(","))
+          .run(),
       ),
       null,
     );

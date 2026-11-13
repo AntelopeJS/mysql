@@ -48,14 +48,15 @@ describe("a key holding a control character", function () {
     it(`reads ${label} back`, async () => {
       const values = await Table("bare")
         .orderBy("_id")
-        .map((row) => row.key(key));
+        .map((row) => row.key(key))
+        .run();
       expect(values).to.deep.equal(ROWS.map((row) => row[key]));
     });
 
     it(`filters on ${label}`, async () => {
-      const rows = await Table("bare").filter((row) =>
-        row.key(key).eq(`${key} 1`),
-      );
+      const rows = await Table("bare")
+        .filter((row) => row.key(key).eq(`${key} 1`))
+        .run();
       expect(rows.map((row) => row._id)).to.deep.equal(["y"]);
     });
 

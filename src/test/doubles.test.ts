@@ -87,55 +87,60 @@ describe("a double written into JSON", function () {
   this.timeout(30_000);
 
   beforeEach(async () => {
-    await Rows().delete();
+    await Rows().delete().run();
   });
 
   it("is stored exactly by an insert", async () => {
-    await Rows().insert({ _id: "inserted", ...WRITTEN });
-    expect(await Rows().get("inserted")).to.deep.include(WRITTEN);
+    await Rows()
+      .insert({ _id: "inserted", ...WRITTEN })
+      .run();
+    expect(await Rows().get("inserted").run()).to.deep.include(WRITTEN);
     expect(JSON.parse(await Printed("inserted"))).to.deep.include(WRITTEN);
   });
 
   it("is stored exactly by an update", async () => {
-    await Rows().insert({ _id: "updated" });
-    expect(await Rows().get("updated").update(WRITTEN)).to.equal(1);
-    expect(await Rows().get("updated")).to.deep.include(WRITTEN);
+    await Rows().insert({ _id: "updated" }).run();
+    expect(await Rows().get("updated").update(WRITTEN).run()).to.equal(1);
+    expect(await Rows().get("updated").run()).to.deep.include(WRITTEN);
     expect(JSON.parse(await Printed("updated"))).to.deep.include(WRITTEN);
   });
 
   it("is stored exactly by a replace", async () => {
-    await Rows().insert({ _id: "replaced", label: "before" });
-    expect(await Rows().get("replaced").replace(WRITTEN)).to.equal(1);
-    expect(await Rows().get("replaced")).to.deep.include(WRITTEN);
+    await Rows().insert({ _id: "replaced", label: "before" }).run();
+    expect(await Rows().get("replaced").replace(WRITTEN).run()).to.equal(1);
+    expect(await Rows().get("replaced").run()).to.deep.include(WRITTEN);
     expect(JSON.parse(await Printed("replaced"))).to.deep.include(WRITTEN);
   });
 
   for (const conflict of ["update", "replace"] as const) {
     it(`is stored exactly by an insert that merges into an existing row with conflict '${conflict}'`, async () => {
-      await Rows().insert({ _id: conflict, label: "before" });
-      await Rows().insert({ _id: conflict, ...WRITTEN }, { conflict });
-      expect(await Rows().get(conflict)).to.deep.include(WRITTEN);
+      await Rows().insert({ _id: conflict, label: "before" }).run();
+      await Rows()
+        .insert({ _id: conflict, ...WRITTEN }, { conflict })
+        .run();
+      expect(await Rows().get(conflict).run()).to.deep.include(WRITTEN);
       expect(JSON.parse(await Printed(conflict))).to.deep.include(WRITTEN);
     });
   }
 
   it("is stored exactly by an update computed from the row", async () => {
-    await Rows().insert({ _id: "mapped", loose: DOUBLES });
+    await Rows().insert({ _id: "mapped", loose: DOUBLES }).run();
     const updated = await Rows()
       .get("mapped")
       .update((row) => ({
         ...WRITTEN,
         copied: row.key("loose"),
         mapped: row.key("loose").map((value) => value),
-      }));
+      }))
+      .run();
     expect(updated).to.equal(1);
     const computed = { ...WRITTEN, copied: DOUBLES, mapped: DOUBLES };
-    expect(await Rows().get("mapped")).to.deep.include(computed);
+    expect(await Rows().get("mapped").run()).to.deep.include(computed);
     expect(JSON.parse(await Printed("mapped"))).to.deep.include(computed);
   });
 
   it("is stored exactly by an atomic update's patch", async () => {
-    await Rows().insert({ _id: "atomic", revision: "old" });
+    await Rows().insert({ _id: "atomic", revision: "old" }).run();
     const update: AtomicUpdate<Doc> = {
       type: "update",
       revisionField: "revision",
@@ -143,35 +148,51 @@ describe("a double written into JSON", function () {
       nextRevision: "new",
       patch: WRITTEN,
     };
-    expect(await Rows().atomicMutation("atomic", update)).to.equal("applied");
-    expect(await Rows().get("atomic")).to.deep.include(WRITTEN);
+    expect(await Rows().atomicMutation("atomic", update).run()).to.equal(
+      "applied",
+    );
+    expect(await Rows().get("atomic").run()).to.deep.include(WRITTEN);
     expect(JSON.parse(await Printed("atomic"))).to.deep.include(WRITTEN);
+  });
+});
+
+describe("a double read back from JSON", function () {
+  this.timeout(30_000);
+
+  beforeEach(async () => {
+    await Rows().delete().run();
   });
 
   it("is read exactly through an array walk, a group and an ordered nested query", async () => {
-    await Rows().insert(
-      DOUBLES.map((one, n) => ({
-        _id: `r${n}`,
-        label: "g",
-        n,
-        one,
-        loose: DOUBLES,
-      })),
-    );
+    await Rows()
+      .insert(
+        DOUBLES.map((one, n) => ({
+          _id: `r${n}`,
+          label: "g",
+          n,
+          one,
+          loose: DOUBLES,
+        })),
+      )
+      .run();
     const [walked] = await Rows()
       .orderBy("n")
-      .map((row) => row.key("loose").map((value) => value));
-    const [group] = await Rows().group("label", (stream) => ({
-      all: stream.map((row) => row.key("one")),
-      distinct: stream.distinct("one"),
-    }));
+      .map((row) => row.key("loose").map((value) => value))
+      .run();
+    const [group] = await Rows()
+      .group("label", (stream) => ({
+        all: stream.map((row) => row.key("one")),
+        distinct: stream.distinct("one"),
+      }))
+      .run();
     const [nested] = await Rows()
       .orderBy("n")
       .map(() => ({
         ones: Rows()
           .orderBy("n")
           .map((row) => row.key("one")),
-      }));
+      }))
+      .run();
     expect(walked).to.deep.equal(DOUBLES);
     expect(group?.all).to.have.deep.members(DOUBLES);
     expect(group?.distinct).to.have.deep.members(DOUBLES);
@@ -183,9 +204,13 @@ describe("a double written into JSON", function () {
     try {
       const first = feed.next();
       for (let probe = 0; !(await SettlesWithin(first, QUIET_MS)); probe++) {
-        await Rows().insert({ _id: `probe-${probe}` });
+        await Rows()
+          .insert({ _id: `probe-${probe}` })
+          .run();
       }
-      await Rows().insert({ _id: "watched", ...WRITTEN });
+      await Rows()
+        .insert({ _id: "watched", ...WRITTEN })
+        .run();
       let delivered: Doc | undefined;
       while (delivered?._id !== "watched") {
         const step = await feed.next();

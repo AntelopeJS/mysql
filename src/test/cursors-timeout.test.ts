@@ -35,7 +35,7 @@ const SLOW_WRITE_SECONDS = 1;
 
 async function Seeded(): Promise<Schema<Tables>> {
   const schema = new Schema<Tables>(SCHEMA_ID, DEFINITION);
-  await schema.instance().table("items").get("absent");
+  await schema.instance().table("items").get("absent").run();
   const places = String(ROWS).length;
   await Run(
     sql`INSERT INTO ${ident(PhysicalTable(SCHEMA_ID, "items"))} (_id, _instance, n, pad, _extra) SELECT LPAD(n, ${param(places)}, '0'), '', n, REPEAT('x', ${param(PADDING)}), JSON_OBJECT() FROM ${Numbers(places)} AS numbers WHERE n < ${param(ROWS)}`,

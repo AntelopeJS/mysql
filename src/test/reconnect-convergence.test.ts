@@ -35,8 +35,8 @@ const WRITTEN: Item = { _id: "one", label: "after" };
 /** Writes {@link WRITTEN} through the schema and answers what reading it back finds. */
 async function WrittenAndRead(schema: Schema<{ items: Item }>) {
   const items = schema.instance().table("items");
-  await items.insert(WRITTEN);
-  return items.get(WRITTEN._id);
+  await items.insert(WRITTEN).run();
+  return items.get(WRITTEN._id).run();
 }
 
 /** A session outside the pool, as another process would hold. */
@@ -138,7 +138,7 @@ describe("a schema whose registration is still converging when the adapter recon
       await holder.end();
     }
     expect(
-      await wider.instance().table("items").get(WRITTEN._id),
+      await wider.instance().table("items").get(WRITTEN._id).run(),
     ).to.deep.equal(WRITTEN);
   });
 });

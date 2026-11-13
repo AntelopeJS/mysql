@@ -84,11 +84,11 @@ export async function OpenedOver<T extends { _id?: string }>(
 ): Promise<FeedOf<T>> {
   const first = feed.next();
   for (let attempt = 0; !(await SettlesWithin(first, QUIET_MS)); attempt += 1) {
-    await table.insert({ ...probe, _id: `${probe._id}-${attempt}` });
+    await table.insert({ ...probe, _id: `${probe._id}-${attempt}` }).run();
   }
   await Delivered(first);
   const last = `${probe._id}-open`;
-  await table.insert({ ...probe, _id: last });
+  await table.insert({ ...probe, _id: last }).run();
   await DeliveredRow(feed, last);
   return feed;
 }

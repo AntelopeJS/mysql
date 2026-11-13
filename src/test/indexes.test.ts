@@ -353,10 +353,12 @@ describe("an index over more key columns than MySQL allows in one index", functi
     const items = new Schema<{ items: { _id: string } }>(schemaId, WIDE)
       .instance()
       .table("items");
-    await items.insert([
-      { _id: "match", ...row },
-      { _id: "other", ...row, u7: "7" },
-    ]);
+    await items
+      .insert([
+        { _id: "match", ...row },
+        { _id: "other", ...row, u7: "7" },
+      ])
+      .run();
     const found = await items.getAll([values], "wide").run();
     expect(found.map((item) => item._id)).to.deep.equal(["match"]);
   });

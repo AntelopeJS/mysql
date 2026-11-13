@@ -127,16 +127,18 @@ describe("writes that contend for rows", function () {
       ...Array.from({ length: WRITERS }, (_, i) =>
         items()
           .filter((row) => row.key("n").ge(0))
-          .update({ n: i + 1 }),
+          .update({ n: i + 1 })
+          .run(),
       ),
       ...Array.from({ length: WRITERS }, (_, i) =>
         items()
           .filter((row) => row.key("_id").ge(String(i * 50).padStart(4, "0")))
-          .delete(),
+          .delete()
+          .run(),
       ),
     ]);
     expect(Failures(outcomes)).to.deep.equal([]);
-    expect(await items().count()).to.equal(0);
+    expect(await items().count().run()).to.equal(0);
   });
 
   /**
@@ -157,7 +159,8 @@ describe("writes that contend for rows", function () {
     expect(Failures(outcomes)).to.deep.equal([]);
     const written = await items()
       .filter((row) => row.key("g").eq(WRITERS))
-      .count();
+      .count()
+      .run();
     expect(written).to.equal(NESTED_ROWS);
   });
 
@@ -166,7 +169,8 @@ describe("writes that contend for rows", function () {
       Array.from({ length: WRITERS }, () =>
         items()
           .get("0000")
-          .update((row) => ({ n: row.key("n").add(1) })),
+          .update((row) => ({ n: row.key("n").add(1) }))
+          .run(),
       ),
     );
     expect(Failures(outcomes)).to.deep.equal([]);
@@ -174,7 +178,7 @@ describe("writes that contend for rows", function () {
       outcome.status === "fulfilled" ? outcome.value : undefined,
     );
     expect(answers).to.deep.equal(Array.from({ length: WRITERS }, () => 1));
-    expect(await items().get("0000")).to.deep.equal({
+    expect(await items().get("0000").run()).to.deep.equal({
       _id: "0000",
       n: WRITERS,
     });
@@ -203,7 +207,8 @@ describe("writes through a nested target over an indexed sort", function () {
     expect(Failures(outcomes)).to.deep.equal([]);
     const written = await sorted()
       .filter((row) => row.key("g").eq(WRITERS))
-      .count();
+      .count()
+      .run();
     expect(written).to.equal(NESTED_ROWS);
   });
 
@@ -231,11 +236,13 @@ describe("writes through a nested target over an indexed sort", function () {
     expect(Failures(outcomes)).to.deep.equal([]);
     const written = await sorted()
       .filter((row) => row.key("g").eq(WRITERS))
-      .count();
+      .count()
+      .run();
     expect(written).to.equal(NESTED_ROWS);
     const left = await sorted()
       .filter((row) => row.key("n").ge(DELETED_FROM))
-      .count();
+      .count()
+      .run();
     expect(left).to.equal(0);
   });
 
@@ -263,7 +270,8 @@ describe("writes through a nested target over an indexed sort", function () {
     );
     const once = await sorted()
       .filter((row) => row.key("g").eq(1))
-      .count();
+      .count()
+      .run();
     expect(once).to.equal(NESTED_ROWS);
   });
 
@@ -294,7 +302,8 @@ describe("writes through a nested target over an indexed sort", function () {
     );
     const claimed = await sorted()
       .filter((row) => row.key("g").eq(1))
-      .count();
+      .count()
+      .run();
     expect(claimed).to.equal(WRITERS * CLAIMED);
   });
 
@@ -314,7 +323,8 @@ describe("writes through a nested target over an indexed sort", function () {
     expect(Failures(outcomes)).to.deep.equal([]);
     const written = await sorted()
       .filter((row) => row.key("g").eq(WRITERS))
-      .count();
+      .count()
+      .run();
     expect(written).to.equal(SEEDED);
   });
 });
@@ -387,7 +397,8 @@ describe("writes through a slice whose bound the query computes", function () {
       expect(Failures(outcomes)).to.deep.equal([]);
       const written = await sorted()
         .filter((row) => row.key("g").eq(WRITERS))
-        .count();
+        .count()
+        .run();
       expect(written).to.equal(COMPUTED_PICKED);
     }
   });

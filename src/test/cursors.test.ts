@@ -59,7 +59,7 @@ async function Seeded(
   padding: number,
 ): Promise<Schema<Tables>> {
   const schema = new Schema<Tables>(schemaId, DEFINITION);
-  await schema.instance().table("items").get("absent");
+  await schema.instance().table("items").get("absent").run();
   const places = String(rows).length;
   await Run(
     sql`INSERT INTO ${ident(PhysicalTable(schemaId, "items"))} (_id, _instance, n, pad, _extra) SELECT LPAD(n, ${param(places)}, '0'), '', n, REPEAT('x', ${param(padding)}), JSON_OBJECT() FROM ${Numbers(places)} AS numbers WHERE n < ${param(rows)}`,
@@ -204,7 +204,7 @@ describe("a cursor over a large result", function () {
 
   it("is told apart from reading the result whole, which holds all of it", async () => {
     const base = Retained();
-    const everything = await table;
+    const everything = await table.run();
     const held = Retained() - base;
     console.log(
       `      reading the result whole retains ${(held / MEGABYTE).toFixed(1)} MB`,

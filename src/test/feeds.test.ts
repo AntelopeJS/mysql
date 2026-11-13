@@ -135,11 +135,11 @@ describe("a change feed's images of a JSON column", function () {
   it("deliver the doubles it holds exactly", async () => {
     const rows = numbered.instance().table("rows");
     const meta = { long: LONG_DOUBLE, sum: 0.1 + 0.2 };
-    await rows.insert({ _id: "exact", meta });
-    expect(await rows.get("exact")).to.have.deep.property("meta", meta);
+    await rows.insert({ _id: "exact", meta }).run();
+    expect(await rows.get("exact").run()).to.have.deep.property("meta", meta);
     const feed = await Opened(rows, "probe");
     try {
-      await rows.get("exact").update({ label: "changed" });
+      await rows.get("exact").update({ label: "changed" }).run();
       const modified = await Delivered(feed.next());
       expect({
         before: modified.oldValue?.meta,
@@ -168,7 +168,7 @@ async function ChurnPastRetention(count: number): Promise<void> {
   const rows = Array.from({ length: count }, (_, index) => ({
     _id: `busy-${Date.now()}-${index}`,
   }));
-  await Busy().insert(rows);
+  await Busy().insert(rows).run();
   const dialect = GetDialect();
   const logged = PhysicalTable("feeds-quiet", "busy");
   const deadline = Date.now() + REAP_DEADLINE_MS;
@@ -211,7 +211,7 @@ describe("a change feed and the reaper", function () {
   it("never ends a feed on a table nobody writes as lapsed while another table churns past retention", async () => {
     const waiting = quiet.next();
     await ChurnPastRetention(50);
-    await Quiet().insert({ _id: "quiet-after" });
+    await Quiet().insert({ _id: "quiet-after" }).run();
     expect(await Delivered(waiting)).to.have.nested.property(
       "newValue._id",
       "quiet-after",

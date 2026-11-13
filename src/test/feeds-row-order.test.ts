@@ -104,7 +104,7 @@ describe("a sequencer pass reading the log while one document is written twice",
     await Run(CreateCommitOnScan(PhysicalTable(SCHEMA_ID, "rows")));
     const rows = ordered.instance().table("rows");
     feed = await Opened(rows, "probe");
-    await rows.insert({ _id: "twice", label: "initial" });
+    await rows.insert({ _id: "twice", label: "initial" }).run();
     await Delivered(feed.next());
   });
 

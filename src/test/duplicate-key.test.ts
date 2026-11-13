@@ -70,83 +70,112 @@ async function expectDuplicate(
 describe("duplicate keys", function () {
   this.timeout(30_000);
   before(async () => {
-    await schema.createInstance(ALPHA);
-    await schema.createInstance(BETA);
+    await schema.createInstance(ALPHA).run();
+    await schema.createInstance(BETA).run();
   });
 
   beforeEach(async () => {
-    await Accounts(schema, ALPHA).delete();
-    await Accounts(schema, BETA).delete();
+    await Accounts(schema, ALPHA).delete().run();
+    await Accounts(schema, BETA).delete().run();
   });
 
   it("refuses a second row with the same _id as a duplicate of _id", async () => {
-    await Accounts(schema).insert(Row("a", "a@x", 1));
+    await Accounts(schema)
+      .insert(Row("a", "a@x", 1))
+      .run();
     await expectDuplicate(
-      Accounts(schema).insert(Row("a", "other@x", 2)),
+      Accounts(schema)
+        .insert(Row("a", "other@x", 2))
+        .run(),
       "_id",
       ["_id"],
     );
   });
 
   it("upserts on _id under a conflict mode instead of refusing", async () => {
-    await Accounts(schema).insert(Row("a", "a@x", 1));
-    await Accounts(schema).insert(Row("a", "b@x", 2), { conflict: "update" });
-    const row = await Accounts(schema).get("a");
+    await Accounts(schema)
+      .insert(Row("a", "a@x", 1))
+      .run();
+    await Accounts(schema)
+      .insert(Row("a", "b@x", 2), { conflict: "update" })
+      .run();
+    const row = await Accounts(schema).get("a").run();
     expect(row?.email).to.equal("b@x");
   });
 
   it("refuses an insert that clashes on a unique secondary index, conflict mode or not", async () => {
-    await Accounts(schema).insert(Row("a", "a@x", 1));
+    await Accounts(schema)
+      .insert(Row("a", "a@x", 1))
+      .run();
     await expectDuplicate(
-      Accounts(schema).insert(Row("b", "a@x", 2)),
+      Accounts(schema)
+        .insert(Row("b", "a@x", 2))
+        .run(),
       "email",
       ["email"],
     );
     await expectDuplicate(
-      Accounts(schema).insert(Row("b", "a@x", 2), { conflict: "update" }),
+      Accounts(schema)
+        .insert(Row("b", "a@x", 2), { conflict: "update" })
+        .run(),
       "email",
       ["email"],
     );
-    expect(await Accounts(schema).count()).to.equal(1);
+    expect(await Accounts(schema).count().run()).to.equal(1);
   });
 
   it("refuses an update and a replace that clash on a unique index", async () => {
-    await Accounts(schema).insert([Row("a", "a@x", 1), Row("b", "b@x", 2)]);
+    await Accounts(schema)
+      .insert([Row("a", "a@x", 1), Row("b", "b@x", 2)])
+      .run();
     await expectDuplicate(
-      Accounts(schema).get("b").update({ email: "a@x" }),
+      Accounts(schema).get("b").update({ email: "a@x" }).run(),
       "email",
       ["email"],
     );
     await expectDuplicate(
       Accounts(schema)
         .get("b")
-        .replace(Row("b", "b@x", 1)),
+        .replace(Row("b", "b@x", 1))
+        .run(),
       "teamSeat",
       ["team", "seat"],
     );
-    const row = await Accounts(schema).get("b");
+    const row = await Accounts(schema).get("b").run();
     expect(row).to.include({ email: "b@x", seat: 2 });
   });
 
   it("refuses a compound key only when every field matches", async () => {
-    await Accounts(schema).insert(Row("a", "a@x", 1));
-    await Accounts(schema).insert(Row("b", "b@x", 2));
-    await Accounts(schema).insert({
-      _id: "c",
-      email: "c@x",
-      team: "ops",
-      seat: 1,
-    });
+    await Accounts(schema)
+      .insert(Row("a", "a@x", 1))
+      .run();
+    await Accounts(schema)
+      .insert(Row("b", "b@x", 2))
+      .run();
+    await Accounts(schema)
+      .insert({
+        _id: "c",
+        email: "c@x",
+        team: "ops",
+        seat: 1,
+      })
+      .run();
     await expectDuplicate(
-      Accounts(schema).insert(Row("d", "d@x", 1)),
+      Accounts(schema)
+        .insert(Row("d", "d@x", 1))
+        .run(),
       "teamSeat",
       ["team", "seat"],
     );
   });
 
   it("accepts the same key in two instances, crossInstance included", async () => {
-    await Accounts(schema, ALPHA).insert(Row("a", "a@x", 1));
-    await Accounts(schema, BETA).insert(Row("a", "a@x", 1));
-    expect(await Accounts(schema, BETA).count()).to.equal(1);
+    await Accounts(schema, ALPHA)
+      .insert(Row("a", "a@x", 1))
+      .run();
+    await Accounts(schema, BETA)
+      .insert(Row("a", "a@x", 1))
+      .run();
+    expect(await Accounts(schema, BETA).count().run()).to.equal(1);
   });
 });
