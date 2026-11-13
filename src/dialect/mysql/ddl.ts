@@ -28,6 +28,7 @@ import {
 } from "../../implementations/database/utils";
 import type { SqlSyntax } from "../types";
 import type { Flavour } from "./flavour";
+import { KeyPath } from "./sql-json";
 
 /** What the statements of this module are written with. */
 interface Engine {
@@ -58,10 +59,6 @@ const FAILURES = new Map<number, DdlFailure>([
 ]);
 
 const ROW_KEY = sql`${ident(INSTANCE_COLUMN)}, ${ident(ID_COLUMN)}`;
-
-function JsonPath(path: readonly string[]): Sql {
-  return lit(`$${path.map((key) => `.${JSON.stringify(key)}`).join("")}`);
-}
 
 /**
  * Whether the JSON value is of one of `types`. The type name is compared as bytes: `JSON_TYPE`
@@ -262,7 +259,7 @@ function BackfillChunk(
   through: RowKey | undefined,
 ): Sql {
   const extra = ident(EXTRA_COLUMN);
-  const key = JsonPath([column.field]);
+  const key = KeyPath(column.field);
   const value = REPRESENTATIONS[column.type.kind](
     engine,
     sql`JSON_EXTRACT(${extra}, ${key})`,

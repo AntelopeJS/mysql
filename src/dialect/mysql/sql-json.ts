@@ -28,12 +28,12 @@ const EMPTY_OBJECT = sql`JSON_OBJECT()`;
 /** The JavaScript falsy values a JSON value can hold; `NaN` and `undefined` have no spelling. */
 const FALSY = lit('[null, false, 0, ""]');
 
-/** A path through keys, each quoted so any key text is one member name. */
-function KeyPath(...keys: readonly string[]): Sql {
-  const members = keys.map(
-    (key) => `."${key.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`,
-  );
-  return lit(`$${members.join("")}`);
+/**
+ * A path through keys. The server reads a quoted member as a JSON string, so each key is written
+ * as one, with its control characters escaped.
+ */
+export function KeyPath(...keys: readonly string[]): Sql {
+  return lit(`$${keys.map((key) => `.${JSON.stringify(key)}`).join("")}`);
 }
 
 /**
