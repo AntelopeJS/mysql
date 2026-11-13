@@ -292,7 +292,7 @@ const DEFAULT_ROLE: Record<Engine, string> = {
 /**
  * The account the DMS connects with, as a client would set it up over the fixture's tables: it
  * reads through a role it holds through another role, writes through the role it holds, and may
- * read only some of `people`'s columns by a grant of its own.
+ * read and write only some of `people`'s columns by grants of its own.
  */
 export function ClientAccount(engine: Engine): readonly string[] {
   return [
@@ -306,6 +306,6 @@ export function ClientAccount(engine: Engine): readonly string[] {
     `GRANT ${ACCESS_ROLE} TO ${CLIENT_ACCOUNT}`,
     DEFAULT_ROLE[engine],
     ...WriterGrants(ACCESS_ROLE),
-    `GRANT SELECT (id, name) ON sales.people TO ${CLIENT_ACCOUNT}`,
+    `GRANT SELECT (id, name), INSERT (id, name), UPDATE (id, name) ON sales.people TO ${CLIENT_ACCOUNT}`,
   ];
 }

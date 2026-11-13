@@ -45,21 +45,22 @@ export function KeyOf(indexes: CatalogIndex[]): CatalogIndex | undefined {
  * The relations a listing statement answers. A relation whose listed columns the account may all
  * SELECT is readable only once the server takes a `SELECT *` of it: the catalog lists only the
  * columns the account holds some privilege on, so it cannot count a column the account may not
- * touch at all.
+ * touch at all. Only then are its listed columns all of its columns, so INSERT and UPDATE on every
+ * listed column count only on a readable relation.
  */
 async function ParseRelations(statement: Sql): Promise<RelationRow[]> {
   const catalog = GetDialect().external.catalog;
   const parsed: RelationRow[] = [];
   for (const cells of await Read(statement)) {
     const row = catalog.parseRelation(cells);
-    parsed.push(
-      row.readable
-        ? {
-            ...row,
-            readable: await Prepares(catalog.selection(row.schema, row.name)),
-          }
-        : row,
-    );
+    const readable =
+      row.readable && (await Prepares(catalog.selection(row.schema, row.name)));
+    parsed.push({
+      ...row,
+      readable,
+      insert: readable && row.insert,
+      update: readable && row.update,
+    });
   }
   return parsed;
 }

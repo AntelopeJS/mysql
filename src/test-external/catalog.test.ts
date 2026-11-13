@@ -194,6 +194,11 @@ describe("the privileges the catalog reports", function () {
       update: true,
       delete: true,
     });
+    expect(Named(listed, "people").writes).to.deep.equal({
+      insert: false,
+      update: false,
+      delete: false,
+    });
     expect(Named(listed, "accounts").writes).to.deep.equal({
       insert: false,
       update: false,

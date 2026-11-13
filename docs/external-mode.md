@@ -33,7 +33,7 @@ The module quotes names with backticks as they are, and never prefixes or shorte
 
 ## What registration does
 
-Registration reads `information_schema` once per declared table, and does nothing else. It runs no DDL, creates no bookkeeping table, installs no trigger, and keeps no change log. A failure here fails the schema's registration, so every query on the schema fails with the same message from startup. These declarations fail:
+Registration reads `information_schema` once per declared table and prepares a `SELECT *` of it without running it. It does nothing else. It runs no DDL, creates no bookkeeping table, installs no trigger, and keeps no change log. A failure here fails the schema's registration, so every query on the schema fails with the same message from startup. These declarations fail:
 
 - A declared table that does not exist, or that the account cannot see.
 - A table the account may read only some columns of.

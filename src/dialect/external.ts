@@ -69,9 +69,9 @@ export interface RelationRow {
   readonly readable: boolean;
   /** The account may SELECT some of its columns, which does not make it readable. */
   readonly someColumns: boolean;
-  /** The account may INSERT into every column it holds some privilege on. */
+  /** The account may INSERT into every column; false on a relation it cannot read. */
   readonly insert: boolean;
-  /** The account may UPDATE every column it holds some privilege on. */
+  /** The account may UPDATE every column; false on a relation it cannot read. */
   readonly update: boolean;
   /** The engine's own row estimate, absent for a relation that keeps none. */
   readonly statistics: number | null;
