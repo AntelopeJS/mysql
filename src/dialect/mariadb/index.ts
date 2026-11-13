@@ -172,10 +172,11 @@ function JsonEquals(left: Sql, right: Sql): Sql {
 /**
  * A JSON value, or SQL NULL where it is the JSON `null`. MariaDB compares a JSON string by its
  * unquoted text, where `"null"` equals the JSON `null`, so the value is compared as bytes and read
- * back as JSON.
+ * back as JSON. It is compacted first: MariaDB keeps the text a client wrote to a JSON column,
+ * whitespace around a `null` included.
  */
 function Present(value: Sql): Sql {
-  return Json(sql`NULLIF(CAST(${value} AS BINARY), 'null')`);
+  return Json(sql`NULLIF(CAST(JSON_COMPACT(${value}) AS BINARY), 'null')`);
 }
 
 /**
