@@ -5,6 +5,7 @@ import { catalogDescribe, catalogRefused } from "./journeys-catalog.ts";
 import { externalReadWrite, externalRegistration } from "./journeys-external.ts";
 import { changeFeeds } from "./journeys-feeds.ts";
 import { configOptions, configRefused } from "./journeys-module.ts";
+import { refusedUniqueIndex } from "./journeys-indexes.ts";
 import { readQueries } from "./journeys-reads.ts";
 import { migrations, storageLayout } from "./journeys-schemas.ts";
 import { insertValues, updateReplaceDelete } from "./journeys-writes.ts";
@@ -21,6 +22,7 @@ const ON_EVERY_ENGINE = {
   "config-options": configOptions,
   "storage-layout": storageLayout,
   migrations,
+  "refused-unique-index": refusedUniqueIndex,
   "insert-values": insertValues,
   "update-replace-delete": updateReplaceDelete,
   "read-queries": readQueries,

@@ -27,6 +27,8 @@ journeys:
   - migrations
   - storage-layout-mariadb
   - migrations-mariadb
+  - refused-unique-index
+  - refused-unique-index-mariadb
 ---
 
 # Schemas
@@ -37,7 +39,8 @@ What a registered schema becomes in MySQL, its instances, and how registration c
 
 - `storage-layout`: one table per schema table in the url's database, named `<schemaId>__<tableId>`, `utf8mb4_0900_bin` and signed in its comment; `_id` `varchar(512)` and `_instance` `varchar(128)`; the primary key `(_instance, _id)`; a number index on its own column led by `_instance`; a string index on a VIRTUAL `varchar(640)` key column holding `LEFT(value, 640)`; a `unique` index UNIQUE within the instance over a key column holding the exact value; a `crossInstance` index with its unprefixed `__g` twin, never unique; a `multi` index over a string array as a multi-valued `CHAR(512) ARRAY` index; a dotted index field `title.fr` keyed on a key column reading the nested JSON path; each index signed in its comment; `__antelope_instances` records each created instance; a taken unique key throws `DuplicateKeyError`; an instance id over 128 characters is refused; `CROSS_INSTANCE` reads every instance; `destroyInstance` deletes the instance's rows and keeps the table.
 - `migrations`: a new field adds its column, moves the stored value out of `_extra` and clears the column's pending mark; under `safe` a changed type is refused naming the column and no read answers; under `destructive` the column is altered and a column no longer declared is dropped.
-- `storage-layout-mariadb`, `migrations-mariadb`: the same journeys on MariaDB 11.8, where columns are `utf8mb4_nopad_bin`, a document column is `longtext` checked by `json_valid`, and the `multi` index is left out with a warning that names it.
+- `refused-unique-index`: `unique: true` added over rows that share a key. The server refuses the index, so an insert and an update that sets the indexed field are refused with an error that names the index and the server's message, and store nothing. An update of another field, a delete and a read go through. Once the rows are clean and the schema registers again, the index is built, an insert goes through and a duplicate throws `DuplicateKeyError`.
+- `storage-layout-mariadb`, `migrations-mariadb`, `refused-unique-index-mariadb`: the same journeys on MariaDB 11.8, where columns are `utf8mb4_nopad_bin`, a document column is `longtext` checked by `json_valid`, and the `multi` index is left out with a warning that names it.
 
 ## How to get to it (user POV)
 
