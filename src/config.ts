@@ -1,7 +1,7 @@
 import type { PoolOptions } from "mysql2/promise";
 import { GetRuntimeInfo } from "@antelopejs/interface-core/runtime";
 
-import { type DialectId, IsDialectId } from "./dialect";
+import { ANY_ENGINE, type DialectId, IsDialectId } from "./dialect";
 
 /**
  * How aggressively schema registration is allowed to alter existing tables.
@@ -175,8 +175,7 @@ const DEFAULT_CHANGE_POLL_INTERVAL_MS = 100;
 const SMALLEST_POSITIVE_INTEGER = 1;
 const SMALLEST_TIMEOUT = 0;
 
-const NOT_CONFIGURED =
-  "MySQL adapter is not configured: construct() has not run yet";
+const NOT_CONFIGURED = `${ANY_ENGINE} adapter is not configured: construct() has not run yet`;
 
 let resolved: ResolvedOptions | undefined;
 

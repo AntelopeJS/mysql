@@ -26,6 +26,11 @@ export const DIALECTS = { mysql, mariadb } as const;
 
 export type DialectId = keyof typeof DIALECTS;
 
+/** Every engine's name, for a message about a server no configuration or answer has identified. */
+export const ANY_ENGINE = Object.values(DIALECTS)
+  .map(({ name }) => name)
+  .join(" or ");
+
 const MARIADB_MARKER = /mariadb/i;
 
 /** Whether a name is one of {@link DIALECTS}. */

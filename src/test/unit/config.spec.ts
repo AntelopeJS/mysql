@@ -1,6 +1,11 @@
 import { expect } from "chai";
 
-import { type ForeignValue, Untyped, WithOptions } from "./spec-fixture";
+import {
+  type ForeignValue,
+  Untyped,
+  WithOptions,
+  WithoutOptions,
+} from "./spec-fixture";
 import { GetOptions, type Options, SetOptions } from "../../config";
 
 const VALIDATED = [
@@ -213,6 +218,14 @@ describe("SetOptions on the other options", () => {
       () => {
         expect(GetOptions().mode).to.equal("external");
       },
+    );
+  });
+});
+
+describe("GetOptions with no configuration set", () => {
+  it("names either engine, since no dialect is configured", () => {
+    expect(() => WithoutOptions(() => GetOptions())).to.throw(
+      "MySQL or MariaDB adapter is not configured: construct() has not run yet",
     );
   });
 });

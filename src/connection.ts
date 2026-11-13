@@ -9,7 +9,7 @@ import {
 
 import { Logger } from "./logger";
 import { Bind, type Sql, sql } from "./statement";
-import { DIALECTS, type Dialect, DetectDialect } from "./dialect";
+import { ANY_ENGINE, DIALECTS, type Dialect, DetectDialect } from "./dialect";
 import { DescribeConnectFailure } from "./connect-failure";
 import {
   ClearOptions,
@@ -22,20 +22,13 @@ import {
   SetOptions,
 } from "./config";
 
-const NOT_CONNECTED = "MySQL adapter is not connected";
-
 const NOT_CONSTRUCTED = "construct() has not run yet";
 
 const CONNECTION_ERROR = "error";
 
-const CONNECTION_FAILED = "a pooled MySQL connection failed";
-
 const CONNECTED = "connected to";
 
 const DISCONNECTED = "disconnected from";
-
-const STARTED_UNCONNECTED =
-  "could not connect to MySQL; the instance starts without a connection and refuses every call until the project reloads";
 
 const SLOW_ACQUIRE_MS = 10_000;
 
@@ -46,7 +39,9 @@ const SLOW_ACQUIRE_MS = 10_000;
  * one wait covers both a pool held by cursors still being iterated and a server that is not
  * answering; nothing here can tell those apart, so it names the symptom only.
  */
-const SLOW_ACQUIRE = `no MySQL connection has become available in ${SLOW_ACQUIRE_MS} ms: either every pooled connection is checked out (a cursor holds one for as long as it is iterated) or a new connection is not being answered. Raise pool.connectionLimit, or set pool.waitForConnections to false to fail rather than wait`;
+function SlowAcquire(engine: string): string {
+  return `no ${engine} connection has become available in ${SLOW_ACQUIRE_MS} ms: either every pooled connection is checked out (a cursor holds one for as long as it is iterated) or a new connection is not being answered. Raise pool.connectionLimit, or set pool.waitForConnections to false to fail rather than wait`;
+}
 
 const VERSION_QUERY = sql`SELECT VERSION() AS version`;
 
@@ -63,6 +58,12 @@ let dialect: Dialect | undefined;
 let connectFailure: string | undefined;
 let isWaiting = false;
 
+/**
+ * The engine the connection's messages name: the one the open pool serves, the configured
+ * `dialect`'s while it has not answered, and {@link ANY_ENGINE} when neither is known.
+ */
+let engineName = ANY_ENGINE;
+
 /** Connections, by their driver object, that have run the session pin. */
 const pinned = new WeakSet<object>();
 
@@ -78,7 +79,11 @@ async function Invoke(callback: BeforeDisconnect) {
 }
 
 function ReportConnectionError(err: Error) {
-  Logger.Warn(CONNECTION_FAILED, err);
+  Logger.Warn(`a pooled ${engineName} connection failed`, err);
+}
+
+function ConfiguredEngine(setting: DialectSetting): string {
+  return setting === "auto" ? ANY_ENGINE : DIALECTS[setting].name;
 }
 
 /**
@@ -233,6 +238,7 @@ export async function Connect(options?: Options) {
     flags: [...MODULE_POOL_OPTIONS.flags],
   });
   created.on("connection", GuardConnection);
+  engineName = ConfiguredEngine(resolved.dialect);
   let engine: Dialect;
   try {
     engine = await Verify(created, resolved.dialect);
@@ -240,14 +246,19 @@ export async function Connect(options?: Options) {
     await created.end();
     if (err instanceof Error && (await ToleratesConnectFailure())) {
       connectFailure = DescribeConnectFailure(err, resolved.url);
-      Logger.Warn(STARTED_UNCONNECTED, connectFailure);
+      Logger.Warn(
+        `could not connect to ${engineName}; the instance starts without a connection and refuses every call until the project reloads`,
+        connectFailure,
+      );
       return;
     }
+    engineName = ANY_ENGINE;
     ClearOptions();
     throw err;
   }
   generation += 1;
   dialect = engine;
+  engineName = engine.name;
   pool = created;
   Logger.Info(`${CONNECTED} ${engine.name}`);
 }
@@ -290,6 +301,7 @@ async function EndPool() {
   pool = undefined;
   isEnding = false;
   dialect = undefined;
+  engineName = ANY_ENGINE;
   connectFailure = undefined;
   ClearOptions();
   if (!current) {
@@ -311,7 +323,9 @@ export async function Disconnect() {
 }
 
 function NotConnected(): Error {
-  return new Error(`${NOT_CONNECTED}: ${connectFailure ?? NOT_CONSTRUCTED}`);
+  return new Error(
+    `${engineName} adapter is not connected: ${connectFailure ?? NOT_CONSTRUCTED}`,
+  );
 }
 
 function GetPool(): Pool {
@@ -351,12 +365,12 @@ export function GetDialect(): Dialect {
 }
 
 /** Warns once per episode of waiting, however many callers are queued behind the same one. */
-function WarnSlowAcquire() {
+function WarnSlowAcquire(engine: string) {
   if (isWaiting) {
     return;
   }
   isWaiting = true;
-  Logger.Warn(SLOW_ACQUIRE);
+  Logger.Warn(SlowAcquire(engine));
 }
 
 /**
@@ -364,13 +378,13 @@ function WarnSlowAcquire() {
  *
  * For a session that outlives one statement: a cursor's stream, a named lock, a transaction. The
  * wait for a connection has no deadline, which is legitimate while cursors hold the pool, but a
- * caller blocked inside it can say nothing about why, which is what {@link SLOW_ACQUIRE} is for. One
+ * caller blocked inside it can say nothing about why, which is what {@link SlowAcquire} is for. One
  * line per episode, not per caller; the timer is `unref`'d and cleared however the wait settles.
  */
 export function AcquireConnection(): Promise<PoolConnection> {
   const current = GetPool();
   const engine = GetDialect();
-  const slow = setTimeout(WarnSlowAcquire, SLOW_ACQUIRE_MS);
+  const slow = setTimeout(WarnSlowAcquire, SLOW_ACQUIRE_MS, engine.name);
   slow.unref();
   return Checkout(current, engine).finally(() => {
     clearTimeout(slow);

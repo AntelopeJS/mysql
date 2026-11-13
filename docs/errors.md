@@ -120,10 +120,10 @@ Under `conflict: "update"` or `"replace"`, an existing `_id` is upserted, not re
 | A `dialect` other than `"auto"`, `"mysql"` or `"mariadb"`                                                            | `dialect must be "auto" or a supported engine, received {dialect}`                                 |
 | A `pool` option the module sets itself                                                                               | `pool.{options} cannot be set: the module sets it itself`                                          |
 | `mode: "external"` with no `url`, or an empty one                                                                    | `mode "external" needs a non-empty config.url; set it through the project's envOverrides`          |
-| Queried with no configuration set                                                                                    | `MySQL adapter is not configured: construct() has not run yet`                                     |
-| Queried with no pool open                                                                                            | `MySQL adapter is not connected: construct() has not run yet`                                      |
+| Queried with no configuration set                                                                                    | `MySQL or MariaDB adapter is not configured: construct() has not run yet`                          |
+| Queried with no pool open                                                                                            | `MySQL or MariaDB adapter is not connected: construct() has not run yet`                           |
 
-Both suffixes name the common cause, not the only one. `construct()` clears the configuration and leaves no pool when it fails to reach the server. A query therefore answers these messages after a failed startup too, and after `destroy()`. An external instance that started without a connection answers `MySQL adapter is not connected: {reason}` instead. See [A connection that fails at startup](./external-mode.md#a-connection-that-fails-at-startup).
+Both suffixes name the common cause, not the only one. `construct()` clears the configuration and leaves no pool when it fails to reach the server. A query therefore answers these messages after a failed startup too, and after `destroy()`. An external instance that started without a connection answers `{engine} adapter is not connected: {reason}` instead, where `{engine}` is the engine `dialect` names, or `MySQL or MariaDB` under `auto`. See [A connection that fails at startup](./external-mode.md#a-connection-that-fails-at-startup).
 
 ## External mode
 
