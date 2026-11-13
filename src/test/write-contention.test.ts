@@ -352,3 +352,43 @@ describe("a write through a nested target of many rows", function () {
     expect(nested).to.deep.equal(flat);
   });
 });
+
+/** Enough rows that twenty writers sorting both ways keep meeting while they scan. */
+const COMPUTED_ROWS = 9000;
+
+/** The rows the writers through a computed bound select out of those. */
+const COMPUTED_PICKED = 500;
+
+/** How many times the twenty writers run, each over freshly seeded rows. */
+const COMPUTED_ROUNDS = 5;
+
+describe("writes through a slice whose bound the query computes", function () {
+  this.timeout(180_000);
+
+  /**
+   * A bound the query computes numbers the rows in a block of its own, which wraps the table's
+   * block. A numbering block that left out the table block's lock would read the rows shared, and
+   * writers sorting both ways would deadlock upgrading each other's shared locks past every retry.
+   */
+  it("applies every write from twenty writers sorting the table either way", async () => {
+    await Seeded("items", COMPUTED_ROWS);
+    for (let round = 0; round < COMPUTED_ROUNDS; round += 1) {
+      await Seeded("sorted", COMPUTED_ROWS);
+      const outcomes = await Promise.allSettled(
+        Array.from({ length: WRITERS }, (_, i) =>
+          sorted()
+            .orderBy("n", i % 2 === 0 ? "asc" : "desc")
+            .slice(0, items().count())
+            .filter((row) => row.key("n").lt(COMPUTED_PICKED))
+            .update((row) => ({ g: row.key("g").default(0).add(1) }))
+            .run(),
+        ),
+      );
+      expect(Failures(outcomes)).to.deep.equal([]);
+      const written = await sorted()
+        .filter((row) => row.key("g").eq(WRITERS))
+        .count();
+      expect(written).to.equal(COMPUTED_PICKED);
+    }
+  });
+});
