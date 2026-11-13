@@ -13,6 +13,7 @@ docs:
   - docs/change-feeds.md
 journeys:
   - change-feeds
+  - change-feeds-mariadb
 ---
 
 # Change feeds
@@ -22,6 +23,7 @@ journeys:
 ## Sub-features
 
 - `change-feeds`: a feed opened before the writes delivers `added`, `modified`, `modified` and `removed` in order, with `oldValue` absent on `added` and `newValue` absent on `removed`, then an `added` for a row written with the `mysql` client while it is open; a filtered feed shows a row leaving its filter as `modified` and delivers nothing for its removal outside the filter; registration created `__antelope_changes`, `__antelope_change_clock` and `__antelope_change_reaped`; watching the table installed one `AFTER` row trigger per operation, named `ajs_chg_<signature>_<i|u|d>`.
+- `change-feeds-mariadb`: the same journey on MariaDB 11.8, whose triggers live in trigger files rather than the InnoDB dictionary.
 
 ## How to get to it (user POV)
 

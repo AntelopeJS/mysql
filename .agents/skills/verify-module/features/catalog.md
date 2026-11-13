@@ -18,6 +18,8 @@ docs:
 journeys:
   - catalog-describe
   - catalog-refused
+  - catalog-describe-mariadb
+  - catalog-refused-mariadb
 ---
 
 # Catalog
@@ -28,6 +30,7 @@ journeys:
 
 - `catalog-describe`: `Info` answers the engine `mysql`, the url's database and the user part of the connected account; `ListRelations` answers each relation with its kind, key and what the account may write; `DescribeRelations` answers the comment and the columns; `Profile` names the categories of a column with few distinct values; `SampleRows` answers the requested columns and rows as text; the client's database is unchanged afterwards.
 - `catalog-refused`: an owned instance refuses the catalog; `catalog.enabled: false` refuses it under `ajs project dev` while the database interface still answers; an external instance whose server does not answer still starts in development, and both the catalog and a query refuse with `MySQL adapter is not connected: <reason>`.
+- `catalog-describe-mariadb`, `catalog-refused-mariadb`: the same journeys on MariaDB 11.8, where `Info` answers `engine` `mariadb`.
 
 ## How to get to it (user POV)
 

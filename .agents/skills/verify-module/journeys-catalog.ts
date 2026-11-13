@@ -2,17 +2,17 @@ import { has, type Journey } from "@antelopejs/tooling-configs/verify";
 
 import { CLIENT, externalConfig, READER, seedClient } from "./client.ts";
 import { pick } from "./json.ts";
-import { answered, close, open, ownedConfig, part, same, sees, server, sql } from "./session.ts";
+import { answered, close, open, ownedConfig, part, same, sees, server, sql, type Engine } from "./session.ts";
 
 const ATTEMPT = `const out = {};
 const attempt = async (label, work) => { try { out[label] = { ok: true, value: await work() }; } catch (error) { out[label] = { ok: false, message: String(error.message) }; } };`;
 
-export const catalogDescribe: Journey = {
+export const catalogDescribe = (engine: Engine): Journey => ({
   title: "the catalog of an external instance answers the database, its relations with keys and writes, their columns, a profile of aggregates and a capped sample, and writes nothing",
   entryPoint: "`Info`, `ListRelations`, `DescribeRelations`, `Profile` and `SampleRows` of @antelopejs/interface-database-catalog under `ajs project dev`",
   async run(context) {
-    await seedClient(context);
-    const session = await open(context, externalConfig(context));
+    await seedClient(context, engine);
+    const session = await open(context, externalConfig(context, engine));
     const result = await session.run(
       "describe the client's database",
       `const info = await catalog.Info();
@@ -32,7 +32,7 @@ return {
     );
     context.expect(result.folder, [answered(result)], { critical: true });
     context.expect(result.folder, [
-      sees("Info answers the engine, the url's database and the connected account's user", part(result, "info"), { database: CLIENT, engine: "mysql", role: READER }),
+      sees("Info answers the engine, the url's database and the connected account's user", part(result, "info"), { database: CLIENT, engine: engine.name, role: READER }),
       sees("ListRelations answers each relation with its kind, key and what the account may write", part(result, "relations"), [
         { key: { columns: ["id"], source: "primary" }, kind: "table", name: "accounts", unmappable: null, writes: { delete: true, insert: true, update: true } },
         { key: null, kind: "view", name: "active_accounts", unmappable: null, writes: { delete: false, insert: false, update: false } },
@@ -56,6 +56,7 @@ return {
     ]);
     const untouched = await sql(
       context,
+      engine,
       "read the client's database after the catalog calls",
       `SELECT JSON_OBJECT('rows', (SELECT COUNT(*) FROM accounts), 'installed', (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_NAME LIKE '\\_\\_antelope%'))`,
       CLIENT,
@@ -63,25 +64,25 @@ return {
     context.expect(untouched.folder, [same("the catalog wrote nothing to the client's database", untouched.value, { installed: 0, rows: 30 })]);
     await close(session);
   },
-};
+});
 
-export const catalogRefused: Journey = {
+export const catalogRefused = (engine: Engine): Journey => ({
   title: "an owned instance refuses the catalog, an external instance with catalog.enabled false refuses it, and an external instance whose server is down still starts in development and says why",
   entryPoint: "`catalog.Info()` from a consumer module against an owned instance, an external one with `catalog: { enabled: false }`, and an external one whose `url` does not answer",
   async run(context) {
-    await seedClient(context);
+    await seedClient(context, engine);
     const probe = `${ATTEMPT}
 await attempt("info", () => catalog.Info());
 await attempt("query", () => new Schema("${CLIENT}", { audit: { fields: { note: "string" }, indexes: {} } }).instance().table("audit").count().run());
 return out;`;
-    const owned = await open(context, ownedConfig(server(context)));
+    const owned = await open(context, ownedConfig(server(context, engine)));
     const ownedResult = await owned.run("call the catalog of an owned instance", probe);
     context.expect(ownedResult.folder, [
       answered(ownedResult),
       has("an owned instance refuses the catalog", JSON.stringify(pick(ownedResult.value, "info") ?? null), /this instance owns its tables/u),
     ]);
     await close(owned);
-    const disabled = await open(context, externalConfig(context, { catalog: { enabled: false } }));
+    const disabled = await open(context, externalConfig(context, engine, { catalog: { enabled: false } }));
     const disabledResult = await disabled.run("call the catalog with catalog.enabled false", probe);
     context.expect(disabledResult.folder, [
       answered(disabledResult),
@@ -98,4 +99,4 @@ return out;`;
     ]);
     await close(down);
   },
-};
+});

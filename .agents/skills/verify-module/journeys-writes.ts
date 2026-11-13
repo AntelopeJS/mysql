@@ -1,15 +1,15 @@
 import { has, type Journey } from "@antelopejs/tooling-configs/verify";
 
 import { pick, text } from "./json.ts";
-import { answered, close, open, ownedConfig, part, same, sees, server, sql } from "./session.ts";
+import { answered, close, open, ownedConfig, part, same, sees, server, sql, type Engine } from "./session.ts";
 
 const DEFINITION = `{ docs: { fields: { title: "string", n: "number", done: "boolean", at: "date", tags: "string[]", meta: "object" }, indexes: {} } }`;
 
-export const insertValues: Journey = {
+export const insertValues = (engine: Engine): Journey => ({
   title: "insert resolves to one id per document and stores each declared type in its column, an undeclared field in _extra and the instance in _instance",
   entryPoint: "`table.insert(document | documents)` from a consumer module, read back with the mysql client",
   async run(context) {
-    const session = await open(context, ownedConfig(server(context)));
+    const session = await open(context, ownedConfig(server(context, engine)));
     const result = await session.run(
       "insert documents",
       `const schema = new Schema("verify-writes", ${DEFINITION});
@@ -44,24 +44,26 @@ return { manyCount: many.length, generated: many.every((id) => typeof id === "st
     ]);
     const columns = await sql(
       context,
+      engine,
       "read the columns of the stored table",
       `SELECT JSON_OBJECTAGG(COLUMN_NAME, COLUMN_TYPE) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'verify' AND TABLE_NAME = 'verify-writes__docs'`,
     );
     context.expect(columns.folder, [
       same("each declared field is a column of its documented type, beside _id, _instance and _extra", columns.value, {
-        _extra: "json",
+        _extra: engine.documentType,
         _id: "varchar(512)",
         _instance: "varchar(128)",
         at: "datetime(6)",
         done: "tinyint(1)",
-        meta: "json",
+        meta: engine.documentType,
         n: "double",
-        tags: "json",
+        tags: engine.documentType,
         title: "longtext",
       }),
     ]);
     const row = await sql(
       context,
+      engine,
       "read the stored row",
       "SELECT JSON_OBJECT('instance', _instance, 'title', title, 'n', n, 'done', done, 'at', DATE_FORMAT(`at`, '%Y-%m-%dT%H:%i:%s.%f'), 'tags', tags, 'extra', _extra, 'count', (SELECT COUNT(*) FROM `verify-writes__docs`)) FROM `verify-writes__docs` WHERE _id = 'one'",
     );
@@ -79,13 +81,13 @@ return { manyCount: many.length, generated: many.every((id) => typeof id === "st
     ]);
     await close(session);
   },
-};
+});
 
-export const updateReplaceDelete: Journey = {
+export const updateReplaceDelete = (engine: Engine): Journey => ({
   title: "update merges into the stored row, replace swaps it whole, delete removes it, and a taken _id is a DuplicateKeyError",
   entryPoint: "`get(id).update/replace/delete()` and `insert` of a taken `_id` from a consumer module, read back with the mysql client",
   async run(context) {
-    const session = await open(context, ownedConfig(server(context)));
+    const session = await open(context, ownedConfig(server(context, engine)));
     const result = await session.run(
       "update, replace and delete rows",
       `const schema = new Schema("verify-change", ${DEFINITION});
@@ -109,6 +111,7 @@ return out;`,
     ]);
     const rows = await sql(
       context,
+      engine,
       "read the stored rows",
       "SELECT JSON_OBJECTAGG(_id, JSON_OBJECT('title', title, 'n', n, 'done', done, 'meta', meta)) FROM `verify-change__docs`",
     );
@@ -120,4 +123,4 @@ return out;`,
     ]);
     await close(session);
   },
-};
+});

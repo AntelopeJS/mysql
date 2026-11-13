@@ -2,16 +2,16 @@ import { has, type Journey } from "@antelopejs/tooling-configs/verify";
 
 import { CLIENT, externalConfig, SALES, seedClient } from "./client.ts";
 import { pick, text } from "./json.ts";
-import { answered, close, logs, open, part, same, sees, sql } from "./session.ts";
+import { answered, close, logs, open, part, same, sees, sql, type Engine } from "./session.ts";
 
 const ATTEMPT = `const attempt = async (label, work) => { try { await work(); out[label] = { ok: true }; } catch (error) { out[label] = { name: error.name, kind: error.kind ?? null, message: String(error.message) }; } };`;
 
-export const externalReadWrite: Journey = {
+export const externalReadWrite = (engine: Engine): Journey => ({
   title: "an external instance reads the client's rows under their own names with _id as the key's text, writes only declared fields into granted tables, and installs nothing in the client's database",
   entryPoint: "`mode: \"external\"` with a reader account's `url`, and a schema declared with the database's own names, from a consumer module",
   async run(context) {
-    await seedClient(context);
-    const session = await open(context, externalConfig(context));
+    await seedClient(context, engine);
+    const session = await open(context, externalConfig(context, engine));
     const result = await session.run(
       "read and write the client's accounts",
       `const sales = ${SALES};
@@ -66,6 +66,7 @@ return out;`,
     ]);
     const stored = await sql(
       context,
+      engine,
       "read the client's database as root",
       `SELECT JSON_OBJECT(
   'inserted', (SELECT JSON_OBJECT('name', name, 'status', status, 'score', score) FROM accounts WHERE id = 31),
@@ -88,14 +89,14 @@ return out;`,
     ]);
     await close(session);
   },
-};
+});
 
-export const externalRegistration: Journey = {
+export const externalRegistration = (engine: Engine): Journey => ({
   title: "registration of an external schema fails, naming what is missing, when a declared column does not exist, and every query on that schema fails",
   entryPoint: "a schema declared with a column the client's table lacks, under `mode: \"external\"`",
   async run(context) {
-    await seedClient(context);
-    const session = await open(context, externalConfig(context));
+    await seedClient(context, engine);
+    const session = await open(context, externalConfig(context, engine));
     const refused = await session.run(
       "declare a missing column and query",
       `const sales = new Schema("${CLIENT}", { accounts: { fields: { name: "string", nickname: "string" }, indexes: {} } });
@@ -109,4 +110,4 @@ try { return { count: await sales.instance().table("accounts").count().run() }; 
     ]);
     await close(session);
   },
-};
+});

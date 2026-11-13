@@ -1,7 +1,7 @@
 import { has, type Journey } from "@antelopejs/tooling-configs/verify";
 
 import { parseJson, pick } from "./json.ts";
-import { answered, close, open, path, same, sees, server, sql, urlOf, type ModuleConfig } from "./session.ts";
+import { answered, close, open, path, same, sees, server, sql, urlOf, type Engine, type ModuleConfig } from "./session.ts";
 
 /** A server nothing answers on, so a refusal that regressed past validation can never reach a developer's local database. */
 const DEAD = "mysql://root@127.0.0.1:1/verify";
@@ -12,7 +12,7 @@ const REFUSALS: [string, ModuleConfig, RegExp][] = [
   ["a fractional cursorBatchSize", { url: DEAD, cursorBatchSize: 1.5 }, /cursorBatchSize must be a positive safe integer, received 1\.5/u],
   ["a negative changeRetentionMs", { url: DEAD, changeRetentionMs: -5 }, /changeRetentionMs must be a positive safe integer, received -5/u],
   ["a negative statementTimeoutMs", { url: DEAD, statementTimeoutMs: -1 }, /statementTimeoutMs must be a non-negative safe integer, received -1/u],
-  ["an unknown dialect", { url: DEAD, dialect: "mariadb" }, /dialect must be "auto" or a supported engine, received mariadb/u],
+  ["an unknown dialect", { url: DEAD, dialect: "postgres" }, /dialect must be "auto" or a supported engine, received postgres/u],
   ["a pool option the module sets itself", { url: DEAD, pool: { timezone: "local" } }, /pool\.timezone cannot be set: the module sets it itself/u],
   ["an external instance without a url", { mode: "external" }, /mode "external" needs a non-empty config\.url/u],
   [
@@ -57,8 +57,10 @@ const PIN = `SELECT JSON_ARRAYAGG(JSON_ARRAY(name, value)) FROM (
     AND v.VARIABLE_NAME IN ('collation_connection', 'time_zone', 'lc_messages', 'sql_mode')
   ORDER BY name) pinned`;
 
-export const configOptions: Journey = {
-  title: "the default config points at localhost, a pool option the url does not set reaches every connection, every connection runs the session pin, and schemaPrefix prefixes every table name",
+export const configOptions = (engine: Engine): Journey => ({
+  title: engine.performanceSchema
+    ? "the default config points at localhost, a pool option the url does not set reaches every connection, every connection runs the session pin, and schemaPrefix prefixes every table name"
+    : "the default config points at localhost, the module starts with a pool option the url does not set, and schemaPrefix prefixes every table name",
   entryPoint: "`url`, `pool` and `schemaPrefix` in the module's config in antelope.config.ts",
   async run(context) {
     const manifest = await context.command("read the module's package.json, where the default configuration `ajs project modules add` writes lives", "cat", [
@@ -70,24 +72,34 @@ export const configOptions: Journey = {
         url: "mysql://root@localhost:3306/antelopejs",
       }),
     ]);
-    const merged = await open(context, { url: urlOf(server(context)), pool: { connectAttributes: { program_name: "verify-pool" } }, schemaPrefix: "app_" });
+    const merged = await open(context, { url: urlOf(server(context, engine)), pool: { connectAttributes: { program_name: "verify-pool" } }, schemaPrefix: "app_" });
     const result = await merged.run("round trip with a pool option and a schemaPrefix", ROUND_TRIP);
     context.expect(result.folder, [answered(result), sees("the document written through the module reads back", result, "stored")]);
     const stored = await sql(
       context,
+      engine,
       "read the prefixed table",
       `SELECT JSON_ARRAYAGG(TABLE_NAME) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'verify' AND TABLE_NAME LIKE '%verify-config%'`,
     );
     context.expect(stored.folder, [same("the table is stored as <schemaPrefix><schemaId>__<tableId> in the url's database, and only there", stored.value, ["app_verify-config__notes"])]);
-    const pinned = await sql(context, "read the session variables of the module's connections", PIN);
-    context.expect(pinned.folder, [
-      same("every connection carrying pool.connectAttributes runs the session pin: binary NO PAD collation, UTC, English messages, strict mode", pinned.value, [
-        ["collation_connection", "utf8mb4_0900_bin"],
-        ["lc_messages", "en_US"],
-        ["sql_mode", "STRICT_ALL_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION"],
-        ["time_zone", "+00:00"],
-      ]),
-    ]);
+    const dialect = await sql(
+      context,
+      engine,
+      "read the collation and the _extra column type the dialect chose",
+      `SELECT JSON_ARRAY((SELECT TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'verify' AND TABLE_NAME = 'app_verify-config__notes'), (SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = 'verify' AND TABLE_NAME = 'app_verify-config__notes' AND COLUMN_NAME = '_extra'))`,
+    );
+    context.expect(dialect.folder, [same(`the module detected ${engine.name}: the table is ${engine.collation} and _extra ${engine.documentType}`, dialect.value, [engine.collation, engine.documentType])]);
+    if (engine.performanceSchema) {
+      const pinned = await sql(context, engine, "read the session variables of the module's connections", PIN);
+      context.expect(pinned.folder, [
+        same("every connection carrying pool.connectAttributes runs the session pin: binary NO PAD collation, UTC, English messages, strict mode", pinned.value, [
+          ["collation_connection", engine.collation],
+          ["lc_messages", "en_US"],
+          ["sql_mode", "STRICT_ALL_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION"],
+          ["time_zone", "+00:00"],
+        ]),
+      ]);
+    }
     await close(merged);
   },
-};
+});

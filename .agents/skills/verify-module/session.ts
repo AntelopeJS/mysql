@@ -7,30 +7,76 @@ export type ModuleConfig = NonNullable<
   NonNullable<Parameters<JourneyContext["fixture"]>[0]>["moduleConfig"]
 >;
 
-/** The name of the run's MySQL service in `verify.config.ts`. */
-export const SERVICE = "mysql";
+/** A server the journeys run against: its service in `verify.config.ts` and what it answers differently from the other engine. */
+export interface Engine {
+  /** The service's name in `verify.config.ts`, and the suffix of its journey ids unless it is {@link MYSQL}. */
+  service: "mysql" | "mariadb";
+  image: string;
+  /** The native client inside the image. */
+  client: "mysql" | "mariadb";
+  env: Record<string, string>;
+  /** The collation of every column, literal and bound value the module writes. */
+  collation: string;
+  /** The type the catalog reports for a document column. */
+  documentType: string;
+  /** What `catalog.Info()` answers as `engine`. */
+  name: string;
+  /** Whether a `multi` index over an array becomes a multi-valued index; without one, registration leaves the index out. */
+  multiValuedIndex: boolean;
+  /** Whether the image starts with `performance_schema` on, where root reads the session variables of the module's connections. */
+  performanceSchema: boolean;
+}
 
 /** The database every journey starts from empty: the service's `reset` drops and creates it before each journey. */
 export const DATABASE = "verify";
 
-/** The `mysql` arguments that run statements in `database` as root and print bare rows, unescaped. */
-export function mysql(database: string): string[] {
-  return ["mysql", "-uroot", "-N", "-B", "-r", database, "-e"];
+/** MySQL 8.4, whose journeys keep their bare ids. */
+export const MYSQL: Engine = {
+  service: "mysql",
+  image: "mysql:8.4",
+  client: "mysql",
+  env: { MYSQL_ALLOW_EMPTY_PASSWORD: "yes", MYSQL_DATABASE: DATABASE },
+  collation: "utf8mb4_0900_bin",
+  documentType: "json",
+  name: "mysql",
+  multiValuedIndex: true,
+  performanceSchema: true,
+};
+
+/** MariaDB 11.8 LTS, whose journeys run under `<id>-mariadb`. */
+export const MARIADB: Engine = {
+  service: "mariadb",
+  image: "mariadb:11.8",
+  client: "mariadb",
+  env: { MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "1", MARIADB_DATABASE: DATABASE },
+  collation: "utf8mb4_nopad_bin",
+  documentType: "longtext",
+  name: "mariadb",
+  multiValuedIndex: false,
+  performanceSchema: false,
+};
+
+/** Every engine the journeys run against. */
+export const ENGINES = [MYSQL, MARIADB];
+
+/** The client arguments that run statements in `database` as root and print bare rows, unescaped. */
+export function client(engine: Engine, database: string): string[] {
+  return [engine.client, "-uroot", "-N", "-B", "-r", database, "-e"];
 }
 
-/** The URL of the run's MySQL as an app reaches it from the host. */
+/** The URL of a run's server as an app reaches it from the host. */
 export function urlOf(endpoint: ServiceEndpoint, user = "root", database = DATABASE): string {
   return `mysql://${user}@${endpoint.host}:${String(endpoint.port)}/${database}`;
 }
 
-/** The owned-mode config pointing at the run's MySQL. */
+/** The owned-mode config pointing at a run's server. */
 export function ownedConfig(endpoint: ServiceEndpoint): ModuleConfig {
   return { url: urlOf(endpoint) };
 }
 
-/** The run's MySQL service. */
-export function server(context: JourneyContext): ServiceEndpoint {
-  return context.service(SERVICE);
+/** The run's service of `engine`. */
+export function server(context: JourneyContext, engine: Engine): ServiceEndpoint {
+  return context.service(engine.service);
 }
 
 /** A check that two values are the same JSON once their keys are in order; an absent value equals only another absent one. */
@@ -48,17 +94,17 @@ interface NativeResult {
   stderr: string;
 }
 
-/** Runs one statement with `mysql` inside the run's container, as root, and parses the JSON its last line prints; a statement that fails ends the journey, since its read-back would compare nothing. */
-export async function sql(context: JourneyContext, name: string, statement: string, database = DATABASE): Promise<NativeResult> {
-  const result = await context.native(name, SERVICE, [...mysql(database), statement]);
+/** Runs one statement with the engine's client inside its container, as root, and parses the JSON its last line prints; a statement that fails ends the journey, since its read-back would compare nothing. */
+export async function sql(context: JourneyContext, engine: Engine, name: string, statement: string, database = DATABASE): Promise<NativeResult> {
+  const result = await context.native(name, engine.service, [...client(engine, database), statement]);
   context.expect(result.folder, [{ name: "the read-back statement ran", pass: result.exitCode === 0, detail: result.stderr.slice(-300) }], { critical: true });
   const lines = result.stdout.trim().split("\n");
   return { folder: result.folder, value: parseJson(lines.at(-1) ?? ""), exitCode: result.exitCode, stderr: result.stderr };
 }
 
-/** Runs statements with `mysql` as root and fails the journey when one fails: the seed a journey reads back. */
-export async function seed(context: JourneyContext, name: string, statements: string, database = DATABASE): Promise<void> {
-  const result = await context.native(name, SERVICE, [...mysql(database), statements]);
+/** Runs statements with the engine's client as root and fails the journey when one fails: the seed a journey reads back. */
+export async function seed(context: JourneyContext, engine: Engine, name: string, statements: string, database = DATABASE): Promise<void> {
+  const result = await context.native(name, engine.service, [...client(engine, database), statements]);
   context.expect(result.folder, [{ name: "the seed statements ran", pass: result.exitCode === 0, detail: result.stderr.slice(-300) }], {
     critical: true,
   });
