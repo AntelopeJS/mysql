@@ -72,6 +72,18 @@ export interface Flavour {
   present(value: Sql): Sql;
   /** The JSON syntax's `absent`, which depends on how the engine compares a JSON string. */
   absent(value: Sql): Sql;
+  /**
+   * `JSON_VALUE` of the path, whatever the length of the string it finds: a string's text, SQL
+   * NULL for an absent value and a JSON null.
+   */
+  value(document: Sql, path: Sql): Sql;
+  /**
+   * Whether {@link Flavour.value} is SQL NULL exactly where a member read is absent or equal to a
+   * JSON null, so a default's text is one `COALESCE`. MySQL's documents hold their keys decoded.
+   * MariaDB's `JSON_VALUE` finds a plain key stored escaped, as `"f\u0072"`, that the member
+   * read leaves unread.
+   */
+  readonly valueIsRead: boolean;
   /** A double as a JSON number, a negative zero included. */
   number(value: Sql): Sql;
   /** Whether JSON text the engine parses keeps a finite number exactly. */
@@ -167,6 +179,12 @@ const UTC_DESIGNATOR = /Z$/;
 const UTC_OFFSET = "+00:00";
 
 /**
+ * The longest `CHAR` a `RETURNING` clause takes. `JSON_VALUE` answers SQL NULL for a string longer
+ * than its type, `VARCHAR(512)` by default.
+ */
+const MAX_TEXT_CHARS = 4294967295;
+
+/**
  * MySQL 8.4 LTS and 9.7 LTS. MySQL 8.4's JSON parser reads some doubles of 17 significant digits as
  * a neighbour, and JSON text spells a negative zero `0`, so of the finite numbers only a safe
  * integer other than -0 survives the text; any other goes as a bound `DOUBLE`.
@@ -191,6 +209,9 @@ export const MYSQL: Flavour = {
   present: (value) => sql`NULLIF(${value}, CAST('null' AS JSON))`,
   absent: (value) =>
     sql`((${value} IS NULL) OR (${value} = CAST('null' AS JSON)))`,
+  value: (document, path) =>
+    sql`JSON_VALUE(${document}, ${path} RETURNING CHAR(${int(MAX_TEXT_CHARS)}))`,
+  valueIsRead: true,
   number: (value) => sql`CAST(${value} AS JSON)`,
   keepsInText: (value) => Number.isSafeInteger(value) && !Object.is(value, -0),
   boolean: (truth) => sql`CAST(${truth} AS JSON)`,

@@ -125,6 +125,7 @@ export function Cast(
       sql: dialect.sql.json.as(value.sql, target.kind),
       type: target,
       key: PathReference(dialect, value, target),
+      texts: target.kind === "text" ? TextsOf(dialect, value) : undefined,
     };
   }
   return { sql: dialect.sql.scalar.cast(value.sql, target.kind), type: target };
@@ -241,6 +242,31 @@ function Absent(dialect: Dialect, pair: CompiledPair) {
   return dialect.sql.json.present(pair.left.sql);
 }
 
+/** A JSON value's texts, where the value is a read or a default over reads (see `Compiled.texts`). */
+function TextsOf(
+  dialect: Dialect,
+  value: Compiled,
+): readonly Sql[] | undefined {
+  if (value.texts) {
+    return value.texts;
+  }
+  const path = value.path;
+  return path && [dialect.sql.json.memberText(path.document, ...path.path)];
+}
+
+/** The texts of a JSON value or its default, where both have texts. */
+function DefaultedTexts(
+  dialect: Dialect,
+  pair: CompiledPair,
+): readonly Sql[] | undefined {
+  if (!IsJsonBacked(pair.type)) {
+    return undefined;
+  }
+  const value = TextsOf(dialect, pair.left);
+  const def = TextsOf(dialect, pair.right);
+  return value && def && dialect.sql.json.defaultTexts(value, def);
+}
+
 /**
  * Common type for a value and the default standing in for its absence.
  * Not {@link Unify}: a JSON-backed value keeps its kind and the default is lifted to JSON.
@@ -279,5 +305,6 @@ export function WithDefault(
     type: pair.type,
     key: left.key && { ...left.key, rows: "set" },
     defaulted: left.path ?? left.defaulted,
+    texts: DefaultedTexts(dialect, pair),
   };
 }

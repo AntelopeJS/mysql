@@ -37,6 +37,8 @@ function Present(fragment: Sql | undefined): Sql[] {
 
 const MASKED_JSON: JsonSyntax = {
   member: (document) => Marked(document),
+  memberText: (document) => Marked(document),
+  defaultTexts: (value, def) => [...value, ...def],
   dynamicMember: (document, key) => Marked(document, key),
   is: (value) => Marked(value),
   as: (value) => Marked(value),
@@ -128,6 +130,7 @@ const MASKED_ROWS: RowSyntax = {
   materialize: () => Marked(),
   lookup: (subselect) => ({ join: Marked(subselect), value: Marked() }),
   joinScope: (column, value) => Marked(column, value),
+  nestedLoopJoin: false,
   hold: (value) => ({ from: Marked(value), value: Marked() }),
   returning: false,
 };

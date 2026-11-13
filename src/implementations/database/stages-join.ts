@@ -9,7 +9,7 @@ import { Compare } from "./json";
 import { UnifyOperands } from "./coerce";
 import { DecodeFunction, RecordedLambda } from "./value";
 import { type JoinedSide, KeyedSide } from "./join-key";
-import { AsJson, Predicate } from "./readings";
+import { AsJson, Holds, Predicate } from "./readings";
 import type { DecodingContext } from "./context";
 import { NamedField, type RowSource } from "./row-source";
 import type { PipelineStage, PipelineStageMap } from "./pipeline";
@@ -105,7 +105,12 @@ function InstanceScoped(
   return sql`(${scope} AND ${condition})`;
 }
 
-/** Binds both lambda parameters to the two row sources, which leaves the condition two columns. */
+/**
+ * Binds both lambda parameters to the two row sources, which leaves the condition two columns. An
+ * engine that evaluates the condition once per pair of rows reads its `holds`, which rejects most
+ * pairs in one read. One that hash joins computes every equality of the condition once per row as
+ * a key, so it reads the exact condition, whose one equality is the only key.
+ */
 function Condition(
   stage: QueryStage,
   sources: RowSource[],
@@ -117,7 +122,11 @@ function Condition(
     sources,
   );
   const matched = RequireOperand(body, stage, SECOND_OPERAND);
-  return sql`(${Predicate(context.dialect, matched).sql})`;
+  const { dialect } = context;
+  const truth = dialect.sql.rows.nestedLoopJoin
+    ? Holds(dialect, matched)
+    : Predicate(dialect, matched).sql;
+  return sql`(${truth})`;
 }
 
 /**

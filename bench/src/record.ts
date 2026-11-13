@@ -39,6 +39,8 @@ export interface RoundRecord {
   readonly loadAverage: string;
   readonly containers: readonly string[];
   readonly cases: readonly CaseTimings[];
+  /** The run loaded the base checkout (`BENCH_BASE`), not the code under test. */
+  readonly base: boolean;
 }
 
 export interface CaseRecord {
@@ -58,6 +60,8 @@ export interface BenchRecord {
   readonly cases: readonly CaseRecord[];
   readonly engines: readonly EngineRecord[];
   readonly rounds: readonly RoundRecord[];
+  /** The commit of the base checkout each round measured beside the code under test, if any. */
+  readonly baseRevision: string | undefined;
 }
 
 interface RecordTimes {
@@ -86,7 +90,10 @@ function HasTimes(value: unknown): value is RecordTimes {
   );
 }
 
-/** Whether a value read back from `out/record.json` is a run's record: the fields the report reads. */
+/**
+ * Whether a value read back from `out/record.json` is a run's record: the fields the report reads.
+ * A record from a run without a base, or from before runs had one, names no base commit.
+ */
 export function IsBenchRecord(value: unknown): value is BenchRecord {
   return (
     HasTimes(value) &&
@@ -98,6 +105,9 @@ export function IsBenchRecord(value: unknown): value is BenchRecord {
     "rounds" in value &&
     Array.isArray(value.cases) &&
     Array.isArray(value.engines) &&
-    Array.isArray(value.rounds)
+    Array.isArray(value.rounds) &&
+    (!("baseRevision" in value) ||
+      value.baseRevision === undefined ||
+      typeof value.baseRevision === "string")
   );
 }

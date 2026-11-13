@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -90,18 +90,22 @@ function Engines(): Engine[] {
 
 let runCount = 0;
 
-/** One `ajs module test` of the bench module against one engine, answering what it wrote. */
+/**
+ * One `ajs module test` of the bench module against one engine, answering what it wrote. `base`
+ * is a checkout the MySQL backend loads from in place of this repository.
+ */
 async function RunAjs(
   engine: Engine,
   mode: RunMode,
   settings: BenchSettings,
   runs: number,
+  base?: string,
 ): Promise<RunOutput> {
   runCount++;
-  const label = `${String(runCount).padStart(3, "0")}-${engine.id}-${mode}`;
+  const label = `${String(runCount).padStart(3, "0")}-${engine.id}-${mode}${base ? "-base" : ""}`;
   const output = path.join(OUTPUT, `${label}.json`);
   const log = path.join(OUTPUT, `${label}.log`);
-  const env = {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     [ENV.backend]: engine.backend,
     [ENV.url]: engine.url(),
@@ -111,6 +115,9 @@ async function RunAjs(
     [ENV.runs]: String(runs),
     [ENV.budgetMs]: String(settings.budgetMs),
   };
+  if (base) {
+    env[ENV.module] = base;
+  }
   const failure = await new Promise<Error | undefined>((resolve) => {
     execFile(
       AJS,
@@ -185,10 +192,11 @@ async function Measured(
   engine: Engine,
   settings: BenchSettings,
   round: number,
+  base?: string,
 ): Promise<RoundRecord> {
   const loadAverage = readFileSync("/proc/loadavg", "utf8").trim();
   const containers = RunningContainers();
-  const output = await RunAjs(engine, "measure", settings, settings.runs);
+  const output = await RunAjs(engine, "measure", settings, settings.runs, base);
   if (!IsMeasure(output)) {
     throw new Error(`${engine.id} answered no measurement`);
   }
@@ -198,7 +206,36 @@ async function Measured(
     loadAverage,
     containers,
     cases: output.cases,
+    base: base !== undefined,
   };
+}
+
+/**
+ * `BENCH_BASE`, a built checkout of the code a run compares against: each round then measures it
+ * on every MySQL-family server right beside this repository's code, so both share a load window.
+ */
+function BaseCheckout(): string | undefined {
+  const raw = process.env.BENCH_BASE;
+  if (!raw) {
+    return undefined;
+  }
+  const base = path.resolve(raw);
+  if (!existsSync(path.join(base, "dist", "index.js"))) {
+    throw new Error(`BENCH_BASE ${base} holds no built dist/index.js`);
+  }
+  return base;
+}
+
+/** The checkouts a round measures on an engine, alternating which goes first from round to round. */
+function Checkouts(
+  engine: Engine,
+  base: string | undefined,
+  round: number,
+): (string | undefined)[] {
+  if (!base || engine.backend !== "mysql") {
+    return [undefined];
+  }
+  return round % 2 === 0 ? [base, undefined] : [undefined, base];
 }
 
 /** Each round starts on the next engine, so warm-up and drift favour none of them. */
@@ -224,6 +261,7 @@ function Machine() {
 
 async function Main(): Promise<void> {
   const settings = ReadSettings();
+  const base = BaseCheckout();
   const startedAt = new Date().toISOString();
   mkdirSync(OUTPUT, { recursive: true });
   const engines = Engines();
@@ -251,8 +289,12 @@ async function Main(): Promise<void> {
     const rounds: RoundRecord[] = [];
     for (let round = 0; round < settings.rounds; round++) {
       for (const engine of RoundOrder(engines, round)) {
-        Progress(`round ${round + 1}: ${engine.id}`);
-        rounds.push(await Measured(engine, settings, round));
+        for (const checkout of Checkouts(engine, base, round)) {
+          Progress(
+            `round ${round + 1}: ${engine.id}${checkout ? " base" : ""}`,
+          );
+          rounds.push(await Measured(engine, settings, round, checkout));
+        }
       }
     }
     const record: BenchRecord = {
@@ -269,6 +311,9 @@ async function Main(): Promise<void> {
       })),
       engines: records,
       rounds,
+      baseRevision: base
+        ? Exec("git", ["-C", base, "rev-parse", "--short", "HEAD"]).trim()
+        : undefined,
     };
     writeFileSync(path.join(OUTPUT, "record.json"), JSON.stringify(record));
     WriteReport(record, BENCH_ROOT);

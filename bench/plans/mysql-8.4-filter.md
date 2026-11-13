@@ -5,7 +5,7 @@ The statements the module sent, from the server's own log, and their plans. Back
 <details><summary><code>filter:title:keys:bare</code>: declared index not used</summary>
 
 ```sql
-SELECT `t0`.`_id`, `t0`.`_instance`, `t0`.`category`, `t0`.`title`, `t0`.`_extra` FROM `nested-bench__books_bare` AS `t0` WHERE (`t0`.`_instance` = 'bench') AND (((CASE WHEN (JSON_TYPE(JSON_EXTRACT(`t0`.`title`, '$."fr"')) IN ('STRING' COLLATE utf8mb4_bin)) THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(`t0`.`title`, '$."fr"')) AS CHAR) END) = 'titre 067999'))
+SELECT `t0`.`_id`, `t0`.`_instance`, `t0`.`category`, `t0`.`title`, `t0`.`_extra` FROM `nested-bench__books_bare` AS `t0` WHERE (`t0`.`_instance` = 'bench') AND (((CAST(JSON_VALUE(`t0`.`title`, '$."fr"' RETURNING CHAR(4294967295)) AS CHAR) = 'titre 067999') AND ((CASE WHEN (JSON_TYPE(JSON_EXTRACT(`t0`.`title`, '$."fr"')) IN ('STRING' COLLATE utf8mb4_bin)) THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(`t0`.`title`, '$."fr"')) AS CHAR) END) = 'titre 067999')))
 ```
 
 ```text
@@ -14,8 +14,8 @@ id | select_type | table | type | possible_keys | key | key_len | rows | filtere
 1 | SIMPLE | t0 | ref | PRIMARY | PRIMARY | 514 | 48165 | 100 | Using where
 
 EXPLAIN ANALYZE
--> Filter: ((case when (json_type(json_extract(t0.title,'$."fr"')) = <cache>(('STRING' collate utf8mb4_bin))) then cast(json_unquote(json_extract(t0.title,'$."f…
-    -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4826 rows=48165) (actual time=0.0171..33.1 rows=100000 loops=1)
+-> Filter: ((cast(json_value(t0.title, '$."fr"' returning char(1073741823)) as char charset utf8mb4) = 'titre 067999') and ((case when (json_type(json_extract(t…
+    -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4826 rows=48165) (actual time=0.0163..29.8 rows=100000 loops=1)
 
 ```
 
@@ -33,7 +33,7 @@ id | select_type | table | type | possible_keys | key | key_len | rows | filtere
 
 EXPLAIN ANALYZE
 -> Filter: ((case when (json_type(json_extract(t0.title,'$."fr"')) = <cache>(('STRING' collate utf8mb4_bin))) then cast(json_unquote(json_extract(t0.title,'$."f…
-    -> Index lookup on t0 using titleFr (_instance='bench', __k_title_fr_25b64d40=left('titre 067999',640))  (cost=0.35 rows=1) (actual time=0.0228..0.0241 rows…
+    -> Index lookup on t0 using titleFr (_instance='bench', __k_title_fr_25b64d40=left('titre 067999',640))  (cost=0.35 rows=1) (actual time=0.0278..0.0292 rows…
 
 ```
 
@@ -41,7 +41,7 @@ EXPLAIN ANALYZE
 <details><summary><code>filter:heading:keys:bare</code>: declared index not used</summary>
 
 ```sql
-SELECT `t0`.`_id`, `t0`.`_instance`, `t0`.`category`, `t0`.`title`, `t0`.`_extra` FROM `nested-bench__books_bare` AS `t0` WHERE (`t0`.`_instance` = 'bench') AND (((CASE WHEN (JSON_TYPE(JSON_EXTRACT(`t0`.`_extra`, '$."_internal"."data"."title"."fr"')) IN ('STRING' COLLATE utf8mb4_bin)) THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(`t0`.`_extra`, '$."_internal"."data"."title"."fr"')) AS CHAR) END) = 'intitulé 016147'))
+SELECT `t0`.`_id`, `t0`.`_instance`, `t0`.`category`, `t0`.`title`, `t0`.`_extra` FROM `nested-bench__books_bare` AS `t0` WHERE (`t0`.`_instance` = 'bench') AND (((CAST(JSON_VALUE(`t0`.`_extra`, '$."_internal"."data"."title"."fr"' RETURNING CHAR(4294967295)) AS CHAR) = 'intitulé 016147') AND ((CASE WHEN (JSON_TYPE(JSON_EXTRACT(`t0`.`_extra`, '$."_internal"."data"."title"."fr"')) IN ('STRING' COLLATE utf8mb4_bin)) THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(`t0`.`_extra`, '$."_internal"."data"."title"."fr"')) AS CHAR) END) = 'intitulé 016147')))
 ```
 
 ```text
@@ -50,8 +50,8 @@ id | select_type | table | type | possible_keys | key | key_len | rows | filtere
 1 | SIMPLE | t0 | ref | PRIMARY | PRIMARY | 514 | 48165 | 100 | Using where
 
 EXPLAIN ANALYZE
--> Filter: ((case when (json_type(json_extract(t0._extra,'$."_internal"."data"."title"."fr"')) = <cache>(('STRING' collate utf8mb4_bin))) then cast(json_unquote…
-    -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4826 rows=48165) (actual time=0.00381..32.7 rows=100000 loops=1)
+-> Filter: ((cast(json_value(t0._extra, '$."_internal"."data"."title"."fr"' returning char(1073741823)) as char charset utf8mb4) = 'intitulé 016147') and ((case…
+    -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4826 rows=48165) (actual time=0.00385..32.1 rows=100000 loops=1)
 
 ```
 
@@ -77,7 +77,7 @@ EXPLAIN ANALYZE
 <details><summary><code>filter:heading:decorators:bare</code>: declared index not used</summary>
 
 ```sql
-SELECT `t0`.`_id`, `t0`.`_instance`, `t0`.`category`, `t0`.`title`, `t0`.`_extra` FROM `nested-bench__books_bare` AS `t0` WHERE (`t0`.`_instance` = 'bench') AND (((CASE WHEN (JSON_TYPE(COALESCE(NULLIF(JSON_EXTRACT(`t0`.`_extra`, '$."_internal"."data"."title"."fr"'), CAST('null' AS JSON)), JSON_EXTRACT(`t0`.`_extra`, '$."_internal"."data"."title"."en"'))) IN ('STRING' COLLATE utf8mb4_bin)) THEN CAST(JSON_UNQUOTE(COALESCE(NULLIF(JSON_EXTRACT(`t0`.`_extra`, '$."_internal"."data"."title"."fr"'), CAST('null' AS JSON)), JSON_EXTRACT(`t0`.`_extra`, '$."_internal"."data"."title"."en"'))) AS CHAR) END) = 'intitulé 016147'))
+SELECT `t0`.`_id`, `t0`.`_instance`, `t0`.`category`, `t0`.`title`, `t0`.`_extra` FROM `nested-bench__books_bare` AS `t0` WHERE (`t0`.`_instance` = 'bench') AND (((COALESCE(CAST(JSON_VALUE(`t0`.`_extra`, '$."_internal"."data"."title"."fr"' RETURNING CHAR(4294967295)) AS CHAR), CAST(JSON_VALUE(`t0`.`_extra`, '$."_internal"."data"."title"."en"' RETURNING CHAR(4294967295)) AS CHAR)) = 'intitulé 016147') AND ((CASE WHEN (JSON_TYPE(COALESCE(NULLIF(JSON_EXTRACT(`t0`.`_extra`, '$."_internal"."data"."title"."fr"'), CAST('null' AS JSON)), JSON_EXTRACT(`t0`.`_extra`, '$."_internal"."data"."title"."en"'))) IN ('STRING' COLLATE utf8mb4_bin)) THEN CAST(JSON_UNQUOTE(COALESCE(NULLIF(JSON_EXTRACT(`t0`.`_extra`, '$."_internal"."data"."title"."fr"'), CAST('null' AS JSON)), JSON_EXTRACT(`t0`.`_extra`, '$."_internal"."data"."title"."en"'))) AS CHAR) END) = 'intitulé 016147')))
 ```
 
 ```text
@@ -86,8 +86,8 @@ id | select_type | table | type | possible_keys | key | key_len | rows | filtere
 1 | SIMPLE | t0 | ref | PRIMARY | PRIMARY | 514 | 48165 | 100 | Using where
 
 EXPLAIN ANALYZE
--> Filter: ((case when (json_type(coalesce(nullif(json_extract(t0._extra,'$."_internal"."data"."title"."fr"'),<cache>(cast('null' as json))),json_extract(t0._ex…
-    -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4826 rows=48165) (actual time=0.00363..34.1 rows=100000 loops=1)
+-> Filter: ((coalesce(cast(json_value(t0._extra, '$."_internal"."data"."title"."fr"' returning char(1073741823)) as char charset utf8mb4),cast(json_value(t0._ex…
+    -> Index lookup on t0 using PRIMARY (_instance='bench')  (cost=4826 rows=48165) (actual time=0.00329..34.1 rows=100000 loops=1)
 
 ```
 

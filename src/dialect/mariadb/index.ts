@@ -451,6 +451,8 @@ const MARIADB: Flavour = {
   escapedKeys: ESCAPED_KEYS,
   present: Present,
   absent: (value) => sql`(${PresentText(value)} IS NULL)`,
+  value: (document, path) => sql`JSON_VALUE(${document}, ${path})`,
+  valueIsRead: false,
   number: JsonNumber,
   keepsInText: (value) => !Object.is(value, -0),
   boolean: (truth) =>

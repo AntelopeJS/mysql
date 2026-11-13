@@ -9,7 +9,7 @@ import type { DecodingContext } from "./context";
 import { CompileExpression } from "./expression";
 import { DeclaredColumns } from "./fields";
 import { ClassifyMember, StageOperand } from "./member";
-import { Predicate } from "./readings";
+import { Holds } from "./readings";
 import { type Relation, RequireOrigin } from "./relation";
 import { FromItem, KeyedIdentities } from "./render";
 import type { RowSource } from "./row-source";
@@ -171,6 +171,6 @@ export function KeyedSide(
   return {
     relation: table,
     item: sql`(${FromItem(sql`(${unmerged(select)})`, keys)} JOIN ${FromItem(table.from, table.alias)} ON ${join(identity, sql` AND `)})`,
-    on: sql`(${Predicate(dialect, matched).sql})`,
+    on: sql`(${Holds(dialect, matched)})`,
   };
 }

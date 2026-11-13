@@ -122,6 +122,14 @@ export function Predicate(dialect: Dialect, value: Compiled): Compiled {
   return { sql: TRUTHINESS[value.type.kind](dialect, value.sql), type: BOOL };
 }
 
+/**
+ * Reads a value as a condition whose truth alone is used, as a `WHERE`, a join's condition and
+ * `IS NOT TRUE` use it: the value's `holds` where it has one, its {@link Predicate} otherwise.
+ */
+export function Holds(dialect: Dialect, value: Compiled): Sql {
+  return value.holds ?? Predicate(dialect, value).sql;
+}
+
 type Reading = (dialect: Dialect, value: Compiled) => Compiled;
 
 type ScalarType = Exclude<SqlType, ArrayType | JsonType>;

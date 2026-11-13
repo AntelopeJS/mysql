@@ -33,7 +33,7 @@ export function Cell(
   engine: EngineId,
 ): CellSummary {
   const rounds = record.rounds
-    .filter((round) => round.engine === engine)
+    .filter((round) => round.engine === engine && !round.base)
     .flatMap((round) => round.cases.filter((timed) => timed.id === id));
   const timings = rounds.flatMap((timed) => timed.timings);
   const roundMedians = rounds.map((timed) => Median(timed.timings));

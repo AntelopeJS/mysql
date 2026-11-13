@@ -10,7 +10,7 @@ import type { SqlType } from "./types";
 import type { DecodingContext } from "./context";
 import { DecodeFunction, DecodeValue, RecordedLambda } from "./value";
 import type { PipelineStage, PipelineStageMap } from "./pipeline";
-import { Numeric, Predicate } from "./readings";
+import { Holds, Numeric } from "./readings";
 import { FIRST_OPERAND, RequireOperand, SECOND_OPERAND } from "./stage";
 import {
   CurrentValue,
@@ -168,7 +168,7 @@ const FilterStage: PipelineStage = (relation, stage, context) => {
         [prepared.source],
       );
       const predicate = RequireOperand(body, stage, FIRST_OPERAND);
-      return sql`(${Predicate(context.dialect, predicate).sql})`;
+      return sql`(${Holds(context.dialect, predicate)})`;
     }),
   );
   return prepared;

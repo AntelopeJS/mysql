@@ -148,6 +148,17 @@ export interface JsonSyntax {
    * NULL when a key is absent or the value above it is not an object. No key is the document.
    */
   member(document: Sql, ...keys: readonly string[]): Sql;
+  /**
+   * The text of {@link JsonSyntax.member}'s value, as text in the session collation: a string's own
+   * text, SQL NULL where the value is absent or a JSON null, and some text for any other value. One
+   * read that stops at the member.
+   */
+  memberText(document: Sql, ...keys: readonly string[]): Sql;
+  /**
+   * The texts of a value that falls back to a default where it is absent or a JSON null, from the
+   * value's texts and the default's: wherever the result is a string, one of them is its text.
+   */
+  defaultTexts(value: readonly Sql[], def: readonly Sql[]): readonly Sql[];
   /** The value under a key the statement computes as text. */
   dynamicMember(document: Sql, key: Sql): Sql;
   /** Whether a value is of the kind: SQL NULL for SQL NULL, and never an error. */
@@ -375,6 +386,11 @@ export interface RowSyntax {
    * the restriction leaves the server free to read the rows once and hash join them.
    */
   joinScope(column: Sql, value: Sql, lookup: boolean): Sql;
+  /**
+   * Whether the engine joins on a condition no index serves by nested loop, evaluating it once per
+   * pair of rows. Where it hash joins, it computes each equality's operands once per row instead.
+   */
+  readonly nestedLoopJoin: boolean;
   /**
    * The select kept from being merged into the statement that reads it as a derived table, so each
    * column it computes is computed once per row. Present where the engine joins on an equality no
