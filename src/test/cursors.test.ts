@@ -36,6 +36,8 @@ const BATCH = 100;
  * before the server shows the \`ALTER\` waiting would release its lock early.
  */
 const IDLE_MS = 4000;
+/** How early a timer may fire against `Date.now()`, both rounding to the millisecond. */
+const TIMER_ROUNDING_MS = 1;
 const COMPLETES_WITHIN_MS = 15_000;
 const SAMPLE_EVERY = 2000;
 const STALL_MS = 1000;
@@ -245,6 +247,9 @@ describe("a DDL statement on a table with an open cursor", function () {
       "the cursor's statement holds the table",
     ).to.equal(1);
     await cursor.return?.();
+    expect(CountOpenCursors(), "the close gave its connection back").to.equal(
+      0,
+    );
     await altering;
     connection.release();
     expect(await Columns(physical)).to.include("added");
@@ -258,6 +263,7 @@ describe("a DDL statement on a table with an open cursor", function () {
       .instance()
       .table("items");
     const cursor = items[Symbol.asyncIterator]();
+    const started = Date.now();
     expect((await cursor.next()).done).to.equal(false);
     const altered: SchemaDefinition = {
       items: {
@@ -265,7 +271,6 @@ describe("a DDL statement on a table with an open cursor", function () {
         indexes: {},
       },
     };
-    const started = Date.now();
     const registering = Schemas.register(schemaId, altered);
     await UntilWaitingOnLock(physical);
     expect(
@@ -276,7 +281,7 @@ describe("a DDL statement on a table with an open cursor", function () {
     expect(
       Date.now() - started,
       "the reclaim waited for cursorIdleTimeoutMs",
-    ).to.be.greaterThan(IDLE_MS / 2);
+    ).to.be.at.least(IDLE_MS - TIMER_ROUNDING_MS);
     expect(await Columns(physical)).to.include("added");
     let failure = "";
     try {
