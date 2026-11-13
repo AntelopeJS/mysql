@@ -1,14 +1,9 @@
 import type { RowSyntax } from "../sql-types";
-import { type Sql, ident, int, join, lit, param, sql } from "../../statement";
+import { type Sql, ident, param, sql } from "../../statement";
 import { type Flavour, type Held, HeldRead } from "./flavour";
 
 /** `OFFSET` needs a `LIMIT`, and the largest one the server takes stands for none. */
 const NO_LIMIT = sql`18446744073709551615`;
-
-const COMMA = sql`, `;
-
-/** The alias of the `JSON_TABLE` inside a listed table, which no other block can see. */
-const LISTED_ALIAS = "listed";
 
 /**
  * An equality on an index's leading column makes MySQL read a joined table by `ref` access, which
@@ -49,22 +44,6 @@ function Lookup(flavour: Flavour): RowSyntax["lookup"] {
   });
 }
 
-/**
- * The rows read from one bound JSON list, each column given the binary collation, since a column of
- * `JSON_TABLE` otherwise takes the connection's. MySQL refuses a `JSON_TABLE` in a locking read,
- * since it cannot lock the table function's rows, but not one inside a derived table there.
- */
-function Listed(flavour: Flavour): RowSyntax["listed"] {
-  return (rows, columns) => {
-    const defined = columns.map(
-      (column, position) =>
-        sql`${ident(column.name)} VARCHAR(${int(column.chars)}) COLLATE ${ident(flavour.binaryCollation)} PATH ${lit(`$[${position}]`)}`,
-    );
-    const names = columns.map((column) => ident(column.name));
-    return sql`(SELECT ${join(names, COMMA)} FROM JSON_TABLE(${param(JSON.stringify(rows))}, '$[*]' COLUMNS (${join(defined, COMMA)})) AS ${ident(LISTED_ALIAS)})`;
-  };
-}
-
 export function RowsOf(flavour: Flavour): RowSyntax {
   return {
     nullSafeEqual: (left, right) => sql`(${left} <=> ${right})`,
@@ -72,7 +51,6 @@ export function RowsOf(flavour: Flavour): RowSyntax {
     materialize: (alias) => sql`/*+ NO_MERGE(${ident(alias)}) */`,
     lookup: Lookup(flavour),
     joinScope: JoinScope,
-    listed: Listed(flavour),
     returning: flavour.returning,
     hold: (value, alias) => {
       const held: Held = { name: "value", value, kind: "json" };

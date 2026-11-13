@@ -6,7 +6,10 @@ const DATA_TOO_LONG = 1406;
 const LOCK_WAIT_TIMEOUT = 1205;
 const DEADLOCK = 1213;
 
-const RETRIED: readonly number[] = [LOCK_WAIT_TIMEOUT, DEADLOCK];
+const WAITS: ReadonlyMap<number, Failure> = new Map([
+  [LOCK_WAIT_TIMEOUT, { kind: "lockWait" }],
+  [DEADLOCK, { kind: "deadlock" }],
+]);
 
 /** `Duplicate entry '<value>' for key '<table>.<index>'`; the value may itself hold quotes. */
 const DUPLICATE_KEY = /for key '(.*)'$/s;
@@ -53,9 +56,7 @@ function Classify(error: Error): Failure {
       ? { kind: "server" }
       : { kind: "tooLong", column };
   }
-  return RETRIED.includes(server.errno)
-    ? { kind: "retry" }
-    : { kind: "server" };
+  return WAITS.get(server.errno) ?? { kind: "server" };
 }
 
 export const errors: ErrorSyntax = { classify: Classify };

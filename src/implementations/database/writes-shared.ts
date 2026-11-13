@@ -20,20 +20,6 @@ import {
 } from "./member";
 
 /**
- * How a write's read reaches the rows it changes, which decides the order it locks them in.
- *
- * - `flat`: the read is one block over the table, unsorted and unbounded, which locks each row as
- *   it reaches it.
- * - `ordered`: the read sorts or bounds the table's block, or a stage nested that block in another,
- *   such as a `filter` after a `slice`. The block reads in whatever order its own sort or index
- *   takes, and a nested one locks rows the outer blocks then leave out, so two writers sorting it
- *   two ways lock in two orders. Such a write locks the rows it selects in key order first.
- * - `held`: the read names rows by key that this transaction already holds, and skips any row
- *   another holds, which cannot be one of them.
- */
-type WriteReach = "flat" | "ordered" | "held";
-
-/**
  * The rows a write changes, and everything it may know about them.
  *
  * `relation` is the read pipeline the write targets, joined as a derived table by the stages that
@@ -44,32 +30,17 @@ export interface WriteTarget {
   relation: Relation;
   origin: TableOrigin;
   instance: InstanceScope;
-  reach: WriteReach;
 }
 
-/** Whether a relation reads its rows in an order of its own, which a sort or a row bound gives it. */
-function Ordered(relation: Relation): boolean {
-  return (
-    relation.orderBy.length > 0 ||
-    relation.limit !== undefined ||
-    relation.offset !== undefined
-  );
-}
-
-/**
- * The rows a query's terminal write targets, assembled the one way. A fold that nested the root's
- * block answers another relation than the root's, since only a wrap makes a new one.
- */
+/** The rows a query's terminal write targets, assembled the one way. */
 export function WriteTargetOf(
   root: RootSelection,
   relation: Relation,
 ): WriteTarget {
-  const flat = relation === root.relation && !Ordered(relation);
   return {
     relation,
     origin: RequireOrigin(relation),
     instance: root.instance,
-    reach: flat ? "flat" : "ordered",
   };
 }
 

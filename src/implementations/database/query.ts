@@ -1,4 +1,3 @@
-import assert from "node:assert";
 import type { QueryStage } from "@antelopejs/interface-database/common";
 import type { AtomicMutationOutcome } from "@antelopejs/interface-database";
 import { ValidateAtomicMutationTable } from "@antelopejs/interface-database/atomic";
@@ -22,9 +21,8 @@ import {
   type WriteTarget,
   WriteTargetOf,
 } from "./writes-shared";
-import { CompileWrite, SplitWrite, type WriteSplit } from "./writes";
+import { CompileWrite, SplitWrite, type WriteSplit, WriteRead } from "./writes";
 import { ATOMIC_MUTATION, ExecuteAtomicWrite } from "./writes-atomic";
-import { OrderedWrite } from "./writes-ordered";
 import { InTransaction } from "./transaction";
 import { ID_COLUMN, OptionsOf } from "./utils";
 import { CloseOneCursor, type CursorRequest, ReadCursorRow } from "./cursors";
@@ -198,32 +196,9 @@ async function Execute(
 }
 
 /**
- * Runs a write whose read orders the table's rows as {@link OrderedWrite} does, compiling it again
- * over the rows it holds, as the one counted statement `update`, `replace` and `delete` compile to.
- */
-function ExecuteOrdered(
-  target: WriteTarget,
-  stage: QueryStage,
-  context: DecodingContext,
-): Promise<number> {
-  const compile = (held: WriteTarget) => {
-    const statement = CompileWrite(held, stage, context);
-    assert(
-      statement.kind === "count",
-      `The '${stage.stage}' stage writes through an ordered read as one counted statement`,
-    );
-    return statement.statement;
-  };
-  return InTransaction((connection) =>
-    OrderedWrite(target, compile, context, connection),
-  );
-}
-
-/**
  * Executes a terminal write and answers what its stage promised: `insert` its keys in input order,
  * an atomic mutation its outcome, everything else the rows it matched. A failure the server reports
- * against a unique key is answered as the interface's error for it. The write is compiled before
- * anything runs, so a stage that refuses its arguments refuses them before any statement.
+ * against a unique key is answered as the interface's error for it.
  */
 async function RunWrite(
   target: WriteTarget,
@@ -236,10 +211,7 @@ async function RunWrite(
   const statement = CompileWrite(target, stage, context);
   await WaitForUniqueIndexes(target.origin.schemaId);
   try {
-    const answer =
-      target.reach === "ordered"
-        ? await ExecuteOrdered(target, stage, context)
-        : await Execute(statement, target);
+    const answer = await Execute(statement, target);
     NudgeChanges();
     return answer;
   } catch (err) {
@@ -271,7 +243,11 @@ function CompileQuery(
   }
   const root = BuildRoot(stages, context);
   const split = SplitWrite(root.rest);
-  const relation = ApplyStages(root.relation, split.pipeline, context);
+  const relation = ApplyStages(
+    WriteRead(root.relation, split),
+    split.pipeline,
+    context,
+  );
   return { context, root, split, relation };
 }
 

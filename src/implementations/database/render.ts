@@ -151,11 +151,16 @@ const BODY: ClauseBuilder[] = [
   GroupByClause,
 ];
 
+function LockClause(relation: Relation): Sql | undefined {
+  return relation.locked ? sql`FOR UPDATE` : undefined;
+}
+
 const CLAUSES: ClauseBuilder[] = [
   SelectClause,
   ...BODY,
   OrderByClause,
   LimitClause,
+  LockClause,
 ];
 
 function RenderClauses(relation: Relation, builders: ClauseBuilder[]): Sql {

@@ -28,7 +28,7 @@ const DELETED_FROM = 900;
 /** The rows each writer of a claim queue takes. */
 const CLAIMED = 5;
 
-/** More rows than one statement named by key at a time before a write named them all in one. */
+/** More rows than a write split into statements of a thousand keys would change in one. */
 const PAST_ONE_STATEMENT = 1500;
 
 /** Long enough for an update to reach the row lock it waits on. */
@@ -208,9 +208,10 @@ describe("writes through a nested target over an indexed sort", function () {
   });
 
   /**
-   * Updaters select the first rows and deleters the last, each through a block that reads the whole
-   * table in index order. A write that locked its own rows in key order and then let that block lock
-   * every row it reached would wait on another write's rows while holding its own, and deadlock.
+   * Updaters select the first rows and deleters the last, each through a nested block that reads the
+   * whole table in index order, ascending for one writer and descending for the next, so they lock
+   * rows in opposite orders. A nested block that read its rows shared, or a deadlock run again at
+   * once or only a few times, would surface one.
    */
   it("applies nested updates and deletes of different rows at once", async () => {
     const outcomes = await Promise.allSettled([
@@ -241,7 +242,7 @@ describe("writes through a nested target over an indexed sort", function () {
   /**
    * Every writer selects the rows whose `g` is unset, and sets it. The first to hold them sets them,
    * and every later one finds them gone from its selection once it holds them. A write that changed
-   * the rows its first read selected, before it held them, would set them again.
+   * the rows a read selected before it locked them would set them again.
    */
   it("writes no row that left a nested target while the write waited for it", async () => {
     const outcomes = await Promise.allSettled(
@@ -267,10 +268,10 @@ describe("writes through a nested target over an indexed sort", function () {
   });
 
   /**
-   * Every writer claims the five lowest unclaimed rows. Once it holds the five it first read,
-   * another writer has claimed them, and five more enter its selection, again and again while other
-   * writers claim them first. A write that stopped locking after a fixed number of rounds would
-   * write only the rows of its last selection it held, and answer fewer than five.
+   * Every writer claims the five lowest unclaimed rows, which other writers keep claiming first. A
+   * nested block that read the rows without locking them would select rows another writer holds and
+   * then finds claimed, or a write that locked its selection a fixed number of rounds would stop
+   * short, and either would answer fewer than five.
    */
   it("claims as many rows as a queue taken one writer at a time, through a nested target", async () => {
     const outcomes = await Promise.allSettled(
@@ -299,8 +300,8 @@ describe("writes through a nested target over an indexed sort", function () {
 
   /**
    * `orderBy` and `slice` fold into the table's own block, so the write reads it in one block, in
-   * index order, ascending for one writer and descending for the next. A write that locked the rows
-   * as that block reached them would deadlock past its retries.
+   * index order, ascending for one writer and descending for the next, and they lock rows in
+   * opposite orders. A deadlock run again at once, or only three times in all, would surface.
    */
   it("applies every write through a sorted and sliced target, from writers sorting it either way", async () => {
     const outcomes = await Promise.allSettled(
