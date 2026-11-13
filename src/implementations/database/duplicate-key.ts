@@ -5,7 +5,7 @@ import { ID_COLUMN } from "./utils";
 import type { IndexPlan } from "./plan";
 import { KeyColumnsOf, type KeyPart, TextCapacity } from "./paths";
 import type { TableOrigin } from "./relation";
-import type { RefusedUniqueIndex } from "./migrate-indexes";
+import type { UnbuiltCause, UnbuiltUniqueIndex } from "./unbuilt-unique";
 
 const PRIMARY_KEY = "primary";
 const PRIMARY_KEY_FIELDS = [ID_COLUMN];
@@ -94,6 +94,19 @@ function PartSources(part: KeyPart): string[] {
   }
 }
 
+/** Why the index phase left a unique index unbuilt, as a write refused over it says. */
+const BECAUSE: Record<UnbuiltCause, string> = {
+  refused: "the server refused it",
+  locked: "a transaction holds the table",
+};
+
+/** What builds a unique index the phase left unbuilt, as a write refused over it says. */
+const REMEDY: Record<UnbuiltCause, string> = {
+  refused: "Remove the rows it refuses, then register the schema again",
+  locked:
+    "It is built once that transaction ends, and the write can be run again then",
+};
+
 /**
  * Refuses a write that stores a value in a column a refused unique index of its table keys on, as
  * every insert does: with the index unbuilt, the server would store the duplicate it exists to
@@ -101,7 +114,7 @@ function PartSources(part: KeyPart): string[] {
  * goes through.
  */
 export function RefuseUnbuiltUnique(
-  refused: readonly RefusedUniqueIndex[],
+  refused: readonly UnbuiltUniqueIndex[],
   origin: TableOrigin,
   sets: readonly string[],
 ): void {
@@ -116,7 +129,7 @@ export function RefuseUnbuiltUnique(
   if (covering) {
     const table = `${origin.schemaId}.${origin.tableId}`;
     throw new Error(
-      `Write refused: unique index '${covering.index.id}' on '${table}' is not built, because the server refused it (${covering.reason}), so a write that adds rows or sets ${IndexedFields(covering.index).join(", ")} could store the duplicate it exists to refuse. Remove the rows it refuses, then register the schema again`,
+      `Write refused: unique index '${covering.index.id}' on '${table}' is not built, because ${BECAUSE[covering.cause]} (${covering.reason}), so a write that adds rows or sets ${IndexedFields(covering.index).join(", ")} could store the duplicate it exists to refuse. ${REMEDY[covering.cause]}`,
     );
   }
 }

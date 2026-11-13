@@ -16,7 +16,7 @@ import {
  * How long a DDL statement waits for a metadata lock. Short on purpose: while an `ALTER` waits, every
  * later statement on its table queues behind it, so a wait that times out is retried instead.
  */
-const DDL_LOCK_WAIT_SECONDS = 5;
+export const DDL_LOCK_WAIT_SECONDS = 5;
 
 /** How long a phase pauses between two attempts at a convergence lock another session holds. */
 const LOCK_RETRY_MS = 1000;
