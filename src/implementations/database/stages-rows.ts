@@ -71,6 +71,13 @@ type RowBound =
 
 const UNBOUNDED: RowBound = { kind: "constant", count: undefined };
 
+/** A row count the caller wrote as a number, as {@link Bound} reads it: none where it is infinite. */
+export function ConstantCount(value: number): number | undefined {
+  return Number.isFinite(value)
+    ? Math.min(Math.max(Math.trunc(value), 0), Number.MAX_SAFE_INTEGER)
+    : undefined;
+}
+
 /**
  * Reads a caller's row bound: the count truncated toward zero and held between zero and the largest
  * count the driver binds exactly, by the compiler for a constant and by the statement for anything
@@ -83,10 +90,7 @@ function Bound(
 ): RowBound {
   const member = ClassifyMember(StageOperand(stage, index));
   if (member.kind === "number") {
-    const count = Number.isFinite(member.value)
-      ? Math.min(Math.max(Math.trunc(member.value), 0), Number.MAX_SAFE_INTEGER)
-      : undefined;
-    return { kind: "constant", count };
+    return { kind: "constant", count: ConstantCount(member.value) };
   }
   const value = RequireOperand(DecodeValue(member, context), stage, index);
   const dialect = context.dialect;

@@ -10,12 +10,22 @@ import { BuildDocument, type DocumentMember } from "./row-source";
 import {
   DecodeOperand,
   FIRST_OPERAND,
+  SECOND_OPERAND,
   FieldNames,
   FieldOf,
   RequireOperand,
 } from "./stage";
-import { CurrentValue, SetPlainProjection, SetProjection } from "./relation";
-import type { RelationFlag } from "./render";
+import type { QueryStage } from "@antelopejs/interface-database/common";
+
+import {
+  CurrentValue,
+  type Relation,
+  SetPlainProjection,
+  SetProjection,
+} from "./relation";
+import { type RelationFlag, SINGLE_ROW } from "./render";
+import { ClassifyMember, StageOperand } from "./member";
+import { ConstantCount } from "./stages-rows";
 import { Prepare } from "./wrap";
 
 /**
@@ -39,22 +49,83 @@ const DefaultStage: PipelineStage = (relation, stage, context) => {
   );
 };
 
-/** The stages that keep fewer of the rows they read, so a mapper before them runs on fewer rows. */
-const BOUNDING_STAGES: ReadonlySet<string> = new Set(["slice", "nth"]);
+/** The rows a relation answers, from the first it reads past `offset`, `limit` of them where set. */
+interface RowWindow {
+  readonly offset: number;
+  readonly limit?: number;
+}
+
+/** The rows of `window` that a bound of `offset` and `limit` keeps. */
+function Within(window: RowWindow, offset: number, limit?: number): RowWindow {
+  const left =
+    window.limit === undefined ? undefined : Math.max(0, window.limit - offset);
+  const kept = [left, limit].filter((count) => count !== undefined);
+  return {
+    offset: window.offset + offset,
+    limit: kept.length > 0 ? Math.min(...kept) : undefined,
+  };
+}
+
+/** A later stage's row bound written as a number, `null` where the statement computes it. */
+function LaterBound(
+  stage: QueryStage,
+  index: number,
+): number | undefined | null {
+  if (stage.args[index] === undefined) {
+    return undefined;
+  }
+  const member = ClassifyMember(StageOperand(stage, index));
+  return member.kind === "number" ? ConstantCount(member.value) : null;
+}
+
+/** The stages that reshape each row and read no other, so a bound after them bounds a map before. */
+const PROJECTIONS = ["key", "default", "map", "pluck", "without"] as const;
+
+/**
+ * The rows the mapper runs on: the relation, within the bounds of each later `slice` and `nth`
+ * that only {@link PROJECTIONS} separate from it, which keep fewer of them. Any other stage reads
+ * every mapped row, so a bound after it bounds none of them. None where a bound that does is one
+ * the statement computes.
+ */
+function MappedRows(
+  relation: Relation,
+  later: readonly QueryStage[],
+): Relation | undefined {
+  let window: RowWindow = {
+    offset: relation.offset ?? 0,
+    limit: relation.limit,
+  };
+  const projections: ReadonlySet<string> = new Set(PROJECTIONS);
+  for (const next of later) {
+    if (projections.has(next.stage)) {
+      continue;
+    }
+    if (next.stage !== "slice" && next.stage !== "nth") {
+      break;
+    }
+    const offset = LaterBound(next, FIRST_OPERAND);
+    const limit =
+      next.stage === "nth" ? SINGLE_ROW : LaterBound(next, SECOND_OPERAND);
+    if (offset === null || limit === null) {
+      return undefined;
+    }
+    window = Within(window, offset ?? 0, limit);
+  }
+  return { ...relation, offset: window.offset, limit: window.limit };
+}
 
 /**
  * Applies the mapper to each row, binding the relation's own source as its parameter, which keeps
- * `map(d => d.key("name"))` a bare column. The parameter ranges over every row of the relation only
- * where no later stage bounds the rows the mapper runs on.
+ * `map(d => d.key("name"))` a bare column. The parameter ranges over the rows {@link MappedRows}
+ * answers.
  */
 const MapStage: PipelineStage = (relation, stage, context, later) => {
   const prepared = Prepare(relation, PROJECTION_BLOCKERS, context);
-  const bounded = later.some((next) => BOUNDING_STAGES.has(next.stage));
   const body = DecodeFunction(
     RecordedLambda(stage, FIRST_OPERAND),
     context,
     [prepared.source],
-    bounded ? undefined : prepared,
+    MappedRows(prepared, later),
   );
   return SetProjection(prepared, RequireOperand(body, stage, FIRST_OPERAND));
 };
@@ -114,4 +185,4 @@ export const PROJECTION_STAGES: PipelineStageMap = {
   map: MapStage,
   pluck: PluckStage,
   without: WithoutStage,
-};
+} satisfies Record<(typeof PROJECTIONS)[number], PipelineStage>;

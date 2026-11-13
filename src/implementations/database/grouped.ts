@@ -271,21 +271,33 @@ function KeyedGroup(
 
 /**
  * The rows times distinct keys of each row of the query outside, summed once for the statement,
- * where those rows are a plain select that every outer row the groups are read for is one of.
+ * where those rows are a plain select that every outer row the groups are read for is one of. Where
+ * its offset or limit keeps fewer rows, the sum over every row is scaled to the share it keeps.
  */
 function EveryOuterRow(outer: Relation, perRow: Sql): Sql | undefined {
   const plain =
-    !outer.aggregated &&
-    !outer.distinct &&
-    outer.groupBy.length === 0 &&
-    outer.limit === undefined &&
-    outer.offset === undefined;
+    !outer.aggregated && !outer.distinct && outer.groupBy.length === 0;
   if (!plain) {
     return undefined;
   }
+  const rows = sql`COUNT(*)`;
+  const after = sql`GREATEST(${rows} - ${int(outer.offset ?? 0)}, 0)`;
+  const kept =
+    outer.limit === undefined
+      ? after
+      : sql`LEAST(${after}, ${int(outer.limit)})`;
   const summed = SetProjection(
-    { ...outer, orderBy: [], locked: false },
-    { sql: sql`SUM((${perRow}))`, type: FLOAT },
+    {
+      ...outer,
+      orderBy: [],
+      locked: false,
+      offset: undefined,
+      limit: undefined,
+    },
+    {
+      sql: sql`SUM((${perRow})) * ${kept} / NULLIF(${rows}, 0)`,
+      type: FLOAT,
+    },
   );
   return sql`(${Render(summed)})`;
 }
