@@ -31,6 +31,7 @@
   "scripts": {
     "build": "rimraf dist && tsc",
     "lint": "oxlint && antelopejs-check-interface-ranges",
+    "lint:fix": "oxlint --fix",
     "prepack": "pnpm run build",
     "release": "pnpm run typecheck && pnpm run lint && pnpm run test && pnpm run prepack && release-it",
     "test": "for image in ${MYSQL_TEST_IMAGES:-mysql:8.4 mysql:9.7 mariadb:11.8 mariadb:12.3}; do docker pull -q $image >/dev/null 2>&1 & done; pnpm run build && scripts/test.sh",
@@ -65,7 +66,7 @@
     "@antelopejs/interface-api": "^0.3.2",
     "@antelopejs/interface-database-decorators": "^0.3.2",
     "@antelopejs/postgres": "0.2.8",
-    "@antelopejs/tooling-configs": "^0.5.3",
+    "@antelopejs/tooling-configs": "^0.5.6",
     "@testcontainers/mysql": "^12.2.1",
     "@types/chai": "^4.3.20",
     "@types/mocha": "^10.0.10",
