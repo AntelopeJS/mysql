@@ -4,8 +4,8 @@ import type { QueryStage } from "@antelopejs/interface-database/common";
 import { CROSS_INSTANCE } from "@antelopejs/interface-database/schema";
 
 import type { Dialect } from "../../dialect";
-import { type Sql, ident, sql } from "../../statement";
-import { Compare, Collected } from "./json";
+import { type Sql, sql } from "../../statement";
+import { Compare } from "./json";
 import { UnifyOperands } from "./coerce";
 import { DecodeFunction, RecordedLambda } from "./value";
 import { type JoinedSide, KeyedSide } from "./join-key";
@@ -33,6 +33,7 @@ import {
 } from "./relation";
 import { InstanceLookupColumns } from "./plan";
 import { BuildRoot, IsTableRead, type RootSelection } from "./selection";
+import { Aggregated } from "./subquery";
 import {
   FromItem,
   HasFlag,
@@ -267,30 +268,11 @@ function OneRow(right: Relation): Sql {
 }
 
 /**
- * Collects every matching row into one JSON array, empty rather than NULL over none of them. A
- * relation that bounds or folds its rows is collected from a subselect; any other is collected in
- * place, so a correlation pushed onto it stays in the subquery the row reads rather than in a
- * derived table, which MariaDB cannot correlate.
+ * Collects every matching row into one JSON array, in the order the looked-up query asks for, as a
+ * nested query is: the correlation reads the outer row.
  */
 function CollectedRows(right: Relation, context: DecodingContext): Sql {
-  if (!HasFlag(right, PUSHDOWN_BLOCKERS)) {
-    const element = AsJson(context.dialect, CurrentValue(right));
-    right.orderBy = [];
-    right.aggregated = true;
-    return Render(
-      SetProjection(right, {
-        sql: Collected(context.dialect, undefined, element.sql),
-        type: ArrayOf(element.type),
-      }),
-    );
-  }
-  const alias = context.nextAlias();
-  const element = AsJson(context.dialect, {
-    sql: QualifiedColumn(alias, OUTPUT_COLUMN),
-    type: CurrentValue(right).type,
-  });
-  const collected = Collected(context.dialect, undefined, element.sql);
-  return sql`SELECT ${collected} AS ${ident(OUTPUT_COLUMN)} FROM (${Render(right)}) AS ${ident(alias)}`;
+  return Aggregated(right, true, context).sql;
 }
 
 const SINGLE_FORM: LookupForm = {
