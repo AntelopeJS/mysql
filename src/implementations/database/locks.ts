@@ -165,12 +165,29 @@ export interface PhaseHooks {
   readonly opened?: (session: ConvergenceSession) => Promise<void>;
   /** Ends the phase before its next attempt, and cuts short the pause before it. */
   readonly stop?: AbortSignal;
+  /**
+   * Decides, once an attempt failed, whether the phase tries again, and pauses as long as it needs
+   * first. The phase keeps its turn meanwhile, so a later call for the same schema still runs after
+   * it.
+   */
+  readonly again?: (failed: FailedAttempt) => Promise<boolean>;
+}
+
+/** Why an attempt at a phase failed, and whether it had a connection the server ran its work on. */
+export interface FailedAttempt {
+  readonly cause: unknown;
+  /** False when the pool could not hand out a connection, so the server ran none of the work. */
+  readonly connected: boolean;
 }
 
 /** One attempt at a lock: what the work answered, or nothing while another session holds the lock. */
 type Attempt<T> = { readonly result: T } | undefined;
 
-async function PauseUnlessStopped(ms: number, stop: AbortSignal | undefined) {
+/** Waits `ms`, or less once `stop` aborts. */
+export async function PauseUnlessStopped(
+  ms: number,
+  stop: AbortSignal | undefined,
+) {
   await delay(ms, undefined, { signal: stop }).catch(() => undefined);
 }
 
@@ -195,15 +212,25 @@ function WithPhaseLock<T>(
           `Stopped before the ${phase} phase of '${schemaKey}' began`,
         );
       }
-      const attempt = await OnDedicatedSession(
-        async (session): Promise<Attempt<T>> => {
-          await hooks.opened?.(session);
-          const name = await LockName(session, phase, schemaKey);
-          return (await TakeLock(session, name, 0))
-            ? { result: await Holding(session, name, work) }
-            : undefined;
-        },
-      );
+      let attempt: Attempt<T>;
+      let connected = false;
+      try {
+        attempt = await OnDedicatedSession(
+          async (session): Promise<Attempt<T>> => {
+            connected = true;
+            await hooks.opened?.(session);
+            const name = await LockName(session, phase, schemaKey);
+            return (await TakeLock(session, name, 0))
+              ? { result: await Holding(session, name, work) }
+              : undefined;
+          },
+        );
+      } catch (err) {
+        if (await hooks.again?.({ cause: err, connected })) {
+          continue;
+        }
+        throw err;
+      }
       if (attempt) {
         return attempt.result;
       }

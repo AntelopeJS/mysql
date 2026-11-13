@@ -46,7 +46,8 @@ export interface RowKey {
  * - `present`: what it creates already exists. `absent`: what it drops is already gone.
  * - `interrupted`: the statement was killed.
  * - `refused`: the server rejected this statement and the session is still usable.
- * - `broken`: anything else, the session included.
+ * - `disconnected`: the connection ended, as a server restart, a network drop or a `KILL` ends it.
+ * - `broken`: anything else.
  */
 export type DdlFailure =
   | "lockTimeout"
@@ -54,6 +55,7 @@ export type DdlFailure =
   | "absent"
   | "interrupted"
   | "refused"
+  | "disconnected"
   | "broken";
 
 /** The registry table instance ids are recorded in, by its column names. */

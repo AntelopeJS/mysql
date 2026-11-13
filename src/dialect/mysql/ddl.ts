@@ -53,6 +53,8 @@ const FAILURES = new Map<number, DdlFailure>([
   [1205, "lockTimeout"],
   [1213, "lockTimeout"],
   [1317, "interrupted"],
+  [1053, "disconnected"],
+  [1927, "disconnected"],
 ]);
 
 const ROW_KEY = sql`${ident(INSTANCE_COLUMN)}, ${ident(ID_COLUMN)}`;
@@ -295,9 +297,11 @@ function CreateInstances(engine: Engine, registry: InstancesTable): Sql {
 
 /** A server error has a positive `errno`; a driver error that ended the connection is `fatal`. */
 function Failure(error: Error): DdlFailure {
+  if ("fatal" in error && error.fatal === true) {
+    return "disconnected";
+  }
   const errno = "errno" in error ? Number(error.errno) : 0;
-  const fatal = "fatal" in error && error.fatal === true;
-  if (fatal || !Number.isInteger(errno) || errno <= 0) {
+  if (!Number.isInteger(errno) || errno <= 0) {
     return "broken";
   }
   return FAILURES.get(errno) ?? "refused";
