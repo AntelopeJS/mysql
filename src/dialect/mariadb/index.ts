@@ -288,6 +288,26 @@ function HashedKey(hash: Sql, key: readonly Sql[]): Sql {
   return sql`JSON_ARRAY(${join([hash, ...key], sql`, `)})`;
 }
 
+/**
+ * The most bytes an element spends beyond its quoted key parts: its brackets, a CRC-32 of up to
+ * 10 digits, and the separator before each key part and after the element.
+ */
+const HASHED_KEY_BYTES = 14;
+const KEY_PART_BYTES = 2;
+
+/** The brackets of the held array and of the one-row array that holds it. */
+const HELD_ARRAY_BYTES = 4;
+
+/**
+ * Each element's length is bounded from its key parts, as `JSON_ARRAY` quotes them, rather than
+ * measured, which would hash every row's key text once more.
+ */
+function HeldFits(key: readonly Sql[]): Sql {
+  const quoted = key.map((part) => sql`LENGTH(JSON_QUOTE(${part}))`);
+  const element = sql`${join(quoted, sql` + `)} + ${int(HASHED_KEY_BYTES + KEY_PART_BYTES * key.length)}`;
+  return sql`(SUM(${element}) + ${int(HELD_ARRAY_BYTES)} <= @@max_allowed_packet)`;
+}
+
 const HELD_KEYS = ident("held");
 
 function KeyPart(part: number): Sql {
@@ -445,7 +465,7 @@ const MARIADB: Flavour = {
     materialized: Materialized,
     hashedKey: HashedKey,
     held: HeldArray,
-    aggregateBytes: sql`@@max_allowed_packet`,
+    heldFits: HeldFits,
   },
   returning: true,
   lateral: false,

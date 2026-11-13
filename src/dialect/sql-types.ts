@@ -84,10 +84,12 @@ export interface InPlaceSyntax {
    */
   held(array: Sql, parts: number, alias: string): HeldKeys;
   /**
-   * The most bytes an aggregate the engine builds can hold. Past it the engine cuts the aggregate
-   * short or answers SQL NULL, with a warning only.
+   * An aggregate over the rows of a select, true where the array of their
+   * {@link InPlaceSyntax.hashedKey} elements, of the key parts `key` reads in each row, fits in
+   * the largest aggregate the engine builds. Past it the engine cuts an aggregate short or answers
+   * SQL NULL, with a warning only.
    */
-  readonly aggregateBytes: Sql;
+  heldFits(key: readonly Sql[]): Sql;
 }
 
 /** What {@link InPlaceSyntax.hashRow} answers. */

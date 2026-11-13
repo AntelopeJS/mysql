@@ -31,12 +31,6 @@ const IDENTITY = [INSTANCE_COLUMN, ID_COLUMN];
 /** How one outer row's groups read their rows, as {@link ReadingOf} chooses it. */
 const READING = { scanned: 0, held: 1, keyed: 2 } as const;
 
-/** The bytes the held array spends on each element beyond its text: a separator, with room to spare. */
-const ELEMENT_BYTES = 2;
-
-/** The bytes of the brackets around the held array and around the array that holds it. */
-const ARRAY_BYTES = 4;
-
 /**
  * A grouped relation's distinct keys, walked: each part's text in the relation's rows, the walk
  * of the distinct keys, and each part's text in the walked key. A part's text is the text a dedup
@@ -146,9 +140,8 @@ function HeldRowsOf(
   });
   const alias = context.nextAlias();
   const held = inPlace.held(sql`(${Render(array)})`, identity.length, alias);
-  const bytes = sql`SUM(LENGTH(${element}) + ${int(ELEMENT_BYTES)}) + ${int(ARRAY_BYTES)}`;
   return {
-    fits: sql`${bytes} <= ${inPlace.aggregateBytes}`,
+    fits: inPlace.heldFits(identity),
     item: FromItem(held.from, alias),
     keys: held,
   };
