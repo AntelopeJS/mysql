@@ -1,10 +1,10 @@
 import assert from "node:assert";
 import { IsQueryStage } from "@antelopejs/interface-database/common";
 
-import { type Sql, sql } from "../../statement";
+import { type Sql, join, sql } from "../../statement";
 import type { Dialect } from "../../dialect";
 import type { Compiled } from "./sql";
-import { AsJson, Predicate } from "./readings";
+import { AsJson, Holds, Predicate } from "./readings";
 import { IsNullJson, ParameterKey } from "./value";
 import { Compare, Compared, type Ordering } from "./json";
 import { BOOL, IsJsonBacked, IsOpaque, OPAQUE } from "./types";
@@ -83,17 +83,23 @@ const DefaultStage = Lift((value, args, _stage, context) =>
  * false: `NOT NULL` is NULL and would drop the row, so `IS NOT TRUE` is the total spelling.
  */
 const NotStage = Lift((value, _args, _stage, context) => ({
-  sql: sql`(${Predicate(context.dialect, value).sql} IS NOT TRUE)`,
+  sql: sql`(${Holds(context.dialect, value)} IS NOT TRUE)`,
   type: BOOL,
 }));
 
+/** `and` or `or`. The connective over the sides' `holds` is true on the rows it is true on over their `sql`. */
 function BooleanStage(operator: Sql): StageHandler {
   return Lift((value, args, stage, context) => {
     const other = RequireOperand(args[FIRST_OPERAND], stage, FIRST_OPERAND);
     const dialect = context.dialect;
+    const holds =
+      value.holds || other.holds
+        ? sql`(${Holds(dialect, value)} ${operator} ${Holds(dialect, other)})`
+        : undefined;
     return {
       sql: sql`(${Predicate(dialect, value).sql} ${operator} ${Predicate(dialect, other).sql})`,
       type: BOOL,
+      holds,
     };
   });
 }
@@ -103,6 +109,31 @@ function WherePresent(pair: CompiledPair, test: Sql): Sql {
   return pair.present ? sql`(${pair.present} AND ${test})` : test;
 }
 
+/**
+ * The comparison of a text read out of JSON with the other operand, through the read's one-read
+ * texts. One of them is the read's text wherever the read is not SQL NULL, so this holds wherever
+ * the typed comparison does, and it rejects most rows before the typed read reads the value twice.
+ * None where a key column serves the comparison or an operand is a native column.
+ */
+function TextBound(
+  dialect: Dialect,
+  pair: CompiledPair,
+  operator: Ordering,
+): Sql | undefined {
+  const { left, right, type } = pair;
+  if (type.kind !== "text" || left.key || right.key || pair.converted) {
+    return undefined;
+  }
+  const tests =
+    left.texts?.map((text) =>
+      Compared(dialect, { sql: text, type }, right, operator),
+    ) ??
+    right.texts?.map((text) =>
+      Compared(dialect, left, { sql: text, type }, operator),
+    );
+  return tests && sql`(${join(tests, sql` OR `)})`;
+}
+
 function Comparison(
   dialect: Dialect,
   value: Compiled,
@@ -110,8 +141,16 @@ function Comparison(
   operator: Ordering,
 ): Compiled {
   const pair = UnifyOperands(dialect, value, other, operator);
-  const compared = Compare(dialect, pair.left, pair.right, operator);
-  return { sql: WherePresent(pair, compared), type: BOOL };
+  const compared = WherePresent(
+    pair,
+    Compare(dialect, pair.left, pair.right, operator),
+  );
+  const bound = TextBound(dialect, pair, operator);
+  return {
+    sql: compared,
+    type: BOOL,
+    holds: bound && sql`(${bound} AND ${compared})`,
+  };
 }
 
 /** `value.eq(other)` between two operands that are both values, neither of them `null`. */

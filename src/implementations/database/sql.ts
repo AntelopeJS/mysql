@@ -97,6 +97,17 @@ export interface Compiled {
    * the read is present, and the default elsewhere.
    */
   defaulted?: ValuePath;
+  /**
+   * Texts of a JSON value, or of text read out of one, each in one read: wherever the value is a
+   * string, or the text is not SQL NULL, one of them is that text. The typed read of a string reads
+   * the value twice, to test its kind and to take its text.
+   */
+  texts?: readonly Sql[];
+  /**
+   * A condition true on exactly the rows where `sql` is true, and cheaper to evaluate; it may be
+   * false where `sql` is SQL NULL, so only a reader of the truth alone, such as a `WHERE`, takes it.
+   */
+  holds?: Sql;
   /** The column underneath, in its own type, where `sql` reads it converted (external relations only). */
   native?: NativeOperand;
 }

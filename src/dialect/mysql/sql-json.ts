@@ -411,6 +411,12 @@ export function JsonOf(flavour: Flavour): JsonSyntax {
     flavour.collect(element, ordinal, distinct, text);
   return {
     member: Member(flavour),
+    memberText: (document, ...keys) =>
+      sql`CAST(${flavour.value(document, KeyPath(...keys))} AS CHAR)`,
+    defaultTexts: (value, def) =>
+      flavour.valueIsRead
+        ? [sql`COALESCE(${join([...value, ...def], COMMA)})`]
+        : [...value, ...def],
     dynamicMember: (document, key) =>
       sql`JSON_EXTRACT(${document}, ${DynamicPath(key)})`,
     is: Is,

@@ -59,6 +59,7 @@ export function RowsOf(flavour: Flavour): RowSyntax {
     materialize: (alias) => sql`/*+ NO_MERGE(${ident(alias)}) */`,
     lookup: Lookup(flavour),
     joinScope: JoinScope,
+    nestedLoopJoin: flavour.nestedLoopJoin,
     returning: flavour.returning,
     hold: (value, alias) => {
       const held: Held = { name: "value", value, kind: "json" };

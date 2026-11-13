@@ -10,7 +10,7 @@ import { GuardJson } from "./json-guard";
 import { DecodeFunction, RecordedLambda } from "./value";
 import type { DecodingContext } from "./context";
 import { ArrayOf, BOOL, FLOAT, OPAQUE, type SqlType } from "./types";
-import { AsFloat, AsJson, Numeric, ORDERED_KINDS, Predicate } from "./readings";
+import { AsFloat, AsJson, Holds, Numeric, ORDERED_KINDS } from "./readings";
 import {
   BuildStages,
   FIRST_OPERAND,
@@ -172,7 +172,7 @@ const MapStage = LiftRaw((value, stage, context) => {
 const FilterStage = LiftRaw((value, stage, context) => {
   const dialect = context.dialect;
   const { json, walk } = Elements(value, context);
-  const kept = Predicate(dialect, ElementBody(value, walk, stage, context)).sql;
+  const kept = Holds(dialect, ElementBody(value, walk, stage, context));
   const collected = Collected(dialect, walk.ordinal, walk.value);
   return {
     sql: GuardJson(dialect, json, "array", walk.aggregate(collected, kept)),
