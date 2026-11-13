@@ -27,15 +27,20 @@ jobs:
           mysqld --initialize-insecure --datadir="$data" > "$RUNNER_TEMP/mysqld-init.log" 2>&1 || { cat "$RUNNER_TEMP/mysqld-init.log"; exit 1; }
           nohup mysqld --datadir="$data" --bind-address=127.0.0.1 --port=3306 --innodb-flush-log-at-trx-commit=0 --sync-binlog=0 > "$RUNNER_TEMP/mysqld.log" 2>&1 &
           for _ in $(seq 300); do
-            if mysqladmin -uroot -h127.0.0.1 --silent ping > /dev/null 2>&1; then
-              echo "MYSQL_TEST_URL=mysql://root@127.0.0.1:3306/mysql" >> "$GITHUB_ENV"
-              exit 0
-            fi
+            mysqladmin -uroot -h127.0.0.1 --silent ping > /dev/null 2>&1 && break
             sleep 0.2
           done
-          cat "$RUNNER_TEMP/mysqld.log"
-          echo "::error::MySQL did not listen on 127.0.0.1:3306 within 60 seconds."
-          exit 1
+          if ! mysqladmin -uroot -h127.0.0.1 --silent ping > /dev/null 2>&1; then
+            cat "$RUNNER_TEMP/mysqld.log"
+            echo "::error::MySQL did not listen on 127.0.0.1:3306 within 60 seconds."
+            exit 1
+          fi
+          cd "$RUNNER_TEMP"
+          curl -sSfLO https://downloads.mysql.com/general/timezone_2026f_posix_sql.zip
+          echo "24c99cb5660e659634311aa015a22e8a7d3f25caec2111b275289b07df7c1948  timezone_2026f_posix_sql.zip" | sha256sum -c --quiet
+          unzip -q timezone_2026f_posix_sql.zip
+          mysql -uroot -h127.0.0.1 mysql < timezone_2026f_posix_sql/timezone_posix.sql
+          echo "MYSQL_TEST_URL=mysql://root@127.0.0.1:3306/mysql" >> "$GITHUB_ENV"
         fi
     permissions:
       contents: read
