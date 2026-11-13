@@ -75,7 +75,7 @@ const ConcatText: Arithmetic = (dialect, left, right) => ({
 const ConcatArray: Arithmetic = (dialect, left, right) => {
   const json = dialect.sql.json;
   return {
-    sql: json.concatArrays(left.sql, sql`NULLIF(${right.sql}, ${json.null})`),
+    sql: json.concatArrays(left.sql, json.present(right.sql)),
     type: Unify(left.type, right.type),
   };
 };

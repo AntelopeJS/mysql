@@ -176,7 +176,12 @@ function JsonEquals(left: Sql, right: Sql): Sql {
  * whitespace around a `null` included.
  */
 function Present(value: Sql): Sql {
-  return Json(sql`NULLIF(CAST(JSON_COMPACT(${value}) AS BINARY), 'null')`);
+  return Json(PresentText(value));
+}
+
+/** The compacted text of {@link Present}, SQL NULL where the value is absent. */
+function PresentText(value: Sql): Sql {
+  return sql`NULLIF(CAST(JSON_COMPACT(${value}) AS BINARY), 'null')`;
 }
 
 /**
@@ -365,6 +370,7 @@ const MARIADB: Flavour = {
   json: Json,
   escapedKeys: ESCAPED_KEYS,
   present: Present,
+  absent: (value) => sql`(${PresentText(value)} IS NULL)`,
   number: JsonNumber,
   keepsInText: (value) => !Object.is(value, -0),
   boolean: (truth) =>

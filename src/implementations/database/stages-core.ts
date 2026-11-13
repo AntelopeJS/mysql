@@ -171,10 +171,9 @@ function NullTest(
   value: Compiled,
   negated: boolean,
 ): Compiled {
-  const missing = sql`(${value.sql} IS NULL)`;
   const test = IsJsonBacked(value.type)
-    ? sql`(${missing} OR (${value.sql} = ${dialect.sql.json.null}))`
-    : missing;
+    ? dialect.sql.json.absent(value.sql)
+    : sql`(${value.sql} IS NULL)`;
   return { sql: negated ? sql`(NOT ${test})` : test, type: BOOL };
 }
 
