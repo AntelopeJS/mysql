@@ -15,6 +15,7 @@ import {
 } from "./convergence";
 import {
   type ConvergenceSession,
+  DDL_LOCK_WAIT_SECONDS,
   type FailedAttempt,
   FailureOf,
   Interrupt,
@@ -78,10 +79,20 @@ const STOPPED_BY_SERVER: ReadonlySet<DdlFailure> = new Set([
 ]);
 
 /**
- * How long a later pass's statement waits for a metadata lock, shorter than the first pass's: every
- * statement on the table queues behind it, at each pass, for as long as the transaction holds it.
+ * How long the statements of later pass `pass` wait for a metadata lock: 1 s, doubled at each pass up
+ * to the first pass's {@link DDL_LOCK_WAIT_SECONDS}. Every statement on the table queues behind a
+ * waiting one, so the first later passes keep that short; a table whose transactions overlap for
+ * longer still gets its index once the wait outlasts them.
  */
-const RETRY_LOCK_WAIT_SECONDS = 1;
+function RetryLockWaitSeconds(pass: number): number {
+  return Math.min(2 ** (pass - 1), DDL_LOCK_WAIT_SECONDS);
+}
+
+/** A pass after the first: its number, and the unique indexes the one before it left unbuilt. */
+interface LaterPass {
+  readonly pass: number;
+  readonly unbuilt: readonly UnbuiltUniqueIndex[];
+}
 
 const builds = new Set<IndexBuild>();
 const phases = new Set<Promise<IndexPhaseEnd>>();
@@ -243,12 +254,12 @@ async function RunPass(
   build: IndexBuild,
   plans: readonly TablePlan[],
   hooks: Parameters<typeof WithIndexesLock>[1],
-  previous: readonly UnbuiltUniqueIndex[] | undefined,
+  later: LaterPass | undefined,
 ): Promise<Converged> {
   const refused = (plan: TablePlan): Retry | undefined =>
-    previous && {
+    later && {
       refused: new Set(
-        previous
+        later.unbuilt
           .filter((one) => !IsLocked(one) && one.tableId === plan.tableId)
           .map((one) => one.index.name),
       ),
@@ -256,8 +267,10 @@ async function RunPass(
   return WithIndexesLock(SchemaKey(build.schemaId), hooks, async (session) => {
     build.session = session;
     try {
-      if (previous) {
-        await session.apply(GetDialect().ddl.lockWait(RETRY_LOCK_WAIT_SECONDS));
+      if (later) {
+        await session.apply(
+          GetDialect().ddl.lockWait(RetryLockWaitSeconds(later.pass)),
+        );
       }
       let steps = 0;
       const unbuilt: UnbuiltUniqueIndex[] = [];
@@ -316,7 +329,12 @@ async function RunIndexPhase(
       const tables = plans.filter((plan) =>
         unbuilt.some((one) => IsLocked(one) && one.tableId === plan.tableId),
       );
-      const converged = await RunPass(build, tables, { stop, again }, unbuilt);
+      const converged = await RunPass(
+        build,
+        tables,
+        { stop, again },
+        { pass, unbuilt },
+      );
       steps += converged.steps;
       const next = [
         ...unbuilt.filter((one) => !IsLocked(one)),
