@@ -27,17 +27,16 @@ interface Review {
   bookId: string;
 }
 
-/** A key no field declares, which every read compares as JSON. */
-type LooseKey = string | { a: number; b: number[] } | null;
+type UndeclaredKey = string | { a: number; b: number[] } | null;
 
 interface LooseBook {
   _id: string;
-  meta: { key?: LooseKey };
+  meta: { key?: UndeclaredKey };
 }
 
 interface Note {
   _id: string;
-  ref?: LooseKey;
+  ref?: UndeclaredKey;
 }
 
 const BOOK_FIELDS = { title: "object" } as const;
@@ -80,9 +79,13 @@ const REVIEW_ROWS: Review[] = [
   { _id: "r-unmatched", bookTitle: UNMATCHED, bookId: "b-none" },
 ];
 
+/** Two unequal JSON strings whose normalized texts share one CRC-32. */
+const COLLIDING_KEYS = ["prhuztsj", "vojecigt"] as const;
+const COLLIDING_BOOK = 4;
+
 /**
- * Every book's key is its French title but `b-1`'s, an object, `b-2`'s, a JSON null, and `b-3`'s,
- * which is absent.
+ * Every book's key is its French title but `b-1`'s, an object, `b-2`'s, a JSON null, `b-3`'s, which
+ * is absent, and `b-4`'s, the first of {@link COLLIDING_KEYS}.
  */
 function LooseMeta(n: number, title: string | undefined): LooseBook["meta"] {
   if (n === 1) {
@@ -91,7 +94,10 @@ function LooseMeta(n: number, title: string | undefined): LooseBook["meta"] {
   if (n === 2) {
     return { key: null };
   }
-  return n === 3 ? {} : { key: title };
+  if (n === 3) {
+    return {};
+  }
+  return { key: n === COLLIDING_BOOK ? COLLIDING_KEYS[0] : title };
 }
 
 const LOOSE_ROWS: LooseBook[] = BOOK_ROWS.map(({ _id, title }, n) => ({
@@ -99,23 +105,24 @@ const LOOSE_ROWS: LooseBook[] = BOOK_ROWS.map(({ _id, title }, n) => ({
   meta: LooseMeta(n, title.fr),
 }));
 
-const NOTE_SPECIALS = 4;
-
 /**
- * Notes of every seventh book, then one naming `b-1`'s object with its keys in another order, one
- * a JSON null, one with no key, and one naming no book.
+ * One naming `b-1`'s object with its keys in another order, one a JSON null, one with no key, one
+ * naming no book, and one whose key only shares its hash with `b-4`'s.
  */
-const NOTE_ROWS: Note[] = [
-  ...REVIEW_ROWS.slice(0, REVIEWS - NOTE_SPECIALS).map(
-    ({ _id, bookTitle }) => ({
-      _id,
-      ref: bookTitle,
-    }),
-  ),
+const SPECIAL_NOTES: Note[] = [
   { _id: "r-object", ref: { b: [1, 2], a: 1 } },
   { _id: "r-null", ref: null },
   { _id: "r-absent" },
   { _id: "r-unmatched", ref: UNMATCHED },
+  { _id: "r-colliding", ref: COLLIDING_KEYS[1] },
+];
+
+/** The reviews of every seventh book as notes, then {@link SPECIAL_NOTES}, a page in all. */
+const NOTE_ROWS: Note[] = [
+  ...REVIEW_ROWS.slice(0, REVIEWS - SPECIAL_NOTES.length).map(
+    ({ _id, bookTitle }) => ({ _id, ref: bookTitle }),
+  ),
+  ...SPECIAL_NOTES,
 ];
 
 type BookTable = "indexed" | "bare";
@@ -177,9 +184,9 @@ function LooseJoined() {
 }
 
 /**
- * How the plan joins the books to the page of reviews it reads first, one access per plan row:
- * whether it reads them once for many reviews, through MySQL's hash join or MariaDB's join buffer,
- * or looks each review's book up through an index.
+ * How the plan joins a table to the page of rows it reads first, one access per plan row: whether
+ * it reads the table once for many rows, through MySQL's hash join or MariaDB's join buffer, or
+ * looks each row's matches up through an index.
  */
 async function JoinAccess(
   joined: Parameters<typeof Compiled>[0],
@@ -258,7 +265,7 @@ describe("a join against a table read whole", function () {
       pairs.map(({ review, book }) => `${review} ${book}`).sort(),
     ).to.deep.equal(
       [
-        ...EXPECTED.slice(0, REVIEWS - NOTE_SPECIALS),
+        ...EXPECTED.slice(0, REVIEWS - SPECIAL_NOTES.length),
         "r-object b-1",
         "r-null b-2",
       ].sort(),
