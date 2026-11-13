@@ -9,7 +9,7 @@ import {
 
 import { Logger } from "./logger";
 import { Bind, type Sql, sql } from "./statement";
-import { DIALECTS, type Dialect, DetectDialect } from "./dialect";
+import { ANY_ENGINE, DIALECTS, type Dialect, DetectDialect } from "./dialect";
 import { DescribeConnectFailure } from "./connect-failure";
 import {
   ClearOptions,
@@ -31,11 +31,6 @@ const CONNECTED = "connected to";
 const DISCONNECTED = "disconnected from";
 
 const SLOW_ACQUIRE_MS = 10_000;
-
-/** Every engine's name, for a message about a server that has not answered yet. */
-const ANY_ENGINE = Object.values(DIALECTS)
-  .map(({ name }) => name)
-  .join(" or ");
 
 /**
  * Says what a caller that is merely blocked cannot say for itself, since the wait has no deadline.

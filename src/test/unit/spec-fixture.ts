@@ -27,11 +27,26 @@ export function WithOptions<T>(options: Options, read: () => T): T {
   try {
     return read();
   } finally {
-    if (saved) {
-      SetOptions(saved);
-    } else {
-      ClearOptions();
-    }
+    Restore(saved);
+  }
+}
+
+function Restore(saved: Options | undefined) {
+  if (saved) {
+    SetOptions(saved);
+  } else {
+    ClearOptions();
+  }
+}
+
+/** Runs a synchronous body with no configuration set, restoring whatever was there, as {@link WithOptions} does. */
+export function WithoutOptions<T>(read: () => T): T {
+  const saved = CurrentOptions();
+  ClearOptions();
+  try {
+    return read();
+  } finally {
+    Restore(saved);
   }
 }
 
