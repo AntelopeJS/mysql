@@ -20,6 +20,23 @@ jobs:
       renovate-sync: false
       extra-commands: node .agents/skills/formal-change-feed-delivery/check.mjs
       test-job: true
+      windows: true
+      setup-commands: |
+        if [[ "$RUNNER_OS" == Windows ]]; then
+          data=$(cygpath -w "$RUNNER_TEMP/mysql-data")
+          mysqld --initialize-insecure --datadir="$data" > "$RUNNER_TEMP/mysqld-init.log" 2>&1 || { cat "$RUNNER_TEMP/mysqld-init.log"; exit 1; }
+          nohup mysqld --datadir="$data" --bind-address=127.0.0.1 --port=3306 --innodb-flush-log-at-trx-commit=0 --sync-binlog=0 > "$RUNNER_TEMP/mysqld.log" 2>&1 &
+          for _ in $(seq 300); do
+            if mysqladmin -uroot -h127.0.0.1 --silent ping > /dev/null 2>&1; then
+              echo "MYSQL_TEST_URL=mysql://root@127.0.0.1:3306/mysql" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 0.2
+          done
+          cat "$RUNNER_TEMP/mysqld.log"
+          echo "::error::MySQL did not listen on 127.0.0.1:3306 within 60 seconds."
+          exit 1
+        fi
     permissions:
       contents: read
   renovate-sync:
