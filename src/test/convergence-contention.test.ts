@@ -172,7 +172,7 @@ describe("a convergence step that meets another session", function () {
     };
     try {
       await ConvergeTable(raced, plan, "safe");
-      await ConvergeIndexes(raced, plan, () => false);
+      await ConvergeIndexes(raced, plan, new AbortController().signal);
     } finally {
       connection.release();
     }

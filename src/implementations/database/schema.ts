@@ -10,9 +10,10 @@ import { GetOptions, IsExternal } from "../../config";
 import { GetDialect, GetSchemaPrefix, PoolGeneration } from "../../connection";
 import {
   BuildIndexes,
+  StopSchemaIndexBuilds,
   type IndexPhaseEnd,
-  type RefusedUniqueIndex,
 } from "./migrate-indexes";
+import type { UnbuiltUniqueIndex, UniqueGate } from "./unbuilt-unique";
 import { ConvergeTables } from "./migrate-tables";
 import { ParseSchema, type SchemaModel, type TableModel } from "./fields";
 import { DescribeExternalSchema } from "./external-schema";
@@ -34,7 +35,7 @@ const schemaPlans = new Map<string, ReadonlyMap<string, TablePlan>>();
 const scanNotices = new Map<string, TableScanNotices>();
 const ready = new Map<string, Promise<void>>();
 const indexing = new Map<string, Promise<IndexPhaseEnd>>();
-const uniqueGates = new Map<string, Promise<readonly RefusedUniqueIndex[]>>();
+const uniqueGates = new Map<string, Promise<UniqueGate>>();
 
 /** A registration that has not converged: its definition, and the pool it started on. */
 interface Unconverged {
@@ -241,6 +242,7 @@ export const Schemas = {
     indexing.delete(schemaId);
     uniqueGates.delete(schemaId);
     unconverged.delete(schemaId);
+    void StopSchemaIndexBuilds(schemaId);
   },
 };
 
@@ -353,19 +355,20 @@ export async function WaitForIndexes(schemaId: string): Promise<void> {
 /**
  * Settles once a write to the schema can rely on its unique indexes: at once for a schema that
  * declares none, as soon as the catalog holds every one it declares, and otherwise once its
- * background index phase has settled.
+ * background index phase's first pass has ended.
  *
  * Reads never wait for the index phase, since an index only changes how fast they run. A unique
  * index changes what a write may store, so a write that ran before it is built could store the
  * duplicate it exists to refuse; writes to such a schema wait instead. The phase waits for any other
  * process's phase on the schema, so they wait for whichever process builds the index.
  *
- * Answers the unique indexes the latest phase found the server refusing to build, which stay unbuilt
- * until a later registration's phase builds them.
+ * Answers the unique indexes the latest phase left unbuilt, as it finds them now: those the server
+ * refused stay unbuilt until a later registration's phase builds them, and those a lock held off
+ * until a later pass of the phase does.
  */
 export async function WaitForUniqueIndexes(
   schemaId: string,
-): Promise<readonly RefusedUniqueIndex[]> {
+): Promise<readonly UnbuiltUniqueIndex[]> {
   await WaitForSchemaReady(schemaId);
-  return (await uniqueGates.get(schemaId)) ?? [];
+  return (await uniqueGates.get(schemaId))?.unbuilt ?? [];
 }

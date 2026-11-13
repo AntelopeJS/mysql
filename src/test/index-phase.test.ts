@@ -250,14 +250,14 @@ describe("an index build on a large table", function () {
     );
     const connection = await AcquireConnection();
     const session = SessionOf(connection);
-    let isStopping = false;
+    const stop = new AbortController();
     const plan = GetTablePlan(schemaId, "items");
-    const phase = ConvergeIndexes(session, plan, () => isStopping).then(
+    const phase = ConvergeIndexes(session, plan, stop.signal).then(
       () => undefined,
       (err: unknown) => FailureOf(err),
     );
     await UntilBuilding(schemaId);
-    isStopping = true;
+    stop.abort();
     await Interrupt(session);
     expect(await phase).to.equal("interrupted");
     connection.release();

@@ -43,7 +43,7 @@ interface Budgeted {
   spent(): number;
 }
 
-const NEVER = () => false;
+const NEVER = new AbortController().signal;
 const SAFE: MigrationMode = "safe";
 const DESTRUCTIVE: MigrationMode = "destructive";
 
