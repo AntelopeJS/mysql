@@ -149,7 +149,7 @@ An owned instance refuses it.
 
 ### A connection that fails at startup
 
-Wherever the catalog answers, an external instance whose first connection fails still starts. The catalog answers in development unless `catalog.enabled` says otherwise. The instance keeps the failure as the reason it has no connection, and every catalog and database call refuses with `MySQL adapter is not connected: <reason>`. A builder can then show the reason and let someone fix the URL, and a typo does not stop the whole project.
+Wherever the catalog answers, an external instance whose first connection fails still starts. The catalog answers in development unless `catalog.enabled` says otherwise. The instance keeps the failure as the reason it has no connection, and every catalog and database call refuses with `<engine> adapter is not connected: <reason>`. The engine is the one `dialect` names, or `MySQL or MariaDB` under `auto`, since no server has answered `SELECT VERSION()`. The warning logged at startup names it the same way: `could not connect to <engine>; the instance starts without a connection and refuses every call until the project reloads`. A builder can then show the reason and let someone fix the URL, and a typo does not stop the whole project.
 
 The module words the common reasons as a sentence and keeps the driver's code:
 

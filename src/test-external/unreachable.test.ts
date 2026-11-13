@@ -2,6 +2,7 @@ import { expect } from "chai";
 
 import { type CatalogOptions, GetOptions } from "../config";
 import { Connect, Read } from "../connection";
+import { Logger } from "../logger";
 import { sql } from "../statement";
 import { Info } from "../implementations/catalog";
 
@@ -23,6 +24,22 @@ async function Refusal<T>(work: () => PromiseLike<T>): Promise<string> {
     return err.message;
   }
   throw new Error("the call was expected to be refused");
+}
+
+async function CaptureWarnings(
+  work: () => PromiseLike<void>,
+): Promise<string[]> {
+  const warnings: string[] = [];
+  const original = Logger.Warn.bind(Logger);
+  Logger.Warn = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(" "));
+  };
+  try {
+    await work();
+  } finally {
+    Logger.Warn = original;
+  }
+  return warnings;
 }
 
 function Altered(url: string, change: (target: URL) => void): string {
@@ -63,6 +80,31 @@ describe("an external instance whose first connection fails", function () {
         "not connected: wrong user or password (ER_ACCESS_DENIED_ERROR)";
       expect(await Refusal(() => Info())).to.contain(expected);
       expect(await Refusal(() => Read(sql`SELECT 1`))).to.contain(expected);
+    });
+
+    it("names either engine while the dialect is left to detection", async () => {
+      const warnings = await CaptureWarnings(() =>
+        ConnectTo(WithWrongPassword(), ENABLED),
+      );
+      expect(warnings[0]).to.match(/^could not connect to MySQL or MariaDB; /);
+      expect(await Refusal(() => Info())).to.match(
+        /^MySQL or MariaDB adapter is not connected: /,
+      );
+    });
+
+    it("names the configured dialect's engine", async () => {
+      const warnings = await CaptureWarnings(() =>
+        Connect({
+          mode: EXTERNAL,
+          url: WithWrongPassword(),
+          catalog: ENABLED,
+          dialect: "mariadb",
+        }),
+      );
+      expect(warnings[0]).to.match(/^could not connect to MariaDB; /);
+      expect(await Refusal(() => Info())).to.match(
+        /^MariaDB adapter is not connected: /,
+      );
     });
 
     it("starts with a port nobody answers on, naming the host and port", async () => {
