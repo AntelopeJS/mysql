@@ -72,6 +72,21 @@ async function InGroupCount(field: Field): Promise<number | undefined> {
   return group?.count;
 }
 
+/** A field read by a `map`, then deduped whole: the dedup of a value rather than of a named field. */
+async function Mapped(field: Field): Promise<Value[][]> {
+  const top = await Readings()
+    .map((reading) => reading.key(field))
+    .distinct()
+    .run();
+  const [group] = await Readings()
+    .group("kind", (stream, kind) => ({
+      kind,
+      values: stream.map((reading) => reading.key(field)).distinct(),
+    }))
+    .run();
+  return [[...top].sort(ByText), [...(group?.values ?? [])].sort(ByText)];
+}
+
 describe("a dedup of 0 and -0", function () {
   this.timeout(30_000);
 
@@ -98,6 +113,13 @@ describe("a dedup of 0 and -0", function () {
       expect(counts).to.deep.equal([
         EXPECTED[field].length,
         EXPECTED[field].length,
+      ]);
+    });
+
+    it(`keeps one 0 of a ${field} field a map reads, at the top and in a group`, async () => {
+      expect(await Mapped(field)).to.deep.equal([
+        EXPECTED[field],
+        EXPECTED[field],
       ]);
     });
   }
