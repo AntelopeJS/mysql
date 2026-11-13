@@ -4,7 +4,6 @@ import { DuplicateKeyError } from "@antelopejs/interface-database";
 import { DIALECTS } from "../../dialect";
 import { DuplicateKeyFailure } from "../../implementations/database/duplicate-key";
 import { ExecuteAtomicWrite } from "../../implementations/database/writes-atomic";
-import { WithForeign } from "./spec-fixture";
 import { PlanOf } from "./pipeline-fixture";
 import type { TableOrigin } from "../../implementations/database/relation";
 
@@ -14,8 +13,7 @@ function classify(error: Error) {
 
 /** An error as the driver raises one the server answered. */
 function ServerError(errno: number, message: string): Error {
-  const error = WithForeign(new Error(message), "errno", errno);
-  return WithForeign(error, "sqlState", "23000");
+  return Object.assign(new Error(message), { errno, sqlState: "23000" });
 }
 
 const PEOPLE: TableOrigin = {
@@ -50,15 +48,13 @@ describe("A driver error", () => {
 
   it("reads an error with no SQL state, or one that ended the connection, as the connection's", () => {
     expect(
-      classify(WithForeign(new Error("read ECONNRESET"), "errno", -104)),
+      classify(Object.assign(new Error("read ECONNRESET"), { errno: -104 })),
     ).to.deep.equal({
       kind: "connection",
     });
-    const fatal = WithForeign(
-      ServerError(1053, "Server shutdown"),
-      "fatal",
-      true,
-    );
+    const fatal = Object.assign(ServerError(1053, "Server shutdown"), {
+      fatal: true,
+    });
     expect(classify(fatal)).to.deep.equal({ kind: "connection" });
   });
 });
@@ -127,7 +123,7 @@ describe("An atomic mutation's outcome", () => {
   });
 
   it("is unknown when the connection failed, since the write may have committed", async () => {
-    const lost = WithForeign(new Error("Connection lost"), "fatal", true);
+    const lost = Object.assign(new Error("Connection lost"), { fatal: true });
     expect(
       await ExecuteAtomicWrite(DIALECTS.mysql, () => Promise.reject(lost)),
     ).to.equal("unknown");

@@ -1,3 +1,5 @@
+import assert from "node:assert";
+import { expect } from "chai";
 import { QueryStage } from "@antelopejs/interface-database/common";
 import type { InstanceId } from "@antelopejs/interface-database/schema";
 
@@ -211,4 +213,18 @@ export function Settled<T>(pending: Promise<T>): Promise<T | undefined> {
       setTimeout(() => resolve(undefined), SETTLE_MS);
     }),
   ]);
+}
+
+/** Opens a feed over `between` and answers the message it was refused with, failing if it opened. */
+export async function Refused(between: QueryStage[]): Promise<string> {
+  const { env } = Reader([{}]);
+  return Feed((reqId) =>
+    Step(reqId, env, ...between).then(
+      () => expect.fail("the feed should have been refused"),
+      (err: unknown) => {
+        assert(err instanceof Error, "the feed rejects with an Error");
+        return err.message;
+      },
+    ),
+  );
 }
