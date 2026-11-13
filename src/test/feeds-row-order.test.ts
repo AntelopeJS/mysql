@@ -24,10 +24,10 @@ const ordered = new Schema<{ rows: Row }>(SCHEMA_ID, {
 const BACKLOG_PLACES = 6;
 
 /**
- * Longer than InnoDB keeps the snapshot it answers `INNODB_TRX` from, which it takes again only once
- * the table has gone unread for 100 ms.
+ * How often the test reads the server's state: longer than InnoDB keeps the snapshot it answers
+ * `INNODB_TRX` from, which it takes again only once the table has gone unread for 100 ms.
  */
-const TRX_POLL_MS = 150;
+const POLL_MS = 150;
 
 /** Longer than a statement takes to reach the state a test waits for, once its connection is free. */
 const STATE_DEADLINE_MS = 30_000;
@@ -43,20 +43,17 @@ function Scanning(id: Sql): Sql {
   return sql`EXISTS (SELECT 1 FROM information_schema.PROCESSLIST WHERE ID = ${id} AND STATE IN ('executing', 'Sending data') AND INFO LIKE 'SELECT%' AND LOCATE(${lit(CHANGE_LOG.log)}, INFO) > 0)`;
 }
 
-/** Waits until the connection `id` runs a transaction that waits on a row lock. */
-async function UntilWaitingOnRowLock(id: number): Promise<void> {
+/** Waits until `state` answers a row, and fails naming `premise` when it never does. */
+async function Until(state: Sql, premise: string): Promise<void> {
   const deadline = Date.now() + STATE_DEADLINE_MS;
   for (;;) {
-    const rows = await Read(
-      sql`SELECT 1 AS waiting FROM information_schema.INNODB_TRX WHERE trx_mysql_thread_id = ${param(id)} AND trx_state = 'LOCK WAIT'`,
-    );
-    if (rows.length > 0) {
+    if ((await Read(state)).length > 0) {
       return;
     }
     if (Date.now() > deadline) {
-      expect.fail("the second write waits on the document's lock");
+      expect.fail(premise);
     }
-    await Pause(TRX_POLL_MS);
+    await Pause(POLL_MS);
   }
 }
 
@@ -138,12 +135,20 @@ describe("a sequencer pass reading the log while one document is written twice",
     const second = Run(Relabel("second"), rewriter);
     let pass: Promise<unknown> = Promise.resolve();
     try {
-      await UntilWaitingOnRowLock(rewriter.threadId);
-      pass = SequenceOnce(SessionOf(sequencer), GetDialect(), "wait");
-      await Run(
+      await Until(
+        sql`SELECT 1 FROM information_schema.INNODB_TRX WHERE trx_mysql_thread_id = ${param(rewriter.threadId)} AND trx_state = 'LOCK WAIT'`,
+        "the second write waits on the document's lock",
+      );
+      const committing = Run(
         sql`CALL ${COMMIT_ON_SCAN} (${param(sequencer.threadId)})`,
         writer,
       );
+      await Until(
+        sql`SELECT 1 FROM information_schema.PROCESSLIST WHERE ID = ${param(writer.threadId)} AND INFO LIKE 'CALL%'`,
+        "the procedure watches for the pass before the pass starts",
+      );
+      pass = SequenceOnce(SessionOf(sequencer), GetDialect(), "wait");
+      await committing;
     } finally {
       await Run(sql`ROLLBACK`, writer);
       await Promise.all([second, pass]);
