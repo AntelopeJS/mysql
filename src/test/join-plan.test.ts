@@ -173,14 +173,17 @@ function Access(row: Row): string {
   return `${derived}${Text(row, "type")} ${Text(row, "key")}${buffered}`;
 }
 
-function LooseJoined() {
-  return Table("notes")
-    .slice(0, REVIEWS)
-    .joinInner(
-      Table("loose"),
-      (note, book) => book.key("meta").key("key").eq(note.key("ref")),
-      (note, book) => ({ review: note.key("_id"), book: book.key("_id") }),
-    );
+/** Every note where `count` is absent, which leaves the compiler no bound on the notes. */
+function LooseJoined(count?: number) {
+  const notes =
+    count === undefined
+      ? Table("notes")
+      : Table("notes").orderBy("_id").slice(0, count);
+  return notes.joinInner(
+    Table("loose"),
+    (note, book) => book.key("meta").key("key").eq(note.key("ref")),
+    (note, book) => ({ review: note.key("_id"), book: book.key("_id") }),
+  );
 }
 
 /**
@@ -190,19 +193,20 @@ function LooseJoined() {
  */
 async function JoinAccess(
   joined: Parameters<typeof Compiled>[0],
+  pageRows?: number,
 ): Promise<string> {
   const plan = await Read(sql`EXPLAIN FORMAT=TRADITIONAL ${Compiled(joined)}`);
-  const [page, ...books] = plan.filter(
-    (row) => Text(row, "select_type") === "PRIMARY",
-  );
-  expect(Text(page, "rows"), "the page of reviews is read first").to.equal(
-    String(REVIEWS),
-  );
+  const [page, ...books] = plan.filter((row) => Text(row, "id") === "1");
+  if (pageRows !== undefined) {
+    expect(Text(page, "rows"), "the page of reviews is read first").to.equal(
+      String(pageRows),
+    );
+  }
   return books.map(Access).join(", ");
 }
 
 function BooksAccess(table: BookTable, condition: Condition): Promise<string> {
-  return JoinAccess(Joined(table, condition));
+  return JoinAccess(Joined(table, condition), REVIEWS);
 }
 
 /**
@@ -229,6 +233,17 @@ const EXPECTED = REVIEW_ROWS.slice(0, REVIEWS - 2).map(
   (review) => `${review._id} ${review.bookId}`,
 );
 
+const LOOSE_EXPECTED = [
+  ...EXPECTED.slice(0, REVIEWS - SPECIAL_NOTES.length),
+  "r-object b-1",
+  "r-null b-2",
+].sort();
+
+async function LoosePairs(count?: number): Promise<string[]> {
+  const pairs = await LooseJoined(count).run();
+  return pairs.map(({ review, book }) => `${review} ${book}`).sort();
+}
+
 describe("a join against a table read whole", function () {
   this.timeout(120_000);
 
@@ -254,22 +269,20 @@ describe("a join against a table read whole", function () {
     expect(await Pairs("bare", CONDITIONS.title)).to.deep.equal(EXPECTED);
   });
 
-  it("looks each review's books up by the hash of a key both sides compare as JSON on MariaDB", async () => {
-    expect(await JoinAccess(LooseJoined())).to.equal(
-      GetDialect().id === "mysql"
-        ? "range PRIMARY buffered"
-        : "derived ref key0, eq_ref PRIMARY",
-    );
-    const pairs = await LooseJoined().run();
-    expect(
-      pairs.map(({ review, book }) => `${review} ${book}`).sort(),
-    ).to.deep.equal(
-      [
-        ...EXPECTED.slice(0, REVIEWS - SPECIAL_NOTES.length),
-        "r-object b-1",
-        "r-null b-2",
-      ].sort(),
-    );
+  it("compares the hashes of a key both sides compare as JSON through a join buffer on MariaDB, for a page or an unbounded list of reviews", async () => {
+    for (const count of [REVIEWS, undefined]) {
+      expect(await JoinAccess(LooseJoined(count), REVIEWS)).to.equal(
+        GetDialect().id === "mysql"
+          ? "range PRIMARY buffered"
+          : "derived ALL null buffered, eq_ref PRIMARY",
+      );
+      expect(await LoosePairs(count)).to.deep.equal(LOOSE_EXPECTED);
+    }
+  });
+
+  it("joins the table itself for one review, whose pairs are its rows", async () => {
+    expect(await JoinAccess(LooseJoined(1))).to.not.include("derived");
+    expect(await LoosePairs(1)).to.deep.equal([EXPECTED[0]]);
   });
 
   it("answers the same pairs where no index serves a fallback read, in either operand order", async () => {

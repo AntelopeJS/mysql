@@ -372,6 +372,8 @@ export interface KeyedJoinSyntax {
    * keyed by where the JSON text it holds cannot be. Two unequal values may share it too.
    */
   jsonHash(value: Sql): Sql;
+  /** A column of a derived table read so the engine builds no index to look it up by. */
+  unindexed(column: Sql): Sql;
 }
 
 /** Row-level constructs that differ between engines in algorithm, not only in spelling. */

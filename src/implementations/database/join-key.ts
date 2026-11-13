@@ -128,16 +128,19 @@ const HASH_COLUMN = "_hash";
  * The table joined through a derived table of the identities of its rows in the instance, each with
  * the joined row's operand of the equality computed once, and the equality on that column; the
  * table itself is joined back by its primary key, so the derived table holds no document. An operand
- * that compares as JSON is held as its JSON hash instead, which the engine keys the derived table by
- * where it cannot key JSON text: each left row looks up the rows that share its hash, and the
- * equality reads the joined row's operand again only for those. Answers nothing where the engine
- * computes the operand once per row already, or where the operand is a stored column.
+ * that compares as JSON is held as its JSON hash instead, which the join buffer compares with each
+ * left row's, kept from an index whose build costs more than a few left rows save; the equality
+ * reads the joined row's operand again only for the rows that share a hash. Answers nothing where
+ * the engine computes the operand once per row already, where the operand is a stored column, or
+ * where `leftRows`, the most rows the left side can hold where the compiler knows it, is one, since
+ * each pair is then one row.
  */
 export function KeyedSide(
   condition: RecordedFunction,
   root: RootSelection,
   left: RowSource,
   context: DecodingContext,
+  leftRows: number | undefined,
 ): JoinedSide | undefined {
   const { dialect } = context;
   const keyedJoin = dialect.sql.rows.keyedJoin;
@@ -160,8 +163,11 @@ export function KeyedSide(
   if (IsStoredColumn(table, key)) {
     return undefined;
   }
-  const keys = context.nextAlias();
   const hashed = IsJsonBacked(type);
+  if (hashed && leftRows !== undefined && leftRows <= 1) {
+    return undefined;
+  }
+  const keys = context.nextAlias();
   const select = KeyedIdentities(
     table,
     hashed ? { [HASH_COLUMN]: keyedJoin.jsonHash(key) } : { [KEY_COLUMN]: key },
@@ -177,7 +183,8 @@ export function KeyedSide(
     ? Identical(dialect, column, other)
     : Identical(dialect, other, column);
   const on = Holds(dialect, matched);
-  const lookup = sql`${QualifiedColumn(keys, HASH_COLUMN)} = ${keyedJoin.jsonHash(Cast(dialect, other, type).sql)}`;
+  const hash = QualifiedColumn(keys, HASH_COLUMN);
+  const lookup = sql`${keyedJoin.unindexed(hash)} = ${keyedJoin.jsonHash(Cast(dialect, other, type).sql)}`;
   return {
     relation: table,
     item: sql`(${FromItem(sql`(${keyedJoin.unmerged(select)})`, keys)} JOIN ${FromItem(table.from, table.alias)} ON ${join(identity, sql` AND `)})`,
