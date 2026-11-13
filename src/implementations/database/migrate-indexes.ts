@@ -9,7 +9,7 @@ import {
 } from "../../connection";
 import { Observe } from "./observe";
 import { SchemaKey } from "./registry";
-import type { TablePlan } from "./plan";
+import type { IndexPlan, TablePlan } from "./plan";
 import {
   HoldsUniqueIndexes,
   type IndexStep,
@@ -25,6 +25,23 @@ import {
   RetryDelayMs,
   WithIndexesLock,
 } from "./locks";
+
+/**
+ * A declared unique index the server refused to build on a live session, such as one over rows that
+ * already hold duplicates, with the server's message. It stays unbuilt until a later registration's
+ * phase builds it, and the writes it would check are refused until then.
+ */
+export interface RefusedUniqueIndex {
+  readonly tableId: string;
+  readonly index: IndexPlan;
+  readonly reason: string;
+}
+
+/** What one table's index phase did: the statements it ran, and the unique indexes the server refused. */
+interface Converged {
+  readonly steps: number;
+  readonly refused: readonly RefusedUniqueIndex[];
+}
 
 /** A running index phase: the session it builds on while it holds the lock, and what stops it. */
 interface IndexBuild {
@@ -115,18 +132,42 @@ function AgainWhenServerStops(
   };
 }
 
+/** The unique index a step builds, when the server refused the step on a live session. */
+function RefusedUnique(
+  plan: TablePlan,
+  step: IndexStep,
+  failure: DdlFailure,
+  reason: string,
+): RefusedUniqueIndex | undefined {
+  const builds = step.kind === "addIndex" || step.kind === "swapIndex";
+  const index = plan.indexes.find(
+    (planned) => planned.unique && planned.name === step.target,
+  );
+  return builds && index && failure === "refused"
+    ? { tableId: plan.tableId, index, reason }
+    : undefined;
+}
+
+function WarnRefused(plan: TablePlan, refused: RefusedUniqueIndex): void {
+  Logger.Warn(
+    `Index phase of '${plan.schemaId}.${plan.tableId}' could not build unique index '${refused.index.id}': ${refused.reason}. Inserts, and writes that set its fields, are refused until it is built: remove the rows it refuses, then register the schema again`,
+  );
+}
+
 /**
  * Brings one table's indexes and key columns in line with its plan, one statement at a time,
  * reading the catalog again before each. A statement the server refuses, such as a unique index over
- * duplicates, is logged and left for the next registration while the others proceed; a killed
- * statement or a broken session ends this attempt at the phase.
+ * duplicates, is logged and left for the next registration while the others proceed, and a unique
+ * index it refuses is answered among `refused`; a killed statement or a broken session ends this
+ * attempt at the phase.
  */
 export async function ConvergeIndexes(
   session: ConvergenceSession,
   plan: TablePlan,
   isStopping: () => boolean,
-): Promise<number> {
+): Promise<Converged> {
   const skipped = new Set<string>();
+  const refused: RefusedUniqueIndex[] = [];
   let steps = 0;
   let attempts = 0;
   let previous: string | undefined;
@@ -138,7 +179,7 @@ export async function ConvergeIndexes(
     const step =
       observed && NextIndexStep(GetDialect(), plan, observed, skipped);
     if (!step) {
-      return steps;
+      return { steps, refused };
     }
     const key = `${step.kind} '${step.target}'`;
     if (key === previous) {
@@ -151,7 +192,8 @@ export async function ConvergeIndexes(
       steps += 1;
     } catch (err) {
       attempts += 1;
-      const recovery = Recover(FailureOf(err), attempts);
+      const failure = FailureOf(err);
+      const recovery = Recover(failure, attempts);
       if (recovery === "stop") {
         throw err;
       }
@@ -160,7 +202,13 @@ export async function ConvergeIndexes(
         continue;
       }
       if (recovery === "skip") {
-        WarnSkipped(plan, step, err);
+        const unique = RefusedUnique(plan, step, failure, Describe(err));
+        if (unique) {
+          WarnRefused(plan, unique);
+          refused.push(unique);
+        } else {
+          WarnSkipped(plan, step, err);
+        }
         skipped.add(step.target);
       }
     }
@@ -189,10 +237,13 @@ async function HoldsEveryUniqueIndex(
 /** How an index phase ended: it ran to its end, it failed, or a disconnect stopped it first. */
 export type IndexPhaseEnd = "converged" | "failed" | "stopped";
 
+/** Opens a schema's unique gate, answering the unique indexes the server refused to build. */
+type OpenUniqueGate = (refused: readonly RefusedUniqueIndex[]) => void;
+
 async function RunIndexPhase(
   schemaId: string,
   plans: readonly TablePlan[],
-  holdsUnique: () => void,
+  open: OpenUniqueGate,
 ): Promise<"converged" | "stopped"> {
   if (IsPoolEnding()) {
     return "stopped";
@@ -203,10 +254,10 @@ async function RunIndexPhase(
   try {
     const opened = async (session: ConvergenceSession) => {
       if (await HoldsEveryUniqueIndex(session, plans)) {
-        holdsUnique();
+        open([]);
       }
     };
-    const steps = await WithIndexesLock(
+    const converged = await WithIndexesLock(
       SchemaKey(schemaId),
       {
         opened,
@@ -216,19 +267,23 @@ async function RunIndexPhase(
       async (session) => {
         build.session = session;
         try {
-          let total = 0;
+          let steps = 0;
+          const refused: RefusedUniqueIndex[] = [];
           for (const plan of plans) {
-            total += await ConvergeIndexes(session, plan, isStopping);
+            const table = await ConvergeIndexes(session, plan, isStopping);
+            steps += table.steps;
+            refused.push(...table.refused);
           }
-          return total;
+          return { steps, refused };
         } finally {
           build.session = undefined;
         }
       },
     );
-    if (steps) {
+    open(converged.refused);
+    if (converged.steps) {
       Logger.Info(
-        `converged the indexes of schema '${schemaId}' in ${steps} statements`,
+        `converged the indexes of schema '${schemaId}' in ${converged.steps} statements`,
       );
     }
     return "converged";
@@ -248,10 +303,11 @@ export interface IndexPhase {
   readonly done: Promise<IndexPhaseEnd>;
   /**
    * Settles at once for plans that declare no unique index, as soon as the phase finds the catalog
-   * already holding every one they declare, and otherwise once the phase has settled. Rejects when a
-   * disconnect stops the phase before that, so no write it holds runs on the pool being ended.
+   * already holding every one they declare, and otherwise once the phase has settled. Answers the
+   * unique indexes the server refused to build, none when the phase failed. Rejects when a disconnect
+   * stops the phase before that, so no write it holds runs on the pool being ended.
    */
-  readonly unique: Promise<void>;
+  readonly unique: Promise<readonly RefusedUniqueIndex[]>;
 }
 
 /**
@@ -269,15 +325,17 @@ export function BuildIndexes(
   schemaId: string,
   plans: readonly TablePlan[],
 ): IndexPhase {
-  let open = () => {};
+  let open: OpenUniqueGate = () => {};
   let refuse: (reason: Error) => void = () => {};
-  const unique = new Promise<void>((resolve, reject) => {
-    open = resolve;
-    refuse = reject;
-  });
+  const unique = new Promise<readonly RefusedUniqueIndex[]>(
+    (resolve, reject) => {
+      open = resolve;
+      refuse = reject;
+    },
+  );
   unique.catch(() => {});
   if (!plans.some(DeclaresUnique)) {
-    open();
+    open([]);
   }
   const done = RunIndexPhase(schemaId, plans, open)
     .catch((err: unknown) => {
@@ -291,7 +349,7 @@ export function BuildIndexes(
       if (end === "stopped") {
         refuse(INDEX_BUILD_STOPPED);
       }
-      open();
+      open([]);
       return end;
     });
   phases.add(done);

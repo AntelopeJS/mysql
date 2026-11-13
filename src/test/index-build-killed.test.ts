@@ -195,7 +195,7 @@ describe("a unique index the server refuses to build", function () {
     Schemas.unregister(schemaId);
   });
 
-  it("is not tried again when the rows already hold a duplicate: the phase ends at once, names the index, and lets writes through", async () => {
+  it("is not tried again when the rows already hold a duplicate: the phase ends at once, names the index, and refuses the write", async () => {
     await Fresh(schemaId);
     await Run(
       sql`UPDATE ${ident(PhysicalTable(schemaId))} SET price = 1 WHERE price = 2`,
@@ -207,9 +207,9 @@ describe("a unique index the server refuses to build", function () {
       ended = await SettlesWithin(WaitForIndexes(schemaId), PROMPT_MS);
       await WaitForIndexes(schemaId);
       expect(
-        await Inserting(schema, { _id: "written", price: 1 }),
-        "the write is not held",
-      ).to.equal("stored");
+        String(await Inserting(schema, { _id: "written", price: 1 })),
+        "the write is refused, not held",
+      ).to.match(/^Error: Write refused: unique index 'price'/);
     });
     expect(
       ended,
@@ -217,7 +217,7 @@ describe("a unique index the server refuses to build", function () {
     ).to.equal(true);
     expect(warnings).to.have.length(1);
     expect(warnings[0]).to.match(
-      /^Index phase of 'index_build_refused.items' could not addIndex 'price': Duplicate entry/,
+      /^Index phase of 'index_build_refused.items' could not build unique index 'price': Duplicate entry/,
     );
     expect(await IndexNames(schemaId)).to.deep.equal([]);
   });

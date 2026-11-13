@@ -119,7 +119,7 @@ async function UntilBuilding(schemaId: string): Promise<void> {
   expect.fail("the index build never started");
 }
 
-function Track(promise: Promise<void>): Settling {
+function Track(promise: Promise<unknown>): Settling {
   const settling: Settling = {
     isSettled: false,
     done: promise.then(() => {

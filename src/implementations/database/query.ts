@@ -9,7 +9,11 @@ import { CompileSubquery } from "./subquery";
 import { CompileExpression } from "./expression";
 import { DecodeCell, DecodeRow, type RowValue } from "./result";
 import { ApplyStages, CHANGES_STAGE, CompileRelation } from "./pipeline";
-import { DuplicateKeyFailure, IsPrimaryKeyDuplicate } from "./duplicate-key";
+import {
+  DuplicateKeyFailure,
+  IsPrimaryKeyDuplicate,
+  RefuseUnbuiltUnique,
+} from "./duplicate-key";
 import {
   GetTableNames,
   WaitForSchemaReady,
@@ -209,7 +213,11 @@ async function RunWrite(
     return RunExternalWrite(target, stage, context);
   }
   const statement = CompileWrite(target, stage, context);
-  await WaitForUniqueIndexes(target.origin.schemaId);
+  RefuseUnbuiltUnique(
+    await WaitForUniqueIndexes(target.origin.schemaId),
+    target.origin,
+    statement.sets,
+  );
   try {
     const answer = await Execute(statement, target);
     NudgeChanges();

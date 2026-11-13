@@ -48,8 +48,32 @@ One text part gets 640 characters, two get 320 each, and a text part beside `_id
 
 - **Every index leads with `_instance`**, because every read that is not `CROSS_INSTANCE` carries `_instance = ?`. An index on `(_instance, price)` serves `_instance = '' AND price > 1000` as one range scan.
 - **`crossInstance: true` adds an unprefixed twin** named `<index>__g` over the same keys without `_instance`, and that twin serves a `CROSS_INSTANCE` read of the index. Without the flag, such a read stays correct but cannot use the index well. The first `getAll`, `between` or `orderBy` that names the index under `CROSS_INSTANCE` logs one warning per index per registration.
-- **`unique: true` makes the `_instance`-led index `UNIQUE`.** The key is unique within each instance, and two instances may share it. The `__g` twin is never unique. Rows that lack a field of the key hold NULL there and never conflict. A value key refuses two equal values of any kind, such as the number 7 twice or `true` twice, and never two nulls. The number 7 and the string `"7"` do not conflict. When a schema declares a unique index, its writes wait until the index phase has built it, so no write can store a duplicate before the index exists. They also wait while another process builds it, and not at all once the catalog already holds it. Reads never wait. A write that the index refuses throws `DuplicateKeyError`.
+- **`unique: true` makes the `_instance`-led index `UNIQUE`.** The key is unique within each instance, and two instances may share it. The `__g` twin is never unique. Rows that lack a field of the key hold NULL there and never conflict. A value key refuses two equal values of any kind, such as the number 7 twice or `true` twice, and never two nulls. The number 7 and the string `"7"` do not conflict. When a schema declares a unique index, its writes wait until the index phase has built it, so no write can store a duplicate before the index exists. They also wait while another process builds it, and not at all once the catalog already holds it. Reads never wait. A write that the index refuses throws `DuplicateKeyError`. When the server refuses to build the index, the writes it would check are refused. See [A unique index the server refuses](#a-unique-index-the-server-refuses).
 - **`multi: true` over one declared `string[]` field is a multi-valued index**, `CAST(JSON_EXTRACT(field, '$') AS CHAR(512) ARRAY)`. MySQL serves `value MEMBER OF (JSON_EXTRACT(field, '$'))` from it, and only that spelling: a test on the bare column reads just the index's `_instance` prefix. So `includes` on the field, and a `getAll` on the index, compile to the exact expression the index is built on, and the plan reads the elements part of the key on MySQL 8.4 and 9.7. The server uses the index for a constant element only. A `lookup` or a join that tests each row's value against a list column compares a column of another row, which MySQL never serves from a multi-valued index, and it scans the instance's rows. An `includes` on a value read from below a field is not on the index either, since the index holds the field's own elements. An element longer than 512 characters, or an element that is an object, fails its write, as MySQL answers for any multi-valued index. Registration refuses `unique` with `multi` over an array field. `multi` over any other field, an array of numbers included, is an ordinary index over the whole value.
+
+## A unique index the server refuses
+
+The server can refuse to build a declared unique index. It refuses with errno 1062 when rows of one instance already share a key, and with errno 1071 when the key is longer than the server allows. The index phase logs a warning that names the index and quotes the server's message. It then builds the other indexes and ends. A refused build is not tried again until the schema registers again. A build that the server stops, by a restart, a `KILL` or a lost connection, is a different case: the phase tries it again on the pool, and writes wait for it.
+
+Until a later registration builds the index, the writes that it would check fail with this error:
+
+```text fragment
+Write refused: unique index '{indexId}' on '{schema}.{table}' is not built, because the server refused it ({the server's message}), so a write that adds rows or sets {fields} could store the duplicate it exists to refuse. Remove the rows it refuses, then register the schema again
+```
+
+These writes are refused:
+
+- every `insert`, upserts included, because every row it adds goes into the index;
+- every `replace`, because it states every column;
+- an `update` or an atomic update that sets a field the index keys on. A field that no column declares is stored in `_extra`, so an index on such a field refuses every write that sets any undeclared field.
+
+Reads, deletes and updates that set none of the index's fields go through. The server checks a unique index only when a row enters it or its key changes, so these writes cannot store a duplicate. They stay open so that you can clean the table through the module.
+
+To build the index:
+
+1. Find the rows that share a key in one instance. The server's message quotes the first key it found. Group the table's rows by `_instance` and by the indexed columns. For a field that the index keys on through a `__k_` key column, `SHOW CREATE TABLE` names that column.
+2. Remove or change the extra rows. A `delete` through the module works. An `update` that sets the indexed field is refused, so change those values with SQL.
+3. Register the schema again, for example by restarting the process. Its index phase builds the index, and writes go through again. Each process keeps refusing these writes until it registers the schema again itself, even after another process has built the index, so restart every process that serves the schema.
 
 ## What reaches an index
 

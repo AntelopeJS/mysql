@@ -54,8 +54,15 @@ export function WriteTargetOf(
  * - `upsert`: a transaction that reads which of `ids` exist with `lock`, holding them, and then
  *   runs what `write` builds from that answer; answered by `ids`.
  * - `atomic`: one statement whose match count is the mutation's outcome.
+ *
+ * `sets` names the physical columns the write stores a value in: every column for a write that may
+ * add rows, the assigned ones for a write that changes rows, none for a delete.
  */
-export type WriteStatement =
+export type WriteStatement = WriteExecution & {
+  readonly sets: readonly string[];
+};
+
+type WriteExecution =
   | { readonly kind: "count"; readonly statement: Sql }
   | {
       readonly kind: "insert";
@@ -100,6 +107,12 @@ export function WriteRowSource(
   alias: string,
 ): RowSource {
   return new ColumnRowSource(dialect, AliasedColumns(alias), origin.model);
+}
+
+/** One column a write assigns, beside the value it assigns to it. */
+export interface WrittenColumn {
+  column: string;
+  value: Sql;
 }
 
 /** One `SET` assignment, to a column of the targeted row; the column is already the physical one. */

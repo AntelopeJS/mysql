@@ -38,6 +38,7 @@ import {
   type WriteStatement,
   WriteTable,
   type WriteTarget,
+  type WrittenColumn,
 } from "./writes-shared";
 import { ClassifyMember, type DocumentView, StageOperand } from "./member";
 
@@ -81,12 +82,6 @@ function TargetedRows(target: WriteTarget, alias: string): Targeted {
     hint: target.relation.dialect.sql.rows.materialize(alias),
     from: sql`${WriteTable(target.origin)} JOIN (${Render(target.relation)}) AS ${ident(alias)} ON ${join(on, sql` AND `)}`,
   };
-}
-
-/** One column a write assigns, beside the value it assigns to it. */
-interface WrittenColumn {
-  column: string;
-  value: Sql;
 }
 
 /**
@@ -166,6 +161,7 @@ function UpdateStatement(
   return {
     kind: "count",
     statement: sql`UPDATE ${rows.hint} ${rows.from} SET ${set}${where}`,
+    sets: changed.assignments.map((one) => one.column),
   };
 }
 
@@ -368,5 +364,6 @@ export const DeleteWrite: WriteCompiler = (target, _stage, context) => {
   return {
     kind: "count",
     statement: sql`DELETE ${rows.hint} ${ident(WRITE_ALIAS)} FROM ${rows.from}`,
+    sets: [],
   };
 };
