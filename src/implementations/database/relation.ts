@@ -81,6 +81,11 @@ export interface Relation {
   offset?: number;
   distinct: boolean;
   single: boolean;
+  /**
+   * Whether a filter compares `_id` with one value, so the block reads at most one row of its
+   * instance. Only the join planner reads it: no clause the statement renders depends on it.
+   */
+  idBound: boolean;
   absent: AbsentValue;
   aggregated: boolean;
   crossInstance: boolean;
@@ -116,6 +121,7 @@ function NewRelation(seed: RelationSeed): Relation {
     orderBy: [],
     distinct: false,
     single: false,
+    idBound: false,
     absent: null,
     aggregated: false,
     crossInstance: false,

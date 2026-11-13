@@ -1,6 +1,6 @@
 import { expect } from "chai";
-import type { ValueProxy } from "@antelopejs/interface-database";
-import { Schema } from "@antelopejs/interface-database/schema";
+import type { Stream, ValueProxy } from "@antelopejs/interface-database";
+import { CROSS_INSTANCE, Schema } from "@antelopejs/interface-database/schema";
 
 import { GetDialect, Read, type Row } from "../connection";
 import { ident, sql } from "../statement";
@@ -173,12 +173,59 @@ function Access(row: Row): string {
   return `${derived}${Text(row, "type")} ${Text(row, "key")}${buffered}`;
 }
 
-/** Every note where `count` is absent, which leaves the compiler no bound on the notes. */
-function LooseJoined(count?: number) {
-  const notes =
-    count === undefined
-      ? Table("notes")
-      : Table("notes").orderBy("_id").slice(0, count);
+/** The first `count` notes, or every note where `count` is absent, which leaves the compiler no bound. */
+function Notes(count?: number) {
+  return count === undefined
+    ? Table("notes")
+    : Table("notes").orderBy("_id").slice(0, count);
+}
+
+/** The notes whose `field` is the first note's, by a filter. */
+function FirstNoteBy(field: "_id" | "ref") {
+  return Table("notes").filter((note) =>
+    note.key(field).eq(NOTE_ROWS[0][field]),
+  );
+}
+
+/**
+ * Notes the compiler knows are one: a page of one, and the note a filter names by `_id`, alone, in
+ * a page, or narrowed by a later filter.
+ */
+function OneNote() {
+  const byId = FirstNoteBy("_id");
+  const narrowed = byId.filter((note) => note.key("ref").eq(NOTE_ROWS[0].ref));
+  return [Notes(1), byId, byId.slice(0, REVIEWS), narrowed];
+}
+
+/**
+ * Notes a filter does not bound to one, each beside the pairs it joins: the notes a filter on `ref`
+ * names, which can be many, every note an equality of `_id` with itself keeps, the first note in
+ * every instance, and the notes a join fans the first note out to.
+ */
+function Unbound() {
+  const id = NOTE_ROWS[0]._id;
+  const notes = schema.instance(CROSS_INSTANCE).table("notes");
+  const fannedOut = FirstNoteBy("_id").joinInner(
+    Table("notes"),
+    (_note, other) => other.key("_id").ne(id),
+    (_note, other) => other,
+  );
+  return [
+    [FirstNoteBy("ref"), [EXPECTED[0]]],
+    [
+      Table("notes").filter((note) => note.key("_id").eq(note.key("_id"))),
+      LOOSE_EXPECTED,
+    ],
+    [
+      notes.filter((note) => note.key("_id").eq(id)),
+      [EXPECTED[0], EXPECTED[0]],
+    ],
+    [fannedOut, LOOSE_EXPECTED.filter((pair) => pair !== EXPECTED[0])],
+  ] as const;
+}
+
+/** The notes joined to the books whose key they name. */
+function LooseJoined(notes: Stream<Note> = Notes()) {
   return notes.joinInner(
     Table("loose"),
     (note, book) => book.key("meta").key("key").eq(note.key("ref")),
@@ -221,6 +268,11 @@ function UnindexedAccess(): string {
     : "derived ALL null buffered, eq_ref PRIMARY";
 }
 
+/** The access of books a join hashes, wherever in the plan they are read. */
+function HashedAccess(): string {
+  return GetDialect().id === "mysql" ? "buffered" : "derived ALL null buffered";
+}
+
 async function Pairs(
   table: BookTable,
   condition: Condition,
@@ -239,8 +291,8 @@ const LOOSE_EXPECTED = [
   "r-null b-2",
 ].sort();
 
-async function LoosePairs(count?: number): Promise<string[]> {
-  const pairs = await LooseJoined(count).run();
+async function LoosePairs(notes?: Stream<Note>): Promise<string[]> {
+  const pairs = await LooseJoined(notes).run();
   return pairs.map(({ review, book }) => `${review} ${book}`).sort();
 }
 
@@ -252,10 +304,10 @@ describe("a join against a table read whole", function () {
       await schema.createInstance(instance).run();
       await Table("indexed", instance).insert(BOOK_ROWS).run();
       await Table("bare", instance).insert(BOOK_ROWS).run();
+      await Table("notes", instance).insert(NOTE_ROWS).run();
     }
     await Table("reviews").insert(REVIEW_ROWS).run();
     await Table("loose").insert(LOOSE_ROWS).run();
-    await Table("notes").insert(NOTE_ROWS).run();
     await WaitForIndexes(SCHEMA_ID);
     for (const table of ["indexed", "bare", "reviews", "loose", "notes"]) {
       await Run(sql`ANALYZE TABLE ${ident(PhysicalTable(SCHEMA_ID, table))}`);
@@ -271,18 +323,27 @@ describe("a join against a table read whole", function () {
 
   it("compares the hashes of a key both sides compare as JSON through a join buffer on MariaDB, for a page or an unbounded list of reviews", async () => {
     for (const count of [REVIEWS, undefined]) {
-      expect(await JoinAccess(LooseJoined(count), REVIEWS)).to.equal(
+      expect(await JoinAccess(LooseJoined(Notes(count)), REVIEWS)).to.equal(
         GetDialect().id === "mysql"
           ? "range PRIMARY buffered"
           : "derived ALL null buffered, eq_ref PRIMARY",
       );
-      expect(await LoosePairs(count)).to.deep.equal(LOOSE_EXPECTED);
+      expect(await LoosePairs(Notes(count))).to.deep.equal(LOOSE_EXPECTED);
     }
   });
 
-  it("joins the table itself for one review, whose pairs are its rows", async () => {
-    expect(await JoinAccess(LooseJoined(1))).to.not.include("derived");
-    expect(await LoosePairs(1)).to.deep.equal([EXPECTED[0]]);
+  it("joins the table itself for one review, a page of one or one a filter names by `_id`, with or without a page or a later filter", async () => {
+    for (const notes of OneNote()) {
+      expect(await JoinAccess(LooseJoined(notes))).to.not.include("derived");
+      expect(await LoosePairs(notes)).to.deep.equal([EXPECTED[0]]);
+    }
+  });
+
+  it("hashes the keys of a left side a filter does not bound to one row", async () => {
+    for (const [notes, pairs] of Unbound()) {
+      expect(await JoinAccess(LooseJoined(notes))).to.include(HashedAccess());
+      expect(await LoosePairs(notes)).to.deep.equal(pairs);
+    }
   });
 
   it("answers the same pairs where no index serves a fallback read, in either operand order", async () => {

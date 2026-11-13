@@ -29,6 +29,7 @@ import {
 
 const LEFT_ROW = 0;
 const JOINED_ROW = 1;
+const FILTERED_ROW = 0;
 
 /**
  * A join condition that is one equality between a read of the left row and a read of the joined
@@ -71,6 +72,47 @@ function FreeParameters(stages: QueryStage[]): Set<string> {
 function ReadsOnly(stages: QueryStage[], key: string): boolean {
   const read = FreeParameters(stages);
   return read.size === 1 && read.has(key);
+}
+
+/** Whether a chain is the row parameter `row` read at `_id`, and nothing more. */
+function IsIdRead(stages: QueryStage[], row: string): boolean {
+  const [parameter, field, ...rest] = stages;
+  return (
+    rest.length === 0 &&
+    parameter?.stage === "arg" &&
+    ParameterKey(StageOperand(parameter, FIRST_OPERAND)) === row &&
+    field?.stage === "obj_index" &&
+    field.args[0] === ID_COLUMN
+  );
+}
+
+/**
+ * Whether a value is one value whatever row `row` is: a constant, or a chain that reads no field of
+ * that row. A query or a staged object is never counted, since what it reads is not walked here.
+ */
+function IsFixedFor(value: QueryValue, row: string): boolean {
+  const member = ClassifyMember(value);
+  if (member.kind === "proxy") {
+    return !FreeParameters(member.value.build()).has(row);
+  }
+  return member.kind !== "query" && member.kind !== "staged";
+}
+
+/**
+ * Whether a filter's predicate is `row.key("_id").eq(value)` with a value that is one value whatever
+ * the row, which names at most one row of an instance.
+ */
+export function ComparesIdWithOneValue(predicate: RecordedFunction): boolean {
+  const body = ChainOf(predicate.args[FUNCTION_BODY]);
+  const last = body?.at(-1);
+  if (!body || last?.stage !== "eq" || last.args.length !== 1) {
+    return false;
+  }
+  const row = ParameterKey(predicate.args[0][FILTERED_ROW]);
+  return (
+    IsIdRead(body.slice(0, -1), row) &&
+    IsFixedFor(StageOperand(last, FIRST_OPERAND), row)
+  );
 }
 
 /**
