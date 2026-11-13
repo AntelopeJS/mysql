@@ -86,6 +86,8 @@ export interface Flavour {
   readonly valueIsRead: boolean;
   /** A double as a JSON number, a negative zero included. */
   number(value: Sql): Sql;
+  /** The JSON syntax's `unsignedZero`, which depends on how the engine stores a negative zero. */
+  unsignedZero(value: Sql): Sql;
   /** Whether JSON text the engine parses keeps a finite number exactly. */
   keepsInText(value: number): boolean;
   /** A comparison's truth as a JSON boolean; SQL NULL stays SQL NULL. */
@@ -213,6 +215,8 @@ export const MYSQL: Flavour = {
     sql`JSON_VALUE(${document}, ${path} RETURNING CHAR(${int(MAX_TEXT_CHARS)}))`,
   valueIsRead: true,
   number: (value) => sql`CAST(${value} AS JSON)`,
+  unsignedZero: (value) =>
+    sql`(CASE WHEN ${value} = 0 THEN CAST(0 AS JSON) ELSE ${value} END)`,
   keepsInText: (value) => Number.isSafeInteger(value) && !Object.is(value, -0),
   boolean: (truth) => sql`CAST(${truth} AS JSON)`,
   includes: (array, element) => sql`(${element} MEMBER OF (${array}))`,

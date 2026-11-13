@@ -401,6 +401,7 @@ const MARIADB: Flavour = {
   value: (document, path) => sql`JSON_VALUE(${document}, ${path})`,
   valueIsRead: false,
   number: JsonNumber,
+  unsignedZero: (value) => Json(sql`REGEXP_REPLACE(${value}, '^-0$', '0')`),
   keepsInText: (value) => !Object.is(value, -0),
   boolean: (truth) =>
     sql`(CASE ${truth} WHEN TRUE THEN ${Json(lit("true"))} WHEN FALSE THEN ${Json(lit("false"))} END)`,

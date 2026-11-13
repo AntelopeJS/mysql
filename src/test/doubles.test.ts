@@ -22,6 +22,9 @@ const DOUBLES = [
 ];
 const LONG = DOUBLES[0];
 
+/** The doubles a dedup answers, which reads a negative zero as the 0 that `eq` finds equal to it. */
+const DEDUPED = DOUBLES.map((value) => (value === 0 ? 0 : value));
+
 /** A container of doubles, as each JSON column and undeclared object holds one. */
 interface Numbers {
   list: number[];
@@ -174,7 +177,7 @@ describe("a double written into JSON", function () {
       }));
     expect(walked).to.deep.equal(DOUBLES);
     expect(group?.all).to.have.deep.members(DOUBLES);
-    expect(group?.distinct).to.have.deep.members(DOUBLES);
+    expect(group?.distinct).to.have.deep.members(DEDUPED);
     expect(nested?.ones).to.deep.equal(DOUBLES);
   });
 

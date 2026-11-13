@@ -12,6 +12,7 @@ import type { DecodingContext, SubqueryProvider } from "./context";
 import { BuildDocument, JsonRowSource, type RowSource } from "./row-source";
 import {
   type Aggregation,
+  Deduplicable,
   Maximum,
   Mean,
   Minimum,
@@ -80,10 +81,11 @@ const MapSubStream: SubStreamStage = (state, stage, context) => {
 const DistinctSubStream: SubStreamStage = (state, stage, context) => {
   const deduped: SubStream = { ...state, distinct: true };
   const field = NamedField(stage);
-  if (field === undefined) {
-    return deduped;
-  }
-  return Revalued(deduped, state.source.field(field), context);
+  const value = field === undefined ? state.value : state.source.field(field);
+  const compared = Deduplicable(context.dialect, value);
+  return field === undefined && compared === value
+    ? deduped
+    : Revalued(deduped, compared, context);
 };
 
 /**
