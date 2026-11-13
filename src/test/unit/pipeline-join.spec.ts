@@ -141,7 +141,9 @@ describe("the lookup stage", () => {
   it("collects every match for a list key into an array, empty rather than null", () => {
     const query = ProfilesRoot().lookup(Other(), "skills", "name");
     const sql = Compile(query).sql;
-    expect(sql).to.include("LEFT JOIN LATERAL (SELECT COALESCE(JSON_ARRAYAGG(");
+    expect(sql).to.include(
+      "LEFT JOIN LATERAL ((SELECT COALESCE(JSON_ARRAYAGG(",
+    );
     expect(sql).to.include(
       "(CAST(JSON_QUOTE(`t1`.`name`) AS JSON) MEMBER OF (`t0`.`skills`))",
     );

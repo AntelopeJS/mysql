@@ -45,7 +45,7 @@ function AggregatedInPlace(
  * Collects every row of a nested query into one JSON array, in the order the query asked for. An
  * ordered query's rows are numbered in that order first, and the aggregate orders by the number.
  */
-function Aggregated(
+export function Aggregated(
   relation: Relation,
   readsOuterRow: boolean,
   context: DecodingContext,
