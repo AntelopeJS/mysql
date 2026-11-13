@@ -1,8 +1,8 @@
 ## Findings
 
-This run measures the module after the changes below; "before" is the run of 2026-11-11. Numbers marked _scratch_ time hand-written variants, which are diagnostics and not module output. MySQL scratch: a 100,000-row table seeded by SQL on a MySQL container of its own, median of 7 after a warm-up. MariaDB scratch (sections 8 to 11): the bench's own tables, seeded through the module on containers of their own, one container per version, median of 7 for filters, 5 for the per-read costs and 3 for joins and sorts, after a warm-up; MySQL 8.4 ran the same statements as the reference.
+This run measures the module after section 3's change and its base, main at `bf99ec8`, in one window: each round ran both back to back on every MySQL-family server, at a load average of 2.85 to 8.90 ([plans/base-head.md](plans/base-head.md)). Sections 1, 2, 4 to 7 and 9 to 11 keep the numbers of the run of 2026-11-12 08:55 UTC; section 9 predates the join key MariaDB now computes once per row (#10), under which its unindexed joins took 6.8× to 12× postgres here. _Scratch_ numbers time hand-written variants, diagnostics and not module output: a 100,000-row table on containers of their own, seeded by SQL (MySQL, section 3) or through the module (MariaDB, sections 8 to 11); medians of 3 to 7 after a warm-up, or for section 3 the minimum of 15 interleaved rounds.
 
-**Verdict.** Wherever a declared index can serve a question, MySQL and MariaDB now use it, in every form the question takes: key chains, the decorators' localized read, `orderBy("<index>")`, `lookup` by path and `joinInner`. Each answers in 0.4 to 0.9 ms on MySQL and 0.4 to 1.6 ms on MariaDB, against 22 to 89 ms for postgres' best correct form. Without an index, MySQL's `joinInner` hash joins like postgres, at 1.0× to 1.6× postgres instead of 23× to 41×. Every MySQL and MariaDB answer is correct. MySQL still exceeds 2× on unindexed filters (2.2× to 3.6×), on the decorators' sort after `map` (2.2× to 2.3×) and on the unindexed `lookup` (8.5× to 12×); the causes are in sections 3, 4 and 6. MariaDB 11.8 and 12.3 meet the index threshold and miss the 2× threshold on 15 of the 26 cells, from 2.6× to 136×, and the two versions agree within 8% on every one of them. The causes are in sections 8 to 11: MariaDB's JSON is text, so each read costs more the larger the document, and it has no hash join.
+**Verdict.** A declared index serves every question it can on MySQL and MariaDB, in 0.4 to 1.6 ms. Without one, a filter comparing a JSON read with a string now tests the read's `JSON_VALUE` text first and reads the value's kind only where that text matches (section 3). In the same window as its base, the change takes MySQL's unindexed filters to 0.48× to 0.86× of the base's time and MariaDB's to 0.20× to 0.46×, and leaves every other case within 4% of it. Against postgres, MySQL meets 2× on the `_internal…` filter (1.76× to 1.82×) and the decorators' (1.80× to 1.82×), and misses it on `title.fr` (2.30× to 2.32×), whose floor is one JSON read: 2.0× by itself. MariaDB's unindexed filters run at 2.5× to 4.3× postgres, since one read of text JSON costs more than postgres' whole filter (section 8). Every MySQL and MariaDB answer is correct.
 
 ### 1. The decorators' fallback reaches the key column (filter 137 → 0.36 ms)
 
@@ -27,24 +27,37 @@ The range must not reach a condition that an index serves. Through the key colum
 
 In the run, the three unindexed joins fell from 1045, 1608 and 2745 ms to 66, 83 and 127 ms on 8.4, and the indexed ones from 1120 to 2810 ms to 0.75 to 0.78 ms. They are bound by one scan of the instance that evaluates the JSON read on every row, the cost of the matching unindexed filter (56, 71 and 115 ms) plus the hash join; section 3 covers it.
 
-### 3. Unindexed scans: one JSON path, still read twice (heading filter 79 → 71 ms)
+### 3. Unindexed scans: the text in one read, then the kind (heading filter 71 → 51 ms)
 
-A nested read such as `key("_internal").key("data").key("title").key("fr")` used to compile to four chained `JSON_EXTRACT` calls. Each call built the intermediate subdocument before the next one read it. Now a JSON read carries its document and path, so one more key extends the path, and the whole read is one `JSON_EXTRACT(_extra, '$."_internal"."data"."title"."fr"')`. The key columns' generation expression reads the same way, so the compiler and the index read one spelling.
+A nested read is one `JSON_EXTRACT` of the whole path, spelled as the key columns' generation expression is. Compared with a string, it is read as one: `CASE WHEN JSON_TYPE(<read>) … THEN CAST(JSON_UNQUOTE(<read>)) END` evaluates the read twice, the decorators' four times. No function reads a JSON string, and SQL NULL for any other kind, in one evaluation, and without the kind test `eq("7")` would match a stored 7, which the contract forbids.
 
-The type-guarded string read, `CASE WHEN JSON_TYPE(<read>) … THEN CAST(JSON_UNQUOTE(<read>)) END`, still evaluates the read twice. MySQL has no function that reads a JSON string, and NULL for every other kind, from one evaluation. Dropping the type test would let `eq("7")` match a stored number 7, which the contract forbids. Measured on scratch 8.4:
+A filter, a join's condition, an array's `filter` and `not()` read only a comparison's truth. Where no key column serves it, they now test `CAST(JSON_VALUE(<document>, <path>) AS CHAR) <op> v` first, which holds wherever the typed comparison does, and run the typed comparison only on the rows it keeps. MySQL spells it `RETURNING CHAR(4294967295)`, since the default `VARCHAR(512)` answers SQL NULL for a longer string. A comparison projected in a `map` keeps its exact SQL, so a value of another kind still projects as `null`.
 
-| `_internal.data.title.fr = v` on 100,000 rows                  |   median |
-| -------------------------------------------------------------- | -------: |
-| module before: four chained reads, twice                       |  75.3 ms |
-| module after: one path, twice                                  |  63.0 ms |
-| one path, once, without the type test (not the contract)       |  45.3 ms |
-| one path, once, typed through `REGEXP_SUBSTR` of its JSON text | 100.9 ms |
+A default's text is `COALESCE(<fr text>, <en text>)` on MySQL, where `JSON_VALUE` is SQL NULL exactly where the read is absent or a JSON null. MariaDB's `JSON_VALUE` finds a plain key stored escaped, as `"f\u0072"`, that its member read leaves unread, so it tests `(<fr text> = v OR <en text> = v)`, reading `en` wherever `fr` differs. A declared string member, such as `title.fr` here, keeps its texts through the cast that reads it as text.
 
-In the run, the heading filter fell from 79.2 to 71.0 ms (8.4) and from 80.4 to 71.3 ms (9.7), 2.2× postgres' 32.1 ms. `title.fr`, a one-key path, stays at 56 ms; one untyped read of it takes 41.9 ms (scratch), against postgres' 21 ms.
+Scratch at a load average of 10, 8.4 and 9.7, minimum of 15 rounds:
 
-The decorators' unindexed filter takes 115 ms, 3.6× postgres. Its string read evaluates the whole fallback twice. On scratch 8.4, one evaluation of `COALESCE(NULLIF(fr, null), en)` takes 60.7 ms and the module's read 106 ms.
+| `= v` on 100,000 rows                     |      8.4 |      9.7 |
+| ----------------------------------------- | -------: | -------: |
+| scan with no JSON read                    |  18.7 ms |  18.7 ms |
+| `_internal` path, text then kind          |  50.9 ms |  51.1 ms |
+| decorators, module before                 | 109.3 ms | 111.3 ms |
+| decorators, one `COALESCE` text then kind |  51.7 ms |  52.6 ms |
+| decorators, each text then kind (`OR`)    |  74.3 ms |  74.0 ms |
 
-Convergence keeps a key column generated with the chained read: its signature names what it holds, not how its expression is spelled. `src/test/key-upgrade.test.ts` checks it on both versions, over documents whose path runs through an array, a null, a scalar or a missing key.
+In the run, each against postgres and, in the same window, against the base:
+
+| unindexed filter | postgres |     8.4: ÷ pg, ÷ base |     9.7: ÷ pg, ÷ base |
+| ---------------- | -------: | --------------------: | --------------------: |
+| `title.fr`       |  19.2 ms | 44.1 ms: 2.30×, 0.86× | 44.6 ms: 2.32×, 0.86× |
+| `_internal…`     |  29.3 ms | 51.7 ms: 1.76×, 0.78× | 53.2 ms: 1.82×, 0.79× |
+| decorators       |  33.7 ms | 52.7 ms: 1.80×, 0.48× | 53.3 ms: 1.82×, 0.49× |
+
+A join's condition takes the text test only on MariaDB, which evaluates it once per pair of rows. MySQL hash joins on every equality of the condition, so the test was a second key read per book: 107 → 149 ms on scratch 8.4. Its joins now run at 0.97× to 1.03× of the base.
+
+`title.fr` misses 2×. Its read is one `JSON_VALUE` of a 44-byte document, 25 to 30 ms over a scan with no JSON read on scratch, where postgres answers the whole filter in 19.2 ms; one untyped read, without the kind test the contract requires, took 41.9 ms on scratch 8.4 in the run before, 2.0× by itself.
+
+`src/test/key-upgrade.test.ts` checks that convergence keeps a key column generated with the older chained read. `src/test/text-read.test.ts` checks that a filter keeps exactly the rows its projected comparison is true on, over strings, numbers, nulls, absent and escaped values, a key stored escaped and a declared string member holding a number.
 
 ### 4. Sorts after `map`: postgres sorts in parallel (decorators form 2.2×)
 
@@ -63,9 +76,9 @@ Without an index, MySQL's `lookup` is a correlated `LIMIT 1` subquery per review
 
 It now keys `_internal.data.title.fr` with a [value key](../docs/indexes.md#key-columns): a string's bound is `key = LEFT(CONCAT('2', v), 638)`, still one `ref`. Its rows' medians stay below the previous run's p95, as `titleFr`'s do with an unchanged key.
 
-### 8. MariaDB reads text: an unindexed filter costs 5× to 18× postgres
+### 8. MariaDB reads text: an unindexed filter costs 2.5× to 4.3× postgres
 
-The ANT-2022 threshold is index use wherever postgres uses one, and a median within 2× of postgres. MariaDB meets the first on both versions (section 11) and misses the second on 15 of 26 cells. Every unindexed filter misses it: 5.1× (`title.fr`), 9.0× to 9.4× (`_internal` path) and 17× to 18× (decorators), on 11.8 and 12.3.
+The ANT-2022 threshold is index use wherever postgres uses one, which MariaDB meets (section 11), and a median within 2× of postgres, which every unindexed filter misses.
 
 MariaDB stores JSON as text, and `JSON_EXTRACT` costs more the larger the document, even for a key at its front. MySQL's binary JSON finds a key without reading the rest of the document. Scratch, one read of `$.title.fr` per row over 100,000 rows, the cost of one read taken as the slope between 2 and 16 reads per row:
 
@@ -76,20 +89,32 @@ MariaDB stores JSON as text, and `JSON_EXTRACT` costs more the larger the docume
 | 1,743 bytes                |       284 ms |       285 ms |   11.1 ms |
 | 6,843 bytes                |     1,070 ms |     1,052 ms |   11.1 ms |
 
-The books' `_extra` is 430 bytes and `title` 44. One read of `_extra` costs 117 ms on 11.8 and 109 ms on 12.3, against 16 ms on MySQL 8.4; one read of `title` costs 24 and 22 ms, against 9 ms. The mechanism, that every call reads the whole text, is inferred from this scaling; the scaling itself is measured.
+The books' `_extra` is 430 bytes and `title` 44. One read of `_extra` costs 117 ms on 11.8 and 109 ms on 12.3, against 16 ms on MySQL 8.4; one read of `title` costs 24 and 22 ms, against 9 ms.
 
-The module's typed string read evaluates its read twice, and the decorators' read four times (`fr` and `en`, each twice). Scratch, 100,000 rows, a scan with no JSON read takes 11 ms on all three:
+`JSON_VALUE` costs a fraction of a `JSON_EXTRACT` of the same path, as if it stopped at the member where `JSON_EXTRACT` reads every call's whole text; both mechanisms are inferred from timings. Scratch at a load average of 25 to 29, minimum of 15 interleaved rounds; a scan with no JSON read took 17 ms:
 
-| filter on equality, unindexed                  | MariaDB 11.8 | MariaDB 12.3 | MySQL 8.4 |
-| ---------------------------------------------- | -----------: | -----------: | --------: |
-| `title.fr`, module's read (twice)              |      98.8 ms |      93.2 ms |   47.0 ms |
-| `title.fr`, one untyped read                   |      61.3 ms |      59.3 ms |   34.6 ms |
-| `_internal` path, module's read (twice)        |       293 ms |       267 ms |   62.0 ms |
-| `_internal` path, one untyped read             |       158 ms |       149 ms |   41.8 ms |
-| decorators, module's read (four reads)         |       552 ms |       529 ms |    105 ms |
-| decorators, one untyped `COALESCE` (two reads) |       289 ms |       274 ms |   63.6 ms |
+| `= v` on 100,000 rows, unindexed                | MariaDB 11.8 | MariaDB 12.3 |
+| ----------------------------------------------- | -----------: | -----------: |
+| `title.fr`, module before (two reads)           |     104.0 ms |     104.9 ms |
+| `title.fr`, one `JSON_EXTRACT`, then the kind   |      68.5 ms |      67.5 ms |
+| `title.fr`, `JSON_VALUE`, then the kind         |      42.6 ms |      46.3 ms |
+| `_internal` path, module before                 |     295.1 ms |     279.4 ms |
+| `_internal` path, one `JSON_EXTRACT`, then kind |     161.6 ms |     158.0 ms |
+| `_internal` path, `JSON_VALUE`, then the kind   |      69.3 ms |      71.8 ms |
+| decorators, module before (four reads)          |     559.0 ms |     536.9 ms |
+| decorators, one `COALESCE` of texts, then kind  |      70.1 ms |      72.9 ms |
 
-Evaluating the read twice is half of the gap, and the contract forbids removing it (section 3). The other half is the cost of one read: a single untyped read of `_internal` is 149 to 158 ms, 4.6× to 4.9× postgres' 32.1 ms, and a single read of `title.fr` is 59 to 61 ms, 2.8× to 2.9× postgres' 21.3 ms. No spelling of the same comparison reaches 2× on a table with no key column. With a declared index there is a key column, and the filter reads one row (section 11).
+The module tests each of the decorators' texts on MariaDB (section 3): 123 and 113 ms against the `COALESCE`'s 79 and 68 ms on scratch at a load of 10. In the run, each against postgres and, in the same window, against the base:
+
+| unindexed filter |    11.8: ÷ pg, ÷ base |    12.3: ÷ pg, ÷ base |
+| ---------------- | --------------------: | --------------------: |
+| `title.fr`       | 47.5 ms: 2.47×, 0.43× | 49.4 ms: 2.57×, 0.46× |
+| `_internal…`     | 74.3 ms: 2.54×, 0.24× | 74.8 ms: 2.55×, 0.26× |
+| decorators       |  125 ms: 4.27×, 0.20× |  121 ms: 4.15×, 0.21× |
+
+The rest is the cost of the read itself: one `JSON_VALUE` of the `_internal` path costs 50 ms over the scan on scratch, against postgres' whole filter at 29.3 ms, and the decorators' read takes two of them on every row its `fr` does not match. With a declared index there is a key column, and the filter reads one row (section 11).
+
+`JSON_VALUE` decodes a key stored escaped and `JSON_EXTRACT` does not. In an object that names one key twice, once escaped, as in `{"\u0061": "x", "a": "g"}`, `JSON_VALUE` reads `x` and the typed read `g`, so such a row is missing from the filter on `a = "g"`. The module never writes such a document; the case is in [`docs/mariadb.md`](../docs/mariadb.md).
 
 ### 9. MariaDB joins by block nested loop: unindexed `joinInner` 34× to 136×, `lookup` 24× to 37×
 

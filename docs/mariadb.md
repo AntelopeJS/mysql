@@ -55,6 +55,8 @@ The module compiles the same queries to SQL that MariaDB accepts. Where MariaDB 
 
 MariaDB stores a document as it was written and matches a path's key to the key as it is spelled there, so `$."café"` misses a key stored as `"caf\u00e9"`, the way PHP, Python, Go and .NET writers spell it. MySQL decodes every key when it stores a document. A read, a filter, `hasfields()` and an index on MariaDB read such a key where the path names a key with a character other than an ASCII letter, a digit or `_`: where the plain read misses and the document holds a backslash, the key is looked up among its holder's decoded keys. A path of plain keys reads as it is spelled, so a plain ASCII key stored escaped, as `"f\u0072"` for `fr`, is not read on MariaDB; no common JSON writer escapes those characters. A key computed in the query, as in `key(row.key("lang"))`, is read as it is spelled too. On a stored document, the lookup costs nothing where the member is found; where it is absent, it costs about a third more on a document without a backslash and about twice as much on one with a backslash. On a document the query computes, such as the value of a `default()` read again by key, the document is parsed once into a one-row `JSON_TABLE`, so a chain of such reads stays one statement of linear size; that read costs about twice the plain one.
 
+A `filter`, a join's condition or a `not()` that compares a JSON read with a string, where no index serves it, first tests the read's `JSON_VALUE` text, which reads less of the document than `JSON_EXTRACT`, and reads the value's kind only on the rows that text matches. `JSON_VALUE` decodes every key, where the read above takes first the key spelled as the path spells it. In an object that names one key twice, once escaped, as in `{"\u0061": "x", "a": "g"}` or `{"caf\u00e9": "x", "café": "g"}`, `JSON_VALUE` reads `x` where the value read is `g`: `filter` drops such a row where the key equals `"g"`, and `not()` keeps it. MySQL stores each key once, decoded, so it reads `g` both ways.
+
 ### Nested queries that read their outer row
 
 MariaDB cannot read the outer row inside a derived table. A nested query that reads it is aggregated in the subquery itself, with `JSON_ARRAYAGG`'s `DISTINCT`, `ORDER BY` and `LIMIT` standing for the query's `distinct()`, `orderBy()` and `slice()`. A nested `distinct()` collected that way comes back in the order of the values' text, where MySQL keeps the order the rows arrived in. Neither engine promises an order for `distinct()`.
@@ -93,9 +95,9 @@ MariaDB 11.8 answers `score = 5.5` on an `INT` column through an index on it wit
 
 ## Performance
 
-The nested-field benchmark in [`bench/RESULTS.md`](../bench/RESULTS.md) runs on MariaDB 11.8 and 12.3 beside MySQL and PostgreSQL 18. A declared index serves every read it serves on MySQL, in 0.4 to 1.6 ms. Without an index, MariaDB is 2.6 to 136 times slower than PostgreSQL on 15 of the 26 queries, and [`bench/findings.md`](../bench/findings.md) gives the cause of each:
+The nested-field benchmark in [`bench/RESULTS.md`](../bench/RESULTS.md) runs on MariaDB 11.8 and 12.3 beside MySQL and PostgreSQL 18. A declared index serves every read it serves on MySQL, in 0.4 to 1.6 ms. Without an index, MariaDB takes 2.5 to 44 times PostgreSQL's time on 15 of the 26 queries in the latest run, and [`bench/findings.md`](../bench/findings.md) gives the cause of each:
 
-- MariaDB stores JSON as text, so reading a path costs more the longer the document is. One read of a 430-byte document over 100,000 rows takes about 110 ms, against 16 ms on MySQL 8.4.
+- MariaDB stores JSON as text, so reading a path costs more the longer the document is. One `JSON_EXTRACT` of a 430-byte document over 100,000 rows takes about 110 ms, against 16 ms on MySQL 8.4. A filter that compares a read with a string tests its `JSON_VALUE` first, which took about a third of that on the bench's documents.
 - MariaDB has no hash join at its default `join_cache_level`. A join no index serves evaluates its condition once per pair of rows in the join buffer.
 - A sort over a value of no declared type reads the document once per term of MySQL's JSON order.
 

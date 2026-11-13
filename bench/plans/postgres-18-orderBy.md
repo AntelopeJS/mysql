@@ -48,7 +48,7 @@ SELECT "t1"."value" AS "value" FROM (SELECT jsonb_build_object('_id', to_jsonb("
 EXPLAIN (ANALYZE, TIMING OFF) through auto_explain
 Limit (actual rows=20 loops=1)
   -> Gather Merge (actual rows=20 loops=1)
-    -> Sort (actual rows=15.67 loops=3)
+    -> Sort (actual rows=16.33 loops=3)
       Sort Key: (CASE WHEN (jsonb_typeof((jsonb_build_object('_id', to_jsonb(t0._id), 'sortKey', to_jsonb(CASE WHEN (jsonb_typeof((t0.title -> 'fr'::text)) = 's…
       Sort Method: top-N heapsort
       -> Seq Scan on books_bare (actual rows=33333.33 loops=3)
@@ -68,7 +68,7 @@ SELECT "t1"."value" AS "value" FROM (SELECT jsonb_build_object('_id', to_jsonb("
 EXPLAIN (ANALYZE, TIMING OFF) through auto_explain
 Limit (actual rows=20 loops=1)
   -> Gather Merge (actual rows=20 loops=1)
-    -> Sort (actual rows=16.33 loops=3)
+    -> Sort (actual rows=17 loops=3)
       Sort Key: (CASE WHEN (jsonb_typeof((jsonb_build_object('_id', to_jsonb(t0._id), 'sortKey', to_jsonb(CASE WHEN (jsonb_typeof((t0.title -> 'fr'::text)) = 's…
       Sort Method: top-N heapsort
       -> Seq Scan on books_indexed (actual rows=33333.33 loops=3)
@@ -123,7 +123,7 @@ SELECT "t1"."value" AS "value" FROM (SELECT jsonb_build_object('_id', to_jsonb("
 EXPLAIN (ANALYZE, TIMING OFF) through auto_explain
 Limit (actual rows=20 loops=1)
   -> Gather Merge (actual rows=20 loops=1)
-    -> Sort (actual rows=16.33 loops=3)
+    -> Sort (actual rows=17 loops=3)
       Sort Key: ((jsonb_build_object('_id', to_jsonb(t0._id), 'sortKey', ((((t0._extra -> '_internal'::text) -> 'data'::text) -> 'title'::text) -> 'fr'::text)) …
       Sort Method: top-N heapsort
       -> Seq Scan on books_bare (actual rows=33333.33 loops=3)
@@ -143,7 +143,7 @@ SELECT "t1"."value" AS "value" FROM (SELECT jsonb_build_object('_id', to_jsonb("
 EXPLAIN (ANALYZE, TIMING OFF) through auto_explain
 Limit (actual rows=20 loops=1)
   -> Gather Merge (actual rows=20 loops=1)
-    -> Sort (actual rows=17.33 loops=3)
+    -> Sort (actual rows=16.67 loops=3)
       Sort Key: ((jsonb_build_object('_id', to_jsonb(t0._id), 'sortKey', ((((t0._extra -> '_internal'::text) -> 'data'::text) -> 'title'::text) -> 'fr'::text)) …
       Sort Method: top-N heapsort
       -> Seq Scan on books_indexed (actual rows=33333.33 loops=3)
@@ -184,8 +184,8 @@ SELECT "t1"."value" AS "value" FROM (SELECT jsonb_build_object('_id', to_jsonb("
 EXPLAIN (ANALYZE, TIMING OFF) through auto_explain
 Limit (actual rows=20 loops=1)
   -> Gather Merge (actual rows=20 loops=1)
-    -> Result (actual rows=16.33 loops=3)
-      -> Sort (actual rows=16.33 loops=3)
+    -> Result (actual rows=16.67 loops=3)
+      -> Sort (actual rows=16.67 loops=3)
         Sort Key: ((jsonb_build_object('_id', to_jsonb(t0._id), 'sortKey', COALESCE(NULLIF(((((t0._extra -> '_internal'::text) -> 'data'::text) -> 'title'::text…
         Sort Method: top-N heapsort
         -> Seq Scan on books_indexed (actual rows=33333.33 loops=3)
