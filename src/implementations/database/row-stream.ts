@@ -53,9 +53,10 @@ function Arrival(stream: Readable): Promise<void> {
  * streams, so the stream would otherwise wait for rows that never come.
  *
  * Two costs the caller must know. The open statement holds a shared metadata lock on every table it
- * reads until it is read to its end or the connection is closed, so a DDL statement on those tables
- * waits that long. And the connection is out of the pool for the same time, which is what
- * `maxOpenCursors` bounds.
+ * reads until the server has sent its last row, so a DDL statement on those tables waits that long:
+ * until the cursor is read to its end or closed, unless the rest of the result fits in the socket
+ * buffers between the server and the client. And the connection is out of the pool until the cursor
+ * is read to its end or closed, which is what `maxOpenCursors` bounds.
  *
  * `close` after the last row hands the connection back to the pool. `close` before it destroys the
  * connection instead of draining it: the server aborts the statement, and the pool opens a
