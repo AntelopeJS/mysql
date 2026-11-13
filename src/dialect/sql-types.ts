@@ -76,12 +76,34 @@ export interface InPlaceSyntax {
   hashRow(text: Sql, alias: string): HashRow;
   /** A select the engine materializes once, rather than merging it into the query that reads it. */
   materialized(select: Sql): Sql;
+  /** One element of the array {@link InPlaceSyntax.held} holds: a row's hash and its key parts. */
+  hashedKey(hash: Sql, key: readonly Sql[]): Sql;
+  /**
+   * A one-row table holding an array of {@link InPlaceSyntax.hashedKey} elements of `parts` key
+   * parts, and how a select inside the row it is read for reads the elements back as rows.
+   */
+  held(array: Sql, parts: number, alias: string): HeldKeys;
 }
 
 /** What {@link InPlaceSyntax.hashRow} answers. */
 export interface HashRow {
   readonly from: Sql;
   readonly hash: Sql;
+}
+
+/** What {@link InPlaceSyntax.held} answers. */
+export interface HeldKeys {
+  /** The one-row table, as a FROM item without its alias. */
+  readonly from: Sql;
+  /**
+   * The held elements as rows: the FROM item without its alias, and each row's hash and key parts
+   * at `alias`.
+   */
+  rows(alias: string): {
+    readonly from: Sql;
+    readonly hash: Sql;
+    readonly key: readonly Sql[];
+  };
 }
 
 /** One member of a document assembled from columns. `container` marks a JSON-backed member. */

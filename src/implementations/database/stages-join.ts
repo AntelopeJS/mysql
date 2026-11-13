@@ -272,7 +272,7 @@ function OneRow(right: Relation): Sql {
  * nested query is: the correlation reads the outer row.
  */
 function CollectedRows(right: Relation, context: DecodingContext): Sql {
-  return Aggregated(right, true, context).sql;
+  return Aggregated({ relation: right, readsOuterRow: true }, context).sql;
 }
 
 const SINGLE_FORM: LookupForm = {

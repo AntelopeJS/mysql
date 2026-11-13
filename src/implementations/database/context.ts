@@ -61,12 +61,23 @@ export interface NestedRelation {
   readonly relation: Relation;
   /** Whether it read the row of a query outside it, through a parameter bound there. */
   readonly readsOuterRow: boolean;
+  /** The rows of the one query outside it whose row it read, where {@link DecodingContext.outerRows} knows them. */
+  readonly outerRows?: Relation;
 }
 
 /** What {@link DecodingContext.readingOuterRow} built, and whether building it read the outer row. */
 export interface OuterRowRead<T> {
   readonly value: T;
   readonly readsOuterRow: boolean;
+}
+
+/**
+ * One subquery compiling now: how many reads of a parameter bound outside it it made, and the rows
+ * each parameter it read ranges over, `undefined` for a parameter bound with no rows named.
+ */
+interface OpenSubquery {
+  reads: number;
+  readonly rows: Set<Relation | undefined>;
 }
 
 /**
@@ -80,8 +91,10 @@ export class DecodingContext {
   private readonly bindings = new Map<string, ArgumentBinding>();
   /** How many subqueries were open when each lambda parameter was bound. */
   private readonly bindingDepths = new Map<string, number>();
-  /** Per open subquery, outermost first: how many reads of a parameter bound outside it it made. */
-  private readonly outerReads: number[] = [];
+  /** The rows each lambda parameter ranges over, where the stage that bound it named them. */
+  private readonly bindingRows = new Map<string, Relation>();
+  /** Per open subquery, outermost first. */
+  private readonly open: OpenSubquery[] = [];
   /** Fragments built while the subquery they are in read no parameter bound outside it. */
   private readonly outerFree = new WeakSet<Sql>();
   private aliasCounter = 0;
@@ -112,23 +125,40 @@ export class DecodingContext {
     return `${ALIAS_PREFIX}${this.aliasCounter++}`;
   }
 
-  public bind(id: ParameterId, binding: ArgumentBinding): void {
-    this.bindings.set(String(id), binding);
-    this.bindingDepths.set(String(id), this.outerReads.length);
+  /**
+   * Binds a lambda parameter. `rows` names the relation the parameter ranges over, one row of it per
+   * call, where the binding stage calls the lambda once for each of its rows.
+   */
+  public bind(
+    id: ParameterId,
+    binding: ArgumentBinding,
+    rows?: Relation,
+  ): void {
+    const key = String(id);
+    this.bindings.set(key, binding);
+    this.bindingDepths.set(key, this.open.length);
+    if (rows) {
+      this.bindingRows.set(key, rows);
+    } else {
+      this.bindingRows.delete(key);
+    }
   }
 
   public unbind(id: ParameterId): void {
     this.bindings.delete(String(id));
     this.bindingDepths.delete(String(id));
+    this.bindingRows.delete(String(id));
   }
 
   /** A parameter's binding; every subquery opened since it was bound now reads its outer row. */
   public arg(id: ParameterId): ArgumentBinding {
-    const binding = this.bindings.get(String(id));
+    const key = String(id);
+    const binding = this.bindings.get(key);
     assert(binding, `Unbound lambda parameter ${id}`);
-    const depth = this.bindingDepths.get(String(id)) ?? 0;
-    for (let level = depth; level < this.outerReads.length; level++) {
-      this.outerReads[level]++;
+    const depth = this.bindingDepths.get(key) ?? 0;
+    for (const subquery of this.open.slice(depth)) {
+      subquery.reads++;
+      subquery.rows.add(this.bindingRows.get(key));
     }
     return binding;
   }
@@ -148,12 +178,16 @@ export class DecodingContext {
 
   /** A query nested inside another one as a value. */
   public subqueryRelation(stages: QueryStage[]): NestedRelation {
-    this.outerReads.push(0);
+    this.open.push({ reads: 0, rows: new Set() });
     try {
       const relation = this.relation(stages);
-      return { relation, readsOuterRow: this.readsOuterRow };
+      return {
+        relation,
+        readsOuterRow: this.readsOuterRow,
+        outerRows: this.outerRows,
+      };
     } finally {
-      this.outerReads.pop();
+      this.open.pop();
     }
   }
 
@@ -162,8 +196,17 @@ export class DecodingContext {
     return this.outerReadCount > 0;
   }
 
+  /**
+   * The rows of the one query outside the subquery compiling now whose row it has read so far, where
+   * every parameter it read ranges over those rows; none where it read none, or rows of another.
+   */
+  public get outerRows(): Relation | undefined {
+    const rows = this.open.at(-1)?.rows;
+    return rows?.size === 1 ? [...rows][0] : undefined;
+  }
+
   private get outerReadCount(): number {
-    return this.outerReads.at(-1) ?? 0;
+    return this.open.at(-1)?.reads ?? 0;
   }
 
   /**

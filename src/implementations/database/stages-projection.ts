@@ -45,9 +45,12 @@ const DefaultStage: PipelineStage = (relation, stage, context) => {
  */
 const MapStage: PipelineStage = (relation, stage, context) => {
   const prepared = Prepare(relation, PROJECTION_BLOCKERS, context);
-  const body = DecodeFunction(RecordedLambda(stage, FIRST_OPERAND), context, [
-    prepared.source,
-  ]);
+  const body = DecodeFunction(
+    RecordedLambda(stage, FIRST_OPERAND),
+    context,
+    [prepared.source],
+    prepared,
+  );
   return SetProjection(prepared, RequireOperand(body, stage, FIRST_OPERAND));
 };
 

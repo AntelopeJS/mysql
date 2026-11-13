@@ -25,16 +25,17 @@ import { ArrayOf, OPAQUE, type SqlType } from "./types";
 /**
  * Collects a relation's rows into one JSON array in the select that reads them, empty over no row:
  * the engine's aggregate takes the relation's dedup, order and bounds itself, a grouped relation's
- * groups are collected by {@link GroupedInPlace}, and the one row of a whole-stream aggregate is
- * an array of one.
+ * groups are collected by {@link GroupedInPlace} for the outer rows it is read for, and the one row
+ * of a whole-stream aggregate is an array of one.
  */
 export function CollectedInPlace(
   relation: Relation,
   inPlace: InPlaceSyntax,
   context: DecodingContext,
+  outerRows: Relation | undefined,
 ): Compiled {
   if (relation.aggregated && relation.groupBy.length > 0) {
-    return GroupedInPlace(relation, inPlace, context);
+    return GroupedInPlace(relation, inPlace, context, outerRows);
   }
   const dialect = context.dialect;
   const value = CurrentValue(relation);
@@ -90,7 +91,12 @@ export function Walked(
   const origin = relation.origin;
   const ordered = relation.orderBy.length > 0;
   const { single, absent } = relation;
-  const collected = CollectedInPlace(relation, inPlace, context);
+  const collected = CollectedInPlace(
+    relation,
+    inPlace,
+    context,
+    context.outerRows,
+  );
   const numbered = ReadBack(collected.sql, type, context);
   const walked = numbered.relation;
   walked.origin = origin;
@@ -119,6 +125,7 @@ export function ConcatenatedInPlace(
         SetProjection(side, Cast(dialect, CurrentValue(side), type)),
         inPlace,
         context,
+        context.outerRows,
       ).sql,
   );
   return ReadBack(dialect.sql.json.concatArrays(left, right), type, context)
