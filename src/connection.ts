@@ -57,6 +57,7 @@ type Cell = string | number | null | Buffer;
 export type Row = ReadonlyMap<string, Cell>;
 
 let pool: Pool | undefined;
+let generation = 0;
 let dialect: Dialect | undefined;
 let connectFailure: string | undefined;
 let isWaiting = false;
@@ -243,6 +244,7 @@ export async function Connect(options?: Options) {
     ClearOptions();
     throw err;
   }
+  generation += 1;
   pool = created;
   Logger.Info(CONNECTED);
 }
@@ -310,6 +312,14 @@ function GetPool(): Pool {
 /** Refuses with why there is no connection, when there is none; an external catalog's guard. */
 export function AssertConnected(): void {
   GetPool();
+}
+
+/**
+ * Which pool is open: a number every `Connect` that opens one raises, so work started on an earlier
+ * pool can tell it ran on one that has since ended. None while no pool is open.
+ */
+export function PoolGeneration(): number | undefined {
+  return pool ? generation : undefined;
 }
 
 /** The dialect of the connected server, or a refusal with why there is none. */

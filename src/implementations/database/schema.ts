@@ -7,7 +7,7 @@ import type {
 
 import { Logger } from "../../logger";
 import { GetOptions, IsExternal } from "../../config";
-import { GetDialect, GetSchemaPrefix } from "../../connection";
+import { GetDialect, GetSchemaPrefix, PoolGeneration } from "../../connection";
 import { BuildIndexes } from "./migrate-indexes";
 import { ConvergeTables } from "./migrate-tables";
 import { ParseSchema, type SchemaModel, type TableModel } from "./fields";
@@ -31,6 +31,15 @@ const scanNotices = new Map<string, TableScanNotices>();
 const ready = new Map<string, Promise<void>>();
 const indexing = new Map<string, Promise<void>>();
 const uniqueGates = new Map<string, Promise<void>>();
+
+/** A registration that has not converged: its definition, and the pool it started on. */
+interface Unconverged {
+  readonly schema: SchemaDefinition;
+  readonly generation: number | undefined;
+}
+
+/** The registrations still converging or failed, by schema id. */
+const unconverged = new Map<string, Unconverged>();
 
 function UnservedScanWarning(
   schemaId: string,
@@ -167,11 +176,23 @@ async function initialize(schemaId: string, schema: SchemaDefinition) {
  * and re-registering an id is legal, so a slow failure can settle *after* a later registration of
  * the same id has already succeeded and installed its own definition, shape and gate; deleting
  * unconditionally there would wipe the live schema.
+ *
+ * **A registration outlives the pool it started on.** Until it converges it stays in
+ * {@link unconverged} with the pool it started on, and once another pool is open
+ * {@link WaitForSchemaReady} registers it again there, whether the first run failed or still waits
+ * on a connection the old pool ended. Convergence plans every step from the catalog and runs one at
+ * a time per schema, so the second run finishes whatever the first left.
  */
 export const Schemas = {
   register(schemaId: string, schema: SchemaDefinition) {
     definitions.set(schemaId, schema);
-    const pending: Promise<void> = initialize(schemaId, schema).catch(
+    unconverged.set(schemaId, { schema, generation: PoolGeneration() });
+    const pending: Promise<void> = initialize(schemaId, schema).then(
+      () => {
+        if (ready.get(schemaId) === pending) {
+          unconverged.delete(schemaId);
+        }
+      },
       (err: unknown) => {
         if (ready.get(schemaId) === pending) {
           definitions.delete(schemaId);
@@ -195,6 +216,7 @@ export const Schemas = {
     ready.delete(schemaId);
     indexing.delete(schemaId);
     uniqueGates.delete(schemaId);
+    unconverged.delete(schemaId);
   },
 };
 
@@ -206,14 +228,24 @@ function MissingTable(schemaId: string, tableId: string): string {
   return `Unknown table '${schemaId}.${tableId}'`;
 }
 
+/**
+ * Settles once the schema's registration has, and rethrows its failure. A registration that has not
+ * converged on a pool since ended is registered again here on the pool now open; while none is open,
+ * its outcome stands.
+ */
 export function WaitForSchemaReady(schemaId: string): Promise<void> {
+  const stale = unconverged.get(schemaId);
+  const open = PoolGeneration();
+  if (stale && open !== undefined && stale.generation !== open) {
+    return Schemas.register(schemaId, stale.schema);
+  }
   return ready.get(schemaId) ?? Promise.resolve();
 }
 
 /**
- * Settles once every registration started so far has settled, whether it succeeded or failed. A
- * connection ended while one is converging fails it for good, so whatever replaces the connection
- * waits for this first.
+ * Settles once every registration started so far has settled, whether it succeeded or failed. One
+ * that has not converged runs again on whatever pool next serves its schema, so a caller about to
+ * reconnect under other credentials waits for this first.
  */
 export async function SettleRegistrations(): Promise<void> {
   await Promise.allSettled(ready.values());
