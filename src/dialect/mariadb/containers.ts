@@ -79,16 +79,18 @@ export function ShortNumbered(value: Sql): Sql {
 
 /**
  * The container's text with each number {@link FLATTENED} and read back one element at a time: a
- * number as its `key`, a run as its characters, and a string or a literal as written.
+ * number as its `key`, a run as its characters, and a string or a literal as written. Each element
+ * is copied before it is read, as a `JSON_TABLE` column is read past its text by `JSON_NORMALIZE`.
  */
 function ElementKeys(compact: Sql, key: (number: Sql) => Sql): Sql {
   const array = sql`CONCAT('[', TRIM(BOTH ',' FROM ${Rewritten(compact, FLATTENED)}), ']')`;
-  const [ordinal, element] = [
+  const [ordinal, column] = [
     ident("ajs_element_ordinal"),
     ident("ajs_element"),
   ];
+  const element = sql`CONCAT(${column}, '')`;
   const read = sql`(CASE JSON_TYPE(${element}) WHEN 'ARRAY' THEN JSON_VALUE(${element}, '$[0]') WHEN 'INTEGER' THEN ${key(element)} WHEN 'DOUBLE' THEN ${key(element)} ELSE ${element} END)`;
-  return sql`(SELECT GROUP_CONCAT(CONVERT(${read} USING utf8mb4) ORDER BY ${ordinal} SEPARATOR '') FROM JSON_TABLE(${array}, '$[*]' COLUMNS (${ordinal} FOR ORDINALITY, ${element} JSON PATH '$')) AS ${ident("ajs_elements")})`;
+  return sql`(SELECT GROUP_CONCAT(CONVERT(${read} USING utf8mb4) ORDER BY ${ordinal} SEPARATOR '') FROM JSON_TABLE(${array}, '$[*]' COLUMNS (${ordinal} FOR ORDINALITY, ${column} JSON PATH '$')) AS ${ident("ajs_elements")})`;
 }
 
 /**

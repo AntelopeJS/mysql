@@ -25,7 +25,7 @@ export function JsonEquals(left: Sql, right: Sql): Sql {
  * pair it holds for: `JSON_EQUALS` holds where two values normalize to the same text.
  */
 export function JsonHash(value: Sql): Sql {
-  return sql`CRC32(CONVERT(IF(${IsNumber(value)}, ${NumberKey(value)}, JSON_NORMALIZE(${Comparable(value)})) USING utf8mb4))`;
+  return sql`CRC32(CONVERT(IF(${IsNumber(value)}, ${NumberKey(value)}, ${Normalized(Comparable(value))}) USING utf8mb4))`;
 }
 
 /**
@@ -76,6 +76,15 @@ export function CanonicalNumber(value: Sql): Sql {
   return sql`(CASE WHEN ${IsContainer(value)} THEN ${Json(ContainerKey(value, NumberKey))} WHEN NOT ${IsNumber(value)} THEN ${Json(value)} ELSE ${NumberKey(value)} END)`;
 }
 
+/**
+ * `JSON_NORMALIZE` of a copy of a JSON text: MariaDB 11.8 and 12.3 read past the end of a column's
+ * text that `JSON_NORMALIZE` reads in place, as in a `JSON_TABLE` column, and answer digits it does
+ * not hold.
+ */
+function Normalized(value: Sql): Sql {
+  return sql`JSON_NORMALIZE(CONCAT(${value}, ''))`;
+}
+
 function IsNumber(value: Sql): Sql {
   return sql`JSON_TYPE(${value}) IN ('INTEGER', 'DOUBLE')`;
 }
@@ -105,19 +114,23 @@ function Short(value: Sql): Sql {
  * the digits of its shortest decimal, which MySQL compares an integer with, so `1e19` meets
  * `10000000000000000000` and `18446744073709549568e0` meets `18446744073709550000`, and the rest as
  * the shortest text MariaDB writes for it. The cast caps a number beyond the doubles at the greatest
- * one, so a number that casts to it with an exponent past 308 keeps its text, as does an integer
- * literal of 309 digits or more; so does a spelling of the greatest double itself with such an
- * exponent, as `0.17976931348623157e309`. The exponent is read as a decimal, which caps one past a
- * `SIGNED` above 308.
+ * one, so a number that casts to it and whose `JSON_NORMALIZE` text has an exponent past 308, or an
+ * integer literal of 309 digits or more, is that text, as `JSON_EQUALS` compares it, so `1e309`
+ * meets `1E309` and `10e308`; a spelling of the greatest double itself with such an exponent, as
+ * `0.17976931348623157e309`, is that double. The exponent is read as a decimal, which caps one past
+ * a `SIGNED` above 308.
  */
 function NumberKey(value: Sql): Sql {
   const text = sql`JSON_COMPACT(${value})`;
   const double = sql`CAST(JSON_VALUE(${value}, '$') AS DOUBLE)`;
   const integral = sql`${double} = FLOOR(${double}) AND ABS(${double}) < ${UNSIGNED_BOUND}`;
-  const exponent = sql`CAST(SUBSTRING(REGEXP_SUBSTR(${text}, '[eE][+-]?[0-9]+$'), 2) AS DECIMAL(65, 0))`;
+  const normalized = Normalized(value);
+  const exponent = sql`CAST(SUBSTRING_INDEX(CAST(${normalized} AS BINARY), 'E', -1) AS DECIMAL(65, 0))`;
   const finite = sql`(ABS(${double}) < ${GREATEST_DOUBLE} OR ${exponent} <= ${int(GREATEST_EXPONENT)})`;
   const exact = sql`${text} REGEXP '^-?[0-9]{1,20}$' AND CAST(${text} AS DECIMAL(65, 0)) BETWEEN ${SIGNED_MIN} AND ${UNSIGNED_MAX}`;
+  const greatest = sql`${normalized} = ${Normalized(sql`CAST(${double} AS CHAR)`)}`;
+  const beyond = sql`IF(${greatest}, ${double}, ${normalized})`;
   return Json(
-    sql`(CASE WHEN ${exact} THEN REGEXP_REPLACE(${text}, '^-0$', '0') WHEN ${text} REGEXP '^-?[0-9]{309,}$' THEN ${text} WHEN ${integral} THEN CAST(${double} AS DECIMAL(20, 0)) WHEN ${finite} THEN ${double} ELSE ${text} END)`,
+    sql`(CASE WHEN ${exact} THEN REGEXP_REPLACE(${text}, '^-0$', '0') WHEN ${text} REGEXP '^-?[0-9]{309,}$' THEN ${beyond} WHEN ${integral} THEN CAST(${double} AS DECIMAL(20, 0)) WHEN ${finite} THEN ${double} ELSE ${beyond} END)`,
   );
 }
