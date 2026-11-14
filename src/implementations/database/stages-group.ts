@@ -266,7 +266,9 @@ function Folded(
  *
  * The group's own term is read through `MIN`, which the group's select aggregates: MySQL 9.7 reads
  * a bare term that is not a column, over a group that aggregates in a temporary table, as the term
- * of one group for every group.
+ * of one group for every group. Both engines refuse that `MIN` where the group's select is itself
+ * inside the aggregate of an enclosing query, so a group two queries deep fails rather than answer
+ * another group's rows.
  */
 function GroupRowsAgain(grouped: Relation, context: DecodingContext): Relation {
   const terms = grouped.groupBy.map((term) => term.sql);
