@@ -80,8 +80,8 @@ async function Restored(ladder: SortBufferLadder | undefined) {
  * twice.
  *
  * `close` after a `next` read the result's end and found the statement whole hands the connection
- * back to the pool, with the session's sort buffer put back. Any other `close` destroys the connection instead of draining it or clearing
- * what the statement left listed on it: the server aborts the statement, and the pool opens a
+ * back to the pool, with the session's sort buffer put back. Any other `close` destroys the
+ * connection instead of draining it or clearing what the statement left listed on it: the server aborts the statement, and the pool opens a
  * replacement on demand.
  */
 export async function OpenRowStream(
@@ -99,7 +99,7 @@ export async function OpenRowStream(
   let isClosed = false;
   let isSettled = false;
   let isClean = false;
-  let isStarted = false;
+  let isRetryable = true;
   let ladder: SortBufferLadder | undefined;
   const Execute = () => {
     const opened = driver
@@ -122,16 +122,16 @@ export async function OpenRowStream(
     while (rows.length < count) {
       const row: unknown = stream.read();
       if (IsDocument(row)) {
-        isStarted = true;
+        isRetryable = false;
         rows.push(ParseRow(Object.entries(row)));
-      } else if (!isStarted && OutOfSortMemory(failure)) {
+      } else if (isRetryable && OutOfSortMemory(failure)) {
         ladder ??= await ClimbSortBuffer(connection);
-        if (!(await ladder.grow())) {
-          isStarted = true;
-          continue;
+        if (await ladder.grow()) {
+          failure = undefined;
+          stream = Execute();
+        } else {
+          isRetryable = false;
         }
-        failure = undefined;
-        stream = Execute();
       } else if ((failure || stream.readableEnded) && !isSettled) {
         isSettled = true;
         failure = failure

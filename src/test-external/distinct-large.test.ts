@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import type { Schema } from "@antelopejs/interface-database/schema";
 
+import { Read } from "../connection";
 import { param, sql } from "../statement";
 import { NativeWrite, RegisterSales, type SalesTables } from "./sales";
 
@@ -52,6 +53,12 @@ function Large() {
     .filter((row) => row.key("code").match(CODES));
 }
 
+/** The sort buffer of the pooled connection a read takes, which the pool hands out last in, first out. */
+async function SortBuffer(): Promise<number> {
+  const [row] = await Read(sql`SELECT @@session.sort_buffer_size AS value`);
+  return Number(row.get("value"));
+}
+
 function Sorted(values: readonly unknown[] | undefined): unknown[] {
   return [...(values ?? [])].sort((left, right) =>
     JSON.stringify(left).localeCompare(JSON.stringify(right)),
@@ -99,7 +106,8 @@ describe("a dedup of large external JSON documents", function () {
     expect(ms).to.be.below(MS_PER_ROW * DOCUMENTS.length);
   });
 
-  it("keeps one value per document in a group read by a cursor", async () => {
+  it("keeps one value per document in a group read by a cursor, and gives back its sort buffer", async () => {
+    const before = await SortBuffer();
     const query = Large().group("status", (stream) => stream.distinct("raw"));
     const groups = [];
     for await (const group of query) {
@@ -107,6 +115,7 @@ describe("a dedup of large external JSON documents", function () {
     }
     expect(groups).to.have.length(1);
     expect(Sorted(groups[0])).to.deep.equal(Sorted(EXPECTED));
+    expect(await SortBuffer()).to.equal(before);
   });
 
   it("keeps one value per document in a group in under 0.1 s a row", async () => {
