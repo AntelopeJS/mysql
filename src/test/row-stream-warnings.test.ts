@@ -1,13 +1,17 @@
 import { expect } from "chai";
 
-import { Bind, type Sql, int, param, sql } from "../statement";
+import { Bind, type Sql, ident, int, param, sql } from "../statement";
 import { AcquireConnection, GetDialect, Read } from "../connection";
 import { OpenRowStream } from "../implementations/database/row-stream";
+import { Run } from "./tables";
 
 const BATCH = 10;
 
 /** More rows than the 64 warnings MariaDB lists for a statement by default, each raising one. */
 const PAST_LISTED = 1000;
+
+/** How many times a cursor reads rows that another connection flips meanwhile. */
+const RACED_RUNS = 60;
 
 /** The errno MariaDB fails a statement with past `max_statement_time`. */
 const STATEMENT_TIMEOUT = 1969;
@@ -151,5 +155,74 @@ describe("a cursor's stream over a statement that raises many warnings", functio
       isOnce: true,
       failure: "Subquery returns more than 1 row",
     });
+  });
+});
+
+const FLIPPED = "row_stream_flipped";
+
+/** Rows of which the fifth turns, at each flip, from a harmless warning to a too-deep document and back. */
+async function Flippable(): Promise<void> {
+  await Run(sql`DROP TABLE IF EXISTS ${ident(FLIPPED)}`);
+  await Run(
+    sql`CREATE TABLE ${ident(FLIPPED)} (seq INT PRIMARY KEY, s VARCHAR(20), d LONGTEXT) ENGINE = InnoDB`,
+  );
+  await Run(
+    sql`INSERT INTO ${ident(FLIPPED)} SELECT seq, IF(seq = 5, '5x', '1'), '[]' FROM seq_1_to_100`,
+  );
+}
+
+/** Flips the fifth row on a connection of its own until `isDone` answers true. */
+async function Flipping(isDone: () => boolean): Promise<void> {
+  const held = await AcquireConnection();
+  const flip = Bind(
+    sql`UPDATE ${ident(FLIPPED)} SET d = IF(s = '5x', ${param(TOO_DEEP)}, '[]'), s = IF(s = '5x', '5', '5x') WHERE seq = 5`,
+  );
+  try {
+    while (!isDone()) {
+      await held.execute(flip.sql, [...flip.args]);
+    }
+  } finally {
+    held.release();
+  }
+}
+
+describe("a cursor's stream over rows a write changes between its two runs", function () {
+  this.timeout(120_000);
+
+  before(async function () {
+    if (!GetDialect().capture.warnings) {
+      this.skip();
+    }
+    await Flippable();
+  });
+
+  after(async () => {
+    await Run(sql`DROP TABLE IF EXISTS ${ident(FLIPPED)}`);
+  });
+
+  /**
+   * A first run that warns only of the fifth row's truncation runs again tolerating one warning;
+   * a second run that read the rows a write had flipped since would answer the too-deep NULL
+   * within that tolerance.
+   */
+  it("hands over no row read wrong", async () => {
+    let isDone = false;
+    const flipping = Flipping(() => isDone);
+    const handed: number[] = [];
+    try {
+      for (let run = 0; run < RACED_RUNS; run += 1) {
+        handed.push(
+          (
+            await Drained(
+              sql`SELECT t.seq AS seq, CAST(t.s AS INT) AS c, JSON_EXTRACT(t.d, '$') AS j FROM ${ident(FLIPPED)} AS t ORDER BY t.seq`,
+            )
+          ).nulls,
+        );
+      }
+    } finally {
+      isDone = true;
+      await flipping;
+    }
+    expect(handed.filter((nulls) => nulls > 0)).to.deep.equal([]);
   });
 });
