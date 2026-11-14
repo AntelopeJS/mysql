@@ -12,7 +12,7 @@ const SHALLOW = 5;
  * value twice, 2^14 reads per row: 2.8 s on MySQL 8.4 and 29 s on MariaDB 11.8.
  */
 const BUDGET_MS = 500;
-/** MariaDB's deepest JSON value: a row whose member is nested one level less. */
+/** MariaDB 11.8's deepest JSON value: a row whose member is nested one level less. */
 const DEEPEST = 31;
 
 interface Nested {
