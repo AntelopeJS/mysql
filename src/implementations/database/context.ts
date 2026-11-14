@@ -80,6 +80,22 @@ interface OpenSubquery {
   readonly rows: Set<Relation | undefined>;
 }
 
+/** What {@link DecodingContext.readingNestedRow} built, and whether building it read a nested row. */
+export interface NestedRowRead<T> {
+  readonly value: T;
+  readonly readsNestedRow: boolean;
+}
+
+/**
+ * One build watching for reads of a row nested deeper than `depth` subqueries, through a parameter
+ * bound before the build began.
+ */
+interface NestedRowWatch {
+  readonly depth: number;
+  readonly before: number;
+  reads: boolean;
+}
+
 /**
  * State shared by every layer compiling a single statement: the dialect it is written for, the
  * table alias counter and the bindings of lambda parameters. Bound values travel inside each
@@ -93,6 +109,10 @@ export class DecodingContext {
   private readonly bindingDepths = new Map<string, number>();
   /** The rows each lambda parameter ranges over, where the stage that bound it named them. */
   private readonly bindingRows = new Map<string, Relation>();
+  /** The order each lambda parameter was bound in. */
+  private readonly bindingOrder = new Map<string, number>();
+  private bindCount = 0;
+  private readonly nestedRowWatches: NestedRowWatch[] = [];
   /** Per open subquery, outermost first. */
   private readonly open: OpenSubquery[] = [];
   /** Fragments built while the subquery they are in read no parameter bound outside it. */
@@ -137,6 +157,7 @@ export class DecodingContext {
     const key = String(id);
     this.bindings.set(key, binding);
     this.bindingDepths.set(key, this.open.length);
+    this.bindingOrder.set(key, this.bindCount++);
     if (rows) {
       this.bindingRows.set(key, rows);
     } else {
@@ -148,6 +169,7 @@ export class DecodingContext {
     this.bindings.delete(String(id));
     this.bindingDepths.delete(String(id));
     this.bindingRows.delete(String(id));
+    this.bindingOrder.delete(String(id));
   }
 
   /** A parameter's binding; every subquery opened since it was bound now reads its outer row. */
@@ -159,6 +181,12 @@ export class DecodingContext {
     for (const subquery of this.open.slice(depth)) {
       subquery.reads++;
       subquery.rows.add(this.bindingRows.get(key));
+    }
+    const order = this.bindingOrder.get(key) ?? 0;
+    for (const watch of this.nestedRowWatches) {
+      if (depth > watch.depth && order < watch.before) {
+        watch.reads = true;
+      }
     }
     return binding;
   }
@@ -188,6 +216,30 @@ export class DecodingContext {
       };
     } finally {
       this.open.pop();
+    }
+  }
+
+  /** How many subqueries are open, which a parameter bound now is nested in. */
+  public get depth(): number {
+    return this.open.length;
+  }
+
+  /**
+   * Builds part of a query, and tells whether it read the row of a query nested deeper than `depth`
+   * subqueries through a parameter bound before the build began, a row a select at `depth` cannot
+   * read.
+   */
+  public readingNestedRow<T>(depth: number, build: () => T): NestedRowRead<T> {
+    const watch: NestedRowWatch = {
+      depth,
+      before: this.bindCount,
+      reads: false,
+    };
+    this.nestedRowWatches.push(watch);
+    try {
+      return { value: build(), readsNestedRow: watch.reads };
+    } finally {
+      this.nestedRowWatches.splice(this.nestedRowWatches.indexOf(watch), 1);
     }
   }
 
