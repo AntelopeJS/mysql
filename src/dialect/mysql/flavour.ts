@@ -219,9 +219,9 @@ export function RespelledNumbers(text: Sql, sigil: "$" | "\\"): Sql {
 }
 
 /**
- * The most characters of JSON text whose zeros a dedup key respells. MySQL stops a regular expression
- * at `regexp_time_limit`, which {@link RespelledNumbers} reaches at the default near 63,000 characters
- * of an array of one-digit numbers, the text with the most parts per character.
+ * The most characters of JSON text whose numbers a dedup key respells. MySQL stops a regular
+ * expression at `regexp_time_limit`, which {@link RespelledNumbers} reaches at the default near 48,000
+ * characters of an array of one-digit numbers, the text with the most parts per character.
  */
 const MAX_RESPELLED_CHARS = 32768;
 

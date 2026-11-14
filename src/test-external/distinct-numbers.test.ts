@@ -13,9 +13,13 @@ const SPELLINGS = sql`INSERT INTO sales.w_accounts (code, raw) VALUES
   ('jn1', '0'), ('jn2', '0.0'), ('jn3', '-0.0'), ('jn4', '1'), ('jn5', '1.0'),
   ('jn6', JSON_EXTRACT(JSON_ARRAY(0.0), '$[0]')), ('jn7', JSON_EXTRACT(JSON_ARRAY(1.0), '$[0]')),
   ('jn8', '1.7976931348623157e308'), ('jn9', '17976931348623157e292'),
-  ('jn10', '[1]'), ('jn11', '[1.0]'), ('jn12', '{"a": 1}'), ('jn13', '{"a": 1.0}')`;
+  ('jn10', '[1]'), ('jn11', '[1.0]'), ('jn12', '{"a": 1}'), ('jn13', '{"a": 1.0}'),
+  ('jn14', '["1.0"]'), ('jn15', '["1"]'), ('jn16', '[1.05]'), ('jn17', '[1.5]')`;
 
-const EXPECTED = [[[1], { a: 1 }, 0, 1, Number.MAX_VALUE], 5];
+const EXPECTED = [
+  [["1.0"], ["1"], [1.05], [1.5], [1], { a: 1 }, 0, 1, Number.MAX_VALUE],
+  9,
+];
 
 const CODES = "^jn";
 
