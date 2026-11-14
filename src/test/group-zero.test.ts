@@ -10,6 +10,7 @@ interface Reading {
   loose: number | string;
   label: string;
   list: number[];
+  nested: unknown;
 }
 
 const schema = new Schema<{ readings: Reading }>(SCHEMA_ID, {
@@ -34,16 +35,24 @@ function Readings() {
  * value, which no group may merge with the number 0.
  */
 const ROWS: Reading[] = [
-  { _id: "negative", n: -0, loose: -0, label: "a", list: [1] },
-  { _id: "positive", n: 0, loose: 0, label: "a", list: [1] },
-  { _id: "one", n: 1, loose: 1, label: "a", list: [1] },
-  { _id: "text", n: 2, loose: "0", label: "a", list: [1] },
+  { _id: "negative", n: -0, loose: -0, label: "a", list: [1], nested: [-0] },
+  { _id: "positive", n: 0, loose: 0, label: "a", list: [1], nested: [0] },
+  { _id: "one", n: 1, loose: 1, label: "a", list: [1], nested: { a: -0 } },
+  { _id: "text", n: 2, loose: "0", label: "a", list: [1], nested: { a: 0 } },
 ];
 
 const KEYS = ["n", "loose", "byN", "byNLoose", "byNLabel", "byNList"] as const;
 
+/**
+ * A zero nested in an undeclared array or object: `[0]` and `[-0]` are one value, and so are
+ * `{a: 0}` and `{a: -0}`.
+ */
+const NESTED_KEY = "nested";
+
 /** Each group's size, smallest first. */
-async function GroupSizes(key: (typeof KEYS)[number]): Promise<number[]> {
+async function GroupSizes(
+  key: (typeof KEYS)[number] | typeof NESTED_KEY,
+): Promise<number[]> {
   const groups = await Readings()
     .group(key, (rows) => ({ size: rows.count() }))
     .run();
@@ -75,4 +84,8 @@ describe("a group key of 0 and -0", function () {
       expect(await GroupSizes(key)).to.deep.equal([1, 1, 2]);
     });
   }
+
+  it("puts [0] and [-0] in one group, and {a: 0} and {a: -0} in another", async () => {
+    expect(await GroupSizes(NESTED_KEY)).to.deep.equal([2, 2]);
+  });
 });
