@@ -85,17 +85,11 @@ export interface Flavour {
   readonly escapedKeys?: EscapedKeys;
   /**
    * Present where the engine stores an object as written, one key named twice included: the key
-   * of each of its members in order, as a JSON array, for an object whose `JSON_DEPTH` is at most
-   * {@link Flavour.maxJsonNesting}, or of any depth where {@link Flavour.listsDeeper} holds. A
-   * deeper one may nest too deep once listed.
+   * of each of its members in order, as a JSON array, or SQL NULL with a
+   * {@link Flavour.tooDeepErrno} warning where the server cannot list them, as MariaDB 11.8 for an
+   * object whose `JSON_DEPTH` passes {@link Flavour.maxJsonNesting}.
    */
   readonly memberKeys?: (object: Sql) => Sql;
-  /**
-   * A condition that holds where the server lists the members of an object deeper than
-   * {@link Flavour.maxJsonNesting}, checked without listing them, so a server that cannot raises
-   * no warning a statement leaves behind.
-   */
-  readonly listsDeeper?: Sql;
   /** The JSON syntax's `present`, which depends on how the engine compares a JSON string. */
   present(value: Sql): Sql;
   /** The JSON syntax's `absent`, which depends on how the engine compares a JSON string. */

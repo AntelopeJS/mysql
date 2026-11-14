@@ -1,4 +1,4 @@
-import { type Sql, ident, int, sql } from "../../statement";
+import { type Sql, ident, sql } from "../../statement";
 import type { Flavour } from "./flavour";
 
 const ORDINAL = ident("ord");
@@ -34,16 +34,6 @@ function SpellsEachKeyOnce(object: Sql): Sql {
   return sql`(JSON_LENGTH(JSON_KEYS(${object})) = JSON_LENGTH(${object}))`;
 }
 
-/**
- * Whether the members of an object can be listed: those of an object that spells each key once
- * come from `JSON_KEYS`, which nests no deeper at any depth, and the others from
- * {@link Flavour.memberKeys}, up to its depth unless {@link Flavour.listsDeeper} holds.
- */
-export function Listable(flavour: Flavour, object: Sql): Sql {
-  const deeper = flavour.listsDeeper ? sql` OR ${flavour.listsDeeper}` : sql``;
-  return sql`(${SpellsEachKeyOnce(object)} OR JSON_DEPTH(${object}) <= ${int(flavour.maxJsonNesting)}${deeper})`;
-}
-
 function MemberKeys(memberKeys: (object: Sql) => Sql, object: Sql): Sql {
   return sql`IF(${SpellsEachKeyOnce(object)}, JSON_KEYS(${object}), ${memberKeys(object)})`;
 }
@@ -53,7 +43,9 @@ function MemberKeys(memberKeys: (object: Sql) => Sql, object: Sql): Sql {
  * decoded key stays where it first appears and takes the value of its last member, so the last
  * member of a key named twice wins as when MySQL stores the object, and the keys keep the order a
  * merge of objects naming each key once has. Only the keys are listed together; each value is read
- * by its place in its own side, so a value nests no deeper than the side that holds it.
+ * by its place in its own side, so a value nests no deeper than the side that holds it. A side
+ * whose members `memberKeys` cannot list leaves a {@link Flavour.tooDeepErrno} warning, which fails
+ * the read or write.
  */
 export function LastMembers(
   flavour: Flavour,

@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import type { Datum, ValueProxy } from "@antelopejs/interface-database";
+import type { Datum, Stream, ValueProxy } from "@antelopejs/interface-database";
 import { Schema } from "@antelopejs/interface-database/schema";
 
 const SCHEMA_ID = "outer_row_walked_stages";
@@ -64,20 +64,38 @@ function OwnRows(holder: ValueProxy<Holder>) {
     .filter((entry) => entry.key("owner").eq(holder.key("_id")));
 }
 
+/** Reads every row of a query, through `run()` or a cursor. */
+type Reader = <T>(query: Stream<T>) => Promise<T[]>;
+
+async function Iterated<T>(query: Stream<T>): Promise<T[]> {
+  const read: T[] = [];
+  for await (const value of query) {
+    read.push(value);
+  }
+  return read;
+}
+
+const READERS: ReadonlyArray<readonly [string, Reader]> = [
+  ["", (query) => query.run()],
+  [" through a cursor", Iterated],
+];
+
 /** What a nested count answered: the whole count, an error naming the packet, or anything else. */
 async function Answer(
+  read: Reader,
   nested: (holder: ValueProxy<Holder>) => Datum<number>,
   rows: number,
 ): Promise<string> {
   try {
-    const read = await schema
-      .instance(INSTANCE)
-      .table("holders")
-      .map((holder) => nested(holder))
-      .run();
-    return read.length === 1 && read[0] === rows
+    const answer = await read(
+      schema
+        .instance(INSTANCE)
+        .table("holders")
+        .map((holder) => nested(holder)),
+    );
+    return answer.length === 1 && answer[0] === rows
       ? "whole"
-      : `short ${read.join()}`;
+      : `short ${answer.join()}`;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return /max_allowed_packet/.test(message) ? "packet" : message;
@@ -91,6 +109,66 @@ async function Answer(
  */
 const ANSWERED = ["whole", "packet"];
 
+const WALKS: ReadonlyArray<
+  readonly [string, number, (holder: ValueProxy<Holder>) => Datum<number>]
+> = [
+  [
+    "counts every row after a map",
+    ROWS,
+    (holder) =>
+      OwnRows(holder)
+        .map((entry) => ({ _id: entry.key("_id"), n: entry.key("n") }))
+        .filter((entry) => entry.key("n").ge(0))
+        .count(),
+  ],
+  [
+    "counts every row after a pluck",
+    ROWS,
+    (holder) =>
+      OwnRows(holder)
+        .pluck("_id", "n")
+        .filter((entry) => entry.key("n").ge(0))
+        .count(),
+  ],
+  [
+    "counts every value after a distinct",
+    ROWS,
+    (holder) =>
+      OwnRows(holder)
+        .distinct("t")
+        .filter((t) => t.ne(""))
+        .count(),
+  ],
+  [
+    "counts every row after a union",
+    2 * ROWS,
+    (holder) =>
+      OwnRows(holder)
+        .union(OwnRows(holder))
+        .filter((entry) => entry.key("n").ge(0))
+        .count(),
+  ],
+  [
+    "counts every row after a slice the statement bounds",
+    ROWS,
+    (holder) =>
+      OwnRows(holder)
+        .slice(0, schema.instance(INSTANCE).table("entries").count())
+        .filter((entry) => entry.key("n").ge(0))
+        .count(),
+  ],
+  [
+    "counts every row after a long slice ordered by text",
+    ROWS,
+    (holder) =>
+      OwnRows(holder)
+        .orderBy("t")
+        .slice(0, ROWS)
+        .filter((entry) => entry.key("n").ge(0))
+        .count(),
+  ],
+];
+
 describe("a stage after an outer row's rows that outgrow an aggregate", function () {
   this.timeout(600_000);
 
@@ -98,82 +176,11 @@ describe("a stage after an outer row's rows that outgrow an aggregate", function
 
   after(Unseed);
 
-  it("counts every row after a map", async () => {
-    expect(
-      await Answer(
-        (holder) =>
-          OwnRows(holder)
-            .map((entry) => ({ _id: entry.key("_id"), n: entry.key("n") }))
-            .filter((entry) => entry.key("n").ge(0))
-            .count(),
-        ROWS,
-      ),
-    ).to.be.oneOf(ANSWERED);
-  });
-
-  it("counts every row after a pluck", async () => {
-    expect(
-      await Answer(
-        (holder) =>
-          OwnRows(holder)
-            .pluck("_id", "n")
-            .filter((entry) => entry.key("n").ge(0))
-            .count(),
-        ROWS,
-      ),
-    ).to.be.oneOf(ANSWERED);
-  });
-
-  it("counts every value after a distinct", async () => {
-    expect(
-      await Answer(
-        (holder) =>
-          OwnRows(holder)
-            .distinct("t")
-            .filter((t) => t.ne(""))
-            .count(),
-        ROWS,
-      ),
-    ).to.be.oneOf(ANSWERED);
-  });
-
-  it("counts every row after a union", async () => {
-    expect(
-      await Answer(
-        (holder) =>
-          OwnRows(holder)
-            .union(OwnRows(holder))
-            .filter((entry) => entry.key("n").ge(0))
-            .count(),
-        2 * ROWS,
-      ),
-    ).to.be.oneOf(ANSWERED);
-  });
-
-  it("counts every row after a slice the statement bounds", async () => {
-    expect(
-      await Answer(
-        (holder) =>
-          OwnRows(holder)
-            .slice(0, schema.instance(INSTANCE).table("entries").count())
-            .filter((entry) => entry.key("n").ge(0))
-            .count(),
-        ROWS,
-      ),
-    ).to.be.oneOf(ANSWERED);
-  });
-
-  it("counts every row after a long slice ordered by text", async () => {
-    expect(
-      await Answer(
-        (holder) =>
-          OwnRows(holder)
-            .orderBy("t")
-            .slice(0, ROWS)
-            .filter((entry) => entry.key("n").ge(0))
-            .count(),
-        ROWS,
-      ),
-    ).to.be.oneOf(ANSWERED);
-  });
+  for (const [through, read] of READERS) {
+    for (const [name, rows, nested] of WALKS) {
+      it(`${name}${through}`, async () => {
+        expect(await Answer(read, nested, rows)).to.be.oneOf(ANSWERED);
+      });
+    }
+  }
 });

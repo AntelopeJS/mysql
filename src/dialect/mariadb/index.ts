@@ -316,7 +316,6 @@ const MARIADB: Flavour = {
   escapedKeys: ESCAPED_KEYS,
   memberKeys: (object) =>
     sql`(CASE WHEN JSON_LENGTH(${object}) = 0 THEN JSON_ARRAY() ELSE JSON_EXTRACT(JSON_OBJECT_TO_ARRAY(${object}), '$[*][0]') END)`,
-  listsDeeper: sql`VERSION() NOT LIKE '11.%'`,
   present: Present,
   absent: (value) => sql`(${PresentText(value)} IS NULL)`,
   value: (document, path) => sql`JSON_VALUE(${document}, ${path})`,

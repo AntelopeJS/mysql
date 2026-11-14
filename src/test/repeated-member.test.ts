@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import type { ValueProxy } from "@antelopejs/interface-database";
+import type { Stream, ValueProxy } from "@antelopejs/interface-database";
 import { Schema } from "@antelopejs/interface-database/schema";
 
 import { GetDialect, Read } from "../connection";
@@ -26,6 +26,8 @@ interface Side {
 interface Deep {
   _id: string;
   tree?: Nest;
+  é?: string;
+  merged?: string;
 }
 
 const schema = new Schema<{
@@ -224,19 +226,72 @@ async function StoreDeep(rows: readonly DeepRow[]): Promise<void> {
   }
 }
 
+/** `rows` under ids that start with `prefix`, so each test stores rows of its own. */
+function Renamed(rows: readonly DeepRow[], prefix: string): DeepRow[] {
+  return rows.map((row) => ({ ...row, _id: `${prefix}${row._id}` }));
+}
+
+type Reader = <T>(query: Stream<T>) => Promise<T[]>;
+
+const RUN: Reader = (query) => query.run();
+
+const CURSOR: Reader = async (query) => {
+  const read = [];
+  for await (const value of query) {
+    read.push(value);
+  }
+  return read;
+};
+
 /**
- * `rows` stored in `deep` and each merged with `{k: "1"}`, the row itself as the left operand,
- * with `tree` as the number of objects it nests.
+ * `rows` stored in `deep` and each merged with `{k: "1"}`, the row itself as the left operand, as
+ * `read` reads them, with `tree` as the number of objects it nests.
  */
-async function MergedDeep(rows: readonly DeepRow[]): Promise<unknown[]> {
+async function MergedDeep(
+  rows: readonly DeepRow[],
+  read: Reader = RUN,
+): Promise<unknown[]> {
   await StoreDeep(rows);
   const deep = schema.instance(DEEP_INSTANCE).table("deep");
-  const merged = await deep
-    .getAll(rows.map(({ _id }) => _id))
-    .orderBy("_id")
-    .map((row) => row.merge({ k: "1" }))
-    .run();
+  const merged = await read(
+    deep
+      .getAll(rows.map(({ _id }) => _id))
+      .orderBy("_id")
+      .map((row) => row.merge({ k: "1" })),
+  );
   return merged.map(({ tree, ...rest }) => ({ ...rest, tree: Levels(tree) }));
+}
+
+/** What `pending` answers, or `too deep` where it fails as nested too deep. */
+async function Answer<T>(pending: Promise<T>): Promise<T | "too deep"> {
+  return pending.catch((err: unknown): "too deep" => {
+    if (err instanceof Error && GetDialect().capture.tooDeep(err)) {
+      return "too deep";
+    }
+    throw err;
+  });
+}
+
+/** Whether the server is MariaDB 11.8, which lists no member of an object deeper than 31. */
+async function ListsShallowOnly(): Promise<boolean> {
+  const [version] = await Read(sql`SELECT VERSION() AS v`);
+  return String(version?.get("v")).startsWith("11.8.");
+}
+
+/**
+ * What `write` on the stored row `_id` answers, the row's `merged` once it ran, and a table-less
+ * read on the connection it gave back to the pool, which the next read takes again.
+ */
+async function Written(write: Promise<unknown>, _id: string) {
+  const answer = await Answer(write);
+  const [tableless] = await Read(sql`SELECT 1 AS one`);
+  const row = await schema.instance(DEEP_INSTANCE).table("deep").get(_id).run();
+  return {
+    answer,
+    tableless: Number(tableless?.get("one")),
+    kept: row?._id,
+    merged: row?.merged,
+  };
 }
 
 /** What a merge of `rows` answers where it keeps the last member of `é`. */
@@ -427,8 +482,7 @@ describe("a merge operand that spells a key escaped and nests deep", function ()
   });
 
   it("keeps the last member where the operand spells the key twice at JSON_DEPTH 32 or more", async function () {
-    const [version] = await Read(sql`SELECT VERSION() AS v`);
-    if (String(version?.get("v")).startsWith("11.8.")) {
+    if (await ListsShallowOnly()) {
       this.skip();
     }
     expect(await MergedDeep(DEEP_TWICE_ROWS)).to.deep.equal(
@@ -436,18 +490,55 @@ describe("a merge operand that spells a key escaped and nests deep", function ()
     );
   });
 
-  it("deletes no row a filter on such a merge does not match, and leaves no warning behind", async () => {
-    await StoreDeep([{ ...DEEP_TWICE_ROWS[0], _id: "deleteFiltered" }]);
-    const deep = schema.instance(DEEP_INSTANCE).table("deep");
-    await deep
-      .filter((row) => row.merge({ k: "1" }).key("k").eq("1").not())
+  it("fails such a merge as nested too deep on MariaDB 11.8", async () => {
+    const rows = Renamed([DEEP_TWICE_ROWS[0]], "run");
+    const refuses = await ListsShallowOnly();
+    expect(await Answer(MergedDeep(rows))).to.deep.equal(
+      refuses ? "too deep" : KeptLast(rows),
+    );
+  });
+
+  it("reads such a merge through a cursor as a plain read does", async () => {
+    const rows = Renamed([DEEP_TWICE_ROWS[0]], "cursor");
+    const refuses = await ListsShallowOnly();
+    expect(await Answer(MergedDeep(rows, CURSOR))).to.deep.equal(
+      refuses ? "too deep" : KeptLast(rows),
+    );
+  });
+
+  it("updates a row from such a merge, or fails as nested too deep on MariaDB 11.8 and changes no row", async () => {
+    const [row] = Renamed([DEEP_TWICE_ROWS[0]], "update");
+    await StoreDeep([row]);
+    const refuses = await ListsShallowOnly();
+    const update = schema
+      .instance(DEEP_INSTANCE)
+      .table("deep")
+      .get(row._id)
+      .update((stored) => ({ merged: stored.merge({ k: "1" }).key("é") }))
+      .run();
+    expect(await Written(update, row._id)).to.deep.equal({
+      answer: refuses ? "too deep" : 1,
+      tableless: 1,
+      kept: row._id,
+      merged: refuses ? undefined : "g",
+    });
+  });
+
+  it("deletes no row a filter on such a merge does not match, or fails as nested too deep on MariaDB 11.8 and deletes none", async () => {
+    const [row] = Renamed([DEEP_TWICE_ROWS[0]], "delete");
+    await StoreDeep([row]);
+    const refuses = await ListsShallowOnly();
+    const remove = schema
+      .instance(DEEP_INSTANCE)
+      .table("deep")
+      .filter((stored) => stored.merge({ k: "1" }).key("k").eq("1").not())
       .delete()
       .run();
-    const [answer] = await Read(sql`SELECT 1 AS one`);
-    const kept = await deep.get("deleteFiltered").run();
-    expect({ one: Number(answer?.get("one")), kept: kept?._id }).to.deep.equal({
-      one: 1,
-      kept: "deleteFiltered",
+    expect(await Written(remove, row._id)).to.deep.equal({
+      answer: refuses ? "too deep" : 0,
+      tableless: 1,
+      kept: row._id,
+      merged: undefined,
     });
   });
 });
