@@ -2,7 +2,7 @@ import assert from "node:assert";
 import type { QueryStage } from "@antelopejs/interface-database/common";
 
 import type { Dialect } from "../../dialect";
-import type { Sql } from "../../statement";
+import { type Sql, join, sql } from "../../statement";
 import { ArrayOf, IsOpaque, OPAQUE, type SqlType } from "./types";
 import { Collected } from "./json";
 import { AsJson } from "./readings";
@@ -34,8 +34,10 @@ import {
   FromItem,
   JoinOn,
   Nested,
+  NestedBeside,
   Numbered,
   type RelationFlag,
+  Render,
 } from "./render";
 import { Prepare } from "./wrap";
 import { IsString } from "./guards";
@@ -147,6 +149,21 @@ function IsTerminal(step: SubStream | Compiled): step is Compiled {
   return "sql" in step;
 }
 
+/** The rows a relation reads, before any of its grouping, order, dedup or lock. */
+function RowsOf(relation: Relation): Relation {
+  return {
+    ...relation,
+    joins: [...relation.joins],
+    where: [...relation.where],
+    groupBy: [],
+    having: [],
+    orderBy: [],
+    aggregated: false,
+    distinct: false,
+    locked: false,
+  };
+}
+
 /**
  * Joins the group's rows to a number per value of `element`: the distinct values of the rows, each
  * numbered, where the engine's own comparison decides which values are one. A row whose element is
@@ -154,16 +171,7 @@ function IsTerminal(step: SubStream | Compiled): step is Compiled {
  */
 function ValueNumbers(rows: Relation, element: Sql, context: DecodingContext) {
   const values = SetProjection(
-    {
-      ...rows,
-      joins: [...rows.joins],
-      where: [...rows.where],
-      groupBy: [],
-      orderBy: [],
-      aggregated: false,
-      distinct: true,
-      locked: false,
-    },
+    { ...RowsOf(rows), distinct: true },
     { sql: element, type: OPAQUE },
   );
   const { relation, rowNumber } = Numbered(Nested(values, context), context);
@@ -231,28 +239,102 @@ function StepSubStream(
   return handler(state, stage, context);
 }
 
+function SeedOf(rows: Relation): SubStream {
+  return { source: rows.source, value: CurrentValue(rows), distinct: false };
+}
+
+function Folded(
+  seed: SubStream,
+  stages: QueryStage[],
+  context: DecodingContext,
+): SubStream | Compiled {
+  return stages.reduce<SubStream | Compiled>(
+    (state, stage) => StepSubStream(state, stage, context),
+    seed,
+  );
+}
+
+/**
+ * The rows of the group the select is at, read again where a query nested in the mapper reads them:
+ * a derived copy of the grouped rows with each group term beside each row, grouped again by those
+ * terms, and kept where every term matches the group's own.
+ *
+ * The match is an aggregate in the `HAVING`, never a `WHERE`. Where a subselect reads the group's
+ * column outside an aggregate, both engines run the aggregate around that subselect in the group's
+ * select rather than in the query nested in the mapper, which then answers more than one row, or
+ * the wrong one.
+ *
+ * The group's own term is read through `MIN`, which the group's select aggregates: MySQL 9.7 reads
+ * a bare term that is not a column, over a group that aggregates in a temporary table, as the term
+ * of one group for every group. Both engines refuse that `MIN` where the group's select is itself
+ * inside the aggregate of an enclosing query, so a group two queries deep fails rather than answer
+ * another group's rows.
+ */
+function GroupRowsAgain(grouped: Relation, context: DecodingContext): Relation {
+  const terms = grouped.groupBy.map((term) => term.sql);
+  const { relation: rows, columns } = NestedBeside(
+    RowsOf(grouped),
+    terms,
+    "_group",
+    context,
+  );
+  rows.groupBy = columns.map((column, index) => ({
+    sql: column,
+    type: grouped.groupBy[index].type,
+  }));
+  const matches = columns.map(
+    (column, index) => sql`(${column} <=> MIN(${terms[index]}))`,
+  );
+  rows.having = [sql`(MAX(${join(matches, sql` AND `)}) = 1)`];
+  return rows;
+}
+
+/**
+ * A sub-stream whose value reads the row of a query nested in the mapper, which the group's select
+ * cannot aggregate: a subselect inside that query, over the group's rows read again.
+ */
+function SubStreamAgain(
+  grouped: Relation,
+  stages: QueryStage[],
+  context: DecodingContext,
+): Compiled {
+  const rows = GroupRowsAgain(grouped, context);
+  const folded = Folded(SeedOf(rows), stages, context);
+  const joins: Sql[] = [];
+  const value = IsTerminal(folded)
+    ? folded
+    : CollectedRows(folded, rows, joins, context);
+  rows.joins.push(...joins);
+  return {
+    sql: sql`(${Render(SetProjection(rows, value))})`,
+    type: value.type,
+  };
+}
+
 /**
  * The subquery provider a `group` binds its stream parameter to, over the rows of one group.
  *
  * The seed is read off the relation once, before any of the mapper is decoded, and never mutated,
  * since one mapper binds this provider as many times as it names the parameter. The joins a
- * collected dedup needs are pushed to `joins`, and left for the group's select to carry.
+ * collected dedup needs are pushed to `joins`, and left for the group's select to carry. A
+ * sub-stream that reads the row of a query nested in the mapper reads the group's rows again
+ * inside that query instead.
  */
 function SubStreamProvider(
   relation: Relation,
   joins: Sql[],
   context: DecodingContext,
 ): SubqueryProvider {
-  const seed: SubStream = {
-    source: relation.source,
-    value: CurrentValue(relation),
-    distinct: false,
-  };
+  const seed = SeedOf(relation);
+  const depth = context.depth;
   return (stages) => {
-    const folded = stages.reduce<SubStream | Compiled>(
-      (state, stage) => StepSubStream(state, stage, context),
-      seed,
+    const { value: folded, readsNestedRow } = context.readingNestedRow(
+      depth,
+      () => Folded(seed, stages, context),
     );
+    if (readsNestedRow) {
+      return SubStreamAgain(relation, stages, context);
+    }
     return IsTerminal(folded)
       ? folded
       : CollectedRows(folded, relation, joins, context);
