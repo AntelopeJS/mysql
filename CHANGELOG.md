@@ -1,5 +1,45 @@
 # Changelog
 
+## v0.2.1
+
+[compare changes](https://github.com/AntelopeJS/mysql/compare/v0.2.0...v0.2.1)
+
+### 🔥 Performance
+
+- **default:** Hold a key read of a computed value once so a chain of defaults reads each link once ([#63](https://github.com/AntelopeJS/mysql/pull/63))
+- **stage:** Hold a computed read once past a fixed member or a string operation ([#65](https://github.com/AntelopeJS/mysql/pull/65))
+
+### 🩹 Fixes
+
+- **mariadb:** Pin group_concat_max_len at its 1 GiB ceiling so a strict session accepts it ([#58](https://github.com/AntelopeJS/mysql/pull/58))
+- **dialect:** Keep the last member of a key named twice where a merge rebuilds an object on MariaDB ([#57](https://github.com/AntelopeJS/mysql/pull/57))
+- **dialect:** Hold a walk's source in a derived table on MySQL ([#60](https://github.com/AntelopeJS/mysql/pull/60))
+- **group:** Hand the mapper 0 for a -0 in a key of declared numbers ([#64](https://github.com/AntelopeJS/mysql/pull/64))
+- **dialect:** Dedup a JSON number past 2^63 on MariaDB and a decimal of another scale on MySQL as one value ([#62](https://github.com/AntelopeJS/mysql/pull/62))
+- **mariadb:** Fail a plain read whose document nests past 31 containers, as MySQL does ([#66](https://github.com/AntelopeJS/mysql/pull/66))
+- **config:** Refuse a statementTimeoutMs above MariaDB's one-year max_statement_time cap ([#67](https://github.com/AntelopeJS/mysql/pull/67))
+- **dialect:** Dedup a number nested in an array or object by its value, not its spelling ([#59](https://github.com/AntelopeJS/mysql/pull/59))
+- **dialect:** Keep an escaped key's value where a merge operand nests 31 deep on MariaDB ([#69](https://github.com/AntelopeJS/mysql/pull/69))
+- **dialect:** Cast a walk's held source on MySQL so 8.4 resolves it beside a bare read of the same column ([#68](https://github.com/AntelopeJS/mysql/pull/68))
+- **mariadb:** Clear a too-deep read's warning so the next table-less read on its connection answers ([#71](https://github.com/AntelopeJS/mysql/pull/71))
+- **dialect:** Dedup an integer from 2^63 to 2^64 - 1 spelled as a double as one value ([#72](https://github.com/AntelopeJS/mysql/pull/72))
+- **mariadb:** Fail a read whose aggregate passed max_allowed_packet instead of reading it cut ([#73](https://github.com/AntelopeJS/mysql/pull/73))
+- **mariadb:** Dedup a nested number spelled with an exponent as one value ([#74](https://github.com/AntelopeJS/mysql/pull/74))
+- **mariadb:** Deliver a change feed whose second map merges the row the first one merged ([#75](https://github.com/AntelopeJS/mysql/pull/75))
+- **dialect:** Keep the last member where a merge operand spells a key twice 32 deep on MariaDB 12.3 ([#76](https://github.com/AntelopeJS/mysql/pull/76))
+
+### 📖 Documentation
+
+- Name pinned server images instead of versions in prose ([#70](https://github.com/AntelopeJS/mysql/pull/70))
+
+### ✅ Tests
+
+- **group:** Group [0] and [-0], and {a: 0} and {a: -0}, as one key on every server ([#61](https://github.com/AntelopeJS/mysql/pull/61))
+
+### ❤️ Contributors
+
+- Antony Rizzitelli ([@Upd4ting](http://github.com/Upd4ting))
+
 ## v0.2.0
 
 [compare changes](https://github.com/AntelopeJS/mysql/compare/v0.1.2...v0.2.0)
