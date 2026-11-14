@@ -2,6 +2,8 @@ import { expect } from "chai";
 import type { Datum, Stream, ValueProxy } from "@antelopejs/interface-database";
 import { Schema } from "@antelopejs/interface-database/schema";
 
+import { HandedOver, InBatchesOfOne } from "./batches";
+
 const SCHEMA_ID = "outer_row_walked_stages";
 const INSTANCE = "one";
 const OWNER = "big";
@@ -24,12 +26,20 @@ interface Holder {
   _id: string;
 }
 
-const schema = new Schema<{ entries: Entry; holders: Holder }>(SCHEMA_ID, {
+/** Holders on either side of the one that owns rows, each owning none. */
+const LINED = ["a", OWNER, "c"];
+
+const schema = new Schema<{
+  entries: Entry;
+  holders: Holder;
+  lined: Holder;
+}>(SCHEMA_ID, {
   entries: {
     fields: { owner: "string", n: "number", t: "string" },
     indexes: {},
   },
   holders: { fields: {}, indexes: {} },
+  lined: { fields: {}, indexes: {} },
 });
 
 function EntryAt(n: number): Entry {
@@ -50,6 +60,11 @@ async function Seed(): Promise<void> {
     .instance(INSTANCE)
     .table("holders")
     .insert([{ _id: OWNER }])
+    .run();
+  await schema
+    .instance(INSTANCE)
+    .table("lined")
+    .insert(LINED.map((_id) => ({ _id })))
     .run();
 }
 
@@ -100,6 +115,15 @@ async function Answer(
     const message = error instanceof Error ? error.message : String(error);
     return /max_allowed_packet/.test(message) ? "packet" : message;
   }
+}
+
+/** How a cursor ended: whole, with an error naming the packet, or anything else. */
+function Ending(failure: unknown, isWhole: boolean): string {
+  if (failure === undefined) {
+    return isWhole ? "whole" : "short";
+  }
+  const message = failure instanceof Error ? failure.message : "no Error";
+  return /max_allowed_packet/.test(message) ? "packet" : message;
 }
 
 /**
@@ -183,4 +207,29 @@ describe("a stage after an outer row's rows that outgrow an aggregate", function
       });
     }
   }
+
+  describe("through a cursor of batches of one over outer rows around the one that owns them", function () {
+    InBatchesOfOne();
+
+    /**
+     * A cursor that lists the warnings only at its end hands the count read from the cut aggregate
+     * over before it fails, where every count it hands over is whole.
+     */
+    for (const [name, rows, nested] of WALKS) {
+      it(`${name}, handing over only whole counts`, async () => {
+        const { rows: handed, failure } = await HandedOver(
+          schema
+            .instance(INSTANCE)
+            .table("lined")
+            .orderBy("_id")
+            .map((holder) => nested(holder)),
+        );
+        const counts = LINED.map((_id) => (_id === OWNER ? rows : 0));
+        expect(handed).to.deep.equal(counts.slice(0, handed.length));
+        expect(Ending(failure, handed.length === LINED.length)).to.be.oneOf(
+          ANSWERED,
+        );
+      });
+    }
+  });
 });
