@@ -90,6 +90,7 @@ const READ_TABLES: readonly string[] = [
   )`,
   "CREATE TABLE sales.raw_log (at TIMESTAMP(6) NULL, msg TEXT)",
   "CREATE TABLE sales.countries (code CHAR(2) PRIMARY KEY, name TEXT)",
+  "CREATE TABLE sales.COUNTRIES (code CHAR(2) PRIMARY KEY)",
   "CREATE TABLE sales.flags (id INT PRIMARY KEY, ref CHAR(36), n INT)",
   `INSERT INTO sales.flags VALUES (1, ${Uuid("'flag1'")}, 5), (2, NULL, NULL)`,
   "CREATE TABLE sales.tags (id INT PRIMARY KEY, label TEXT) PARTITION BY HASH (id) PARTITIONS 2",
@@ -292,7 +293,8 @@ const DEFAULT_ROLE: Record<Engine, string> = {
 /**
  * The account the DMS connects with, as a client would set it up over the fixture's tables: it
  * reads through a role it holds through another role, writes through the role it holds, and may
- * read and write only some of `people`'s columns by grants of its own.
+ * read and write only some of `people`'s columns by grants of its own. It may only insert into
+ * `COUNTRIES`, whose name differs from the readable `countries` only by case.
  */
 export function ClientAccount(engine: Engine): readonly string[] {
   return [
@@ -307,5 +309,6 @@ export function ClientAccount(engine: Engine): readonly string[] {
     DEFAULT_ROLE[engine],
     ...WriterGrants(ACCESS_ROLE),
     `GRANT SELECT (id, name), INSERT (id, name), UPDATE (id, name) ON sales.people TO ${CLIENT_ACCOUNT}`,
+    `GRANT INSERT ON sales.COUNTRIES TO ${CLIENT_ACCOUNT}`,
   ];
 }

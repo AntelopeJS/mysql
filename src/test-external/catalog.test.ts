@@ -181,6 +181,12 @@ describe("the catalog of an external instance", function () {
 describe("the privileges the catalog reports", function () {
   this.timeout(120_000);
 
+  it("keeps apart relations whose names differ only by case", async () => {
+    const listed = await ListRelations([SALES]);
+    expect(Named(listed, "countries")).to.not.have.property("unmappable");
+    expect(Named(listed, "COUNTRIES").unmappable).to.match(/cannot SELECT/);
+  });
+
   it("counts a SELECT the account holds only through a role of a role", async () => {
     expect(
       Named(await ListRelations([SALES]), "accounts"),

@@ -31,15 +31,16 @@ const SYSTEM_SCHEMAS = sql`('mysql', 'information_schema', 'performance_schema',
  * it counts global, schema, table and column grants, those of every enabled role and of the roles
  * they hold, and never spells the account's name. It lists only the columns the account holds some
  * privilege on. One grouped read, filtered as the relations are, so MariaDB scans only the listed
- * schemas once rather than every schema once per relation.
+ * schemas once rather than every schema once per relation. Names are grouped and matched as bytes:
+ * MariaDB's catalog compares them without regard to case, which would merge `t` with `T`.
  */
 function ColumnPrivileges(filter: Sql): Sql {
-  return sql`SELECT c.TABLE_SCHEMA AS col_schema, c.TABLE_NAME AS col_table,
+  return sql`SELECT BINARY c.TABLE_SCHEMA AS col_schema, BINARY c.TABLE_NAME AS col_table,
       MIN(FIND_IN_SET('select', c.PRIVILEGES) > 0) AS every_select, MAX(FIND_IN_SET('select', c.PRIVILEGES) > 0) AS some_select,
       MIN(FIND_IN_SET('insert', c.PRIVILEGES) > 0) AS every_insert, MIN(FIND_IN_SET('update', c.PRIVILEGES) > 0) AS every_update
     FROM information_schema.COLUMNS c
     WHERE c.TABLE_SCHEMA NOT IN ${SYSTEM_SCHEMAS} AND ${filter}
-    GROUP BY c.TABLE_SCHEMA, c.TABLE_NAME`;
+    GROUP BY col_schema, col_table`;
 }
 
 /** The relations `filter` keeps, given the alias it reads a relation's `TABLE_SCHEMA` and `TABLE_NAME` from. */
@@ -48,7 +49,7 @@ function Relations(filter: (table: Sql) => Sql): Sql {
     t.CREATE_OPTIONS AS rel_options, t.TABLE_ROWS AS rel_rows, t.TABLE_COMMENT AS rel_comment,
     p.every_select AS can_select, p.some_select AS some_columns, p.every_insert AS can_insert, p.every_update AS can_update
     FROM information_schema.TABLES t
-    LEFT JOIN (${ColumnPrivileges(filter(sql`c`))}) p ON p.col_schema = t.TABLE_SCHEMA AND p.col_table = t.TABLE_NAME
+    LEFT JOIN (${ColumnPrivileges(filter(sql`c`))}) p ON p.col_schema = BINARY t.TABLE_SCHEMA AND p.col_table = BINARY t.TABLE_NAME
     WHERE t.TABLE_TYPE IN ('BASE TABLE', 'VIEW') AND t.TABLE_SCHEMA NOT IN ${SYSTEM_SCHEMAS} AND ${filter(sql`t`)}
     ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME`;
 }
