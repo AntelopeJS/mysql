@@ -47,6 +47,13 @@ export interface Flavour {
   readonly maxJsonNesting: number;
   /** The errno a statement fails with when a JSON document it reads or builds nests too deep. */
   readonly tooDeepErrno: number;
+  /**
+   * Whether a JSON document a statement reads too deep answers SQL NULL with a
+   * {@link Flavour.tooDeepErrno} warning, rather than failing the statement.
+   */
+  readonly warnsTooDeep: boolean;
+  /** The containers the engine's one-row hold nests a value in, as a poll reads each image. */
+  readonly heldNesting: number;
   /** Whether a `multi` index over a JSON array can be built as a multi-valued index. */
   readonly multiValuedIndex: boolean;
   /** Session assignments of the engine's own that the pin adds to the family's. */
@@ -198,6 +205,8 @@ export const MYSQL: Flavour = {
   jsonType: sql`JSON`,
   maxJsonNesting: 100,
   tooDeepErrno: 3157,
+  warnsTooDeep: false,
+  heldNesting: 0,
   multiValuedIndex: true,
   pinned: [],
   readTimeout: (ms) => sql`max_execution_time = ${int(ms)}`,
