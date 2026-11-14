@@ -39,6 +39,7 @@
     "test:external:run": "MYSQL_TEST_MODE=external ajs module test . $(for file in dist/test-external/*.test.js; do printf -- '-f %s ' \"$file\"; done)",
     "test:decorators": "pnpm run build && scripts/decorators.sh",
     "test:unit": "pnpm run build && mocha \"dist/test/unit/**/*.spec.js\"",
+    "test:bench": "rimraf bench/dist && tsc -p bench/tsconfig.json && mocha \"bench/dist/**/*.spec.js\"",
     "bench": "pnpm run build && rimraf bench/dist && tsc -p bench/tsconfig.json && node bench/dist/orchestrate.js",
     "typecheck": "tsc --noEmit",
     "prepare": "if [ -e .git ] && command -v git >/dev/null 2>&1 && command -v lefthook >/dev/null 2>&1 && GIT_DIR=.git GIT_WORK_TREE=. git rev-parse --git-dir >/dev/null 2>&1; then GIT_DIR=.git GIT_WORK_TREE=. lefthook install; fi",
