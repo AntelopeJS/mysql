@@ -1,6 +1,6 @@
-import { RespelledNumbers } from "../mysql";
-import { type Sql, ident, int, sql } from "../../statement";
-import { BINARY_COLLATION, Json } from "./json-text";
+import { type Sql, int, sql } from "../../statement";
+import { Json } from "./json-text";
+import { IsContainer, NormalizedContainer } from "./normalized";
 
 /**
  * Equality as JSON: two numbers where they share a {@link NumberKey}, as MySQL's JSON `=` finds them,
@@ -52,27 +52,13 @@ const GREATEST_DOUBLE = sql`1.7976931348623157e308`;
 const GREATEST_EXPONENT = 308;
 
 /**
- * {@link RespelledNumbers} of JSON text read as its UTF-8 bytes. A MariaDB regular expression over
- * text in a UTF-8 character set takes time in the square of the text's length, and over bytes in
- * its length. The patterns read only ASCII, which no byte of a longer UTF-8 character is, so the
- * bytes respell as the characters do.
- */
-function RespelledBytes(value: Sql): Sql {
-  const bytes = sql`CAST(CONVERT(${value} USING utf8mb4) AS BINARY)`;
-  return sql`CONVERT(${RespelledNumbers(bytes)} USING utf8mb4) COLLATE ${ident(BINARY_COLLATION)}`;
-}
-
-/**
  * The JSON syntax's `canonicalNumber` on MariaDB, which stores JSON as text and dedups by it. An
- * array whose text holds no `{` is its `JSON_NORMALIZE` text, as {@link JsonEquals} compares it,
- * each nested number in one exact spelling: `1`, `1.0`, `1e0`, `10e-1` and `1.` alike. Text with a
- * `{` may hold an object, which is left out, since 12.3 writes its keys back unescaped and both
- * versions reorder a repeated key's members. Any other container's text has each zero spelled `0`
- * and each fraction of zeros dropped, a nested one included. A number is its {@link NumberKey}.
+ * array or an object is its {@link NormalizedContainer} text, each nested number in the one exact
+ * spelling `JSON_NORMALIZE` writes, as {@link JsonEquals} compares it: `1`, `1.0`, `1e0`, `10e-1`
+ * and `1.` alike. A number is its {@link NumberKey}, and any other value its text.
  */
 export function CanonicalNumber(value: Sql): Sql {
-  const flat = sql`JSON_TYPE(${value}) = 'ARRAY' AND INSTR(${value}, '{') = 0`;
-  return sql`(CASE WHEN ${flat} THEN ${Json(sql`JSON_NORMALIZE(${value})`)} WHEN NOT ${IsNumber(value)} THEN ${Json(RespelledBytes(value))} ELSE ${NumberKey(value)} END)`;
+  return sql`(CASE WHEN ${IsContainer(value)} THEN ${Json(NormalizedContainer(value))} WHEN NOT ${IsNumber(value)} THEN ${Json(value)} ELSE ${NumberKey(value)} END)`;
 }
 
 function IsNumber(value: Sql): Sql {
