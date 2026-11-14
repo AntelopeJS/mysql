@@ -9,6 +9,8 @@ interface Reading {
   kind: string;
   declared: number;
   loose: number | string;
+  list: (number | string)[];
+  record: { a: number | string };
 }
 
 const schema = new Schema<{ readings: Reading }>(SCHEMA_ID, {
@@ -23,39 +25,70 @@ function Readings() {
 }
 
 /**
- * One kind holding 0 and -0 in a declared number and in an undeclared field, and the string `"0"`
- * in the undeclared one, which no dedup may merge with the number 0.
+ * One kind holding 0 and -0 in a declared number, in an undeclared field, and nested in an array and
+ * an object, and the string `"0"` in the undeclared ones, which no dedup may merge with the number 0.
  */
 const ROWS: Reading[] = [
-  { _id: "positive", kind: "a", declared: 0, loose: 0 },
-  { _id: "negative", kind: "a", declared: -0, loose: -0 },
-  { _id: "text", kind: "a", declared: 0, loose: "0" },
+  {
+    _id: "positive",
+    kind: "a",
+    declared: 0,
+    loose: 0,
+    list: [0],
+    record: { a: 0 },
+  },
+  {
+    _id: "negative",
+    kind: "a",
+    declared: -0,
+    loose: -0,
+    list: [-0],
+    record: { a: -0 },
+  },
+  {
+    _id: "text",
+    kind: "a",
+    declared: 0,
+    loose: "0",
+    list: ["0"],
+    record: { a: "0" },
+  },
 ];
 
-type Field = "declared" | "loose";
+const FIELDS = ["declared", "loose", "list", "record"] as const;
+
+type Field = (typeof FIELDS)[number];
 
 type Value = Reading[Field];
 
-const EXPECTED: Record<Field, Value[]> = {
-  declared: [0],
-  loose: ["0", 0],
+/**
+ * The JSON text of each value a dedup keeps, a string's quote before a digit. Of two equal containers
+ * MySQL keeps either, and the text spells a nested -0 as `0`; a top-level -0 reads `-0`.
+ */
+const EXPECTED: Record<Field, string[]> = {
+  declared: ["0"],
+  loose: ['"0"', "0"],
+  list: ['["0"]', "[0]"],
+  record: ['{"a":"0"}', '{"a":0}'],
 };
 
-/** Orders values by their JSON text, a string's quote before a digit, so two dedups compare as arrays. */
-function ByText(left: Value, right: Value): number {
-  return JSON.stringify(left).localeCompare(JSON.stringify(right));
+/** The JSON text of each value a dedup kept, in order, with a top-level -0 spelled `-0`. */
+function Kept(values: readonly Value[]): string[] {
+  return values
+    .map((value) => (Object.is(value, -0) ? "-0" : JSON.stringify(value)))
+    .sort();
 }
 
-async function TopLevel(field: Field): Promise<Value[]> {
+async function TopLevel(field: Field): Promise<string[]> {
   const read = await Readings().distinct(field).run();
-  return [...read].sort(ByText);
+  return Kept(read);
 }
 
-async function InGroup(field: Field): Promise<Value[]> {
+async function InGroup(field: Field): Promise<string[]> {
   const [group] = await Readings()
     .group("kind", (stream, kind) => ({ kind, values: stream.distinct(field) }))
     .run();
-  return [...(group?.values ?? [])].sort(ByText);
+  return Kept(group?.values ?? []);
 }
 
 async function TopLevelCount(field: Field): Promise<number> {
@@ -73,7 +106,7 @@ async function InGroupCount(field: Field): Promise<number | undefined> {
 }
 
 /** A field read by a `map`, then deduped whole: the dedup of a value rather than of a named field. */
-async function Mapped(field: Field): Promise<Value[][]> {
+async function Mapped(field: Field): Promise<string[][]> {
   const top = await Readings()
     .map((reading) => reading.key(field))
     .distinct()
@@ -84,7 +117,7 @@ async function Mapped(field: Field): Promise<Value[][]> {
       values: stream.map((reading) => reading.key(field)).distinct(),
     }))
     .run();
-  return [[...top].sort(ByText), [...(group?.values ?? [])].sort(ByText)];
+  return [Kept(top), Kept(group?.values ?? [])];
 }
 
 describe("a dedup of 0 and -0", function () {
@@ -99,7 +132,7 @@ describe("a dedup of 0 and -0", function () {
     await schema.destroyInstance(INSTANCE).run();
   });
 
-  for (const field of ["declared", "loose"] as const) {
+  for (const field of FIELDS) {
     it(`keeps one 0 of a ${field} field at the top`, async () => {
       expect(await TopLevel(field)).to.deep.equal(EXPECTED[field]);
     });
@@ -123,4 +156,48 @@ describe("a dedup of 0 and -0", function () {
       ]);
     });
   }
+});
+
+/**
+ * An array whose JSON text runs past the length up to which a dedup key respells its zeros; MySQL
+ * stops a regular expression over text this long.
+ */
+const LONG: Reading = {
+  _id: "long",
+  kind: "b",
+  declared: 0,
+  loose: 0,
+  list: Array.from({ length: 40_000 }, () => 1),
+  record: { a: 0 },
+};
+
+describe("a dedup of an array past the respelled length", function () {
+  this.timeout(30_000);
+
+  const instance = "long";
+
+  function LongReadings() {
+    return schema.instance(instance).table("readings");
+  }
+
+  before(async () => {
+    await schema.createInstance(instance).run();
+    await LongReadings()
+      .insert([LONG, { ...LONG, _id: "copy" }])
+      .run();
+  });
+
+  after(async () => {
+    await schema.destroyInstance(instance).run();
+  });
+
+  it("keeps one copy of it in a group", async () => {
+    const [group] = await LongReadings()
+      .group("kind", (stream, kind) => ({
+        kind,
+        lists: stream.distinct("list"),
+      }))
+      .run();
+    expect(group?.lists).to.deep.equal([LONG.list]);
+  });
 });

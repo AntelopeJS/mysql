@@ -210,7 +210,8 @@ export interface JsonSyntax {
   same(left: Sql, right: Sql): Sql;
   /**
    * A JSON value with a negative zero read as 0, which {@link JsonSyntax.same} finds equal to it,
-   * so a dedup that compares text keeps one of the two. SQL NULL stays SQL NULL.
+   * so a dedup that compares text keeps one of the two. A zero nested in an array or an object is
+   * read as 0 too where the engine's dedup compares a container's text. SQL NULL stays SQL NULL.
    */
   unsignedZero(value: Sql): Sql;
   /** A scalar of `kind` as a JSON value. */

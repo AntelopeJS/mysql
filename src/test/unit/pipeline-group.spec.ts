@@ -99,12 +99,14 @@ describe("a group's sub-stream", () => {
       kind: "json",
       keys: { ages: { kind: "array", elem: { kind: "float" } } },
     });
-    expect(
-      Compile(
-        Root().group("name", (stream) => ({ ages: stream.distinct("age") })),
-      ).sql,
-    ).to.include(
-      "JSON_OBJECTAGG(COALESCE(CAST(CAST((`t0`.`age` + 0e0) AS JSON) AS CHAR), ''), CAST((`t0`.`age` + 0e0) AS JSON))",
+    const sql = Compile(
+      Root().group("name", (stream) => ({ ages: stream.distinct("age") })),
+    ).sql;
+    expect(sql).to.include(
+      "JSON_OBJECTAGG(COALESCE((CASE WHEN CHAR_LENGTH(CAST(CAST((`t0`.`age` + 0e0) AS JSON) AS CHAR)) <= 32768 THEN REGEXP_REPLACE(CAST(CAST((`t0`.`age` + 0e0) AS JSON) AS CHAR), ",
+    );
+    expect(sql).to.include(
+      "'$1$2') ELSE CAST(CAST((`t0`.`age` + 0e0) AS JSON) AS CHAR) END), ''), CAST((`t0`.`age` + 0e0) AS JSON))",
     );
   });
 

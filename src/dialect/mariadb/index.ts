@@ -4,6 +4,7 @@ import {
   type Held,
   type MemberPath,
   FamilyDialect,
+  UnsignedZeros,
 } from "../mysql";
 import type { CollectedRows, HashRow, HeldKeys, HeldTexts } from "../sql-types";
 import { Bind, type Sql, ident, int, join, lit, sql } from "../../statement";
@@ -492,7 +493,7 @@ const MARIADB: Flavour = {
   value: (document, path) => sql`JSON_VALUE(${document}, ${path})`,
   valueIsRead: false,
   number: JsonNumber,
-  unsignedZero: (value) => Json(sql`REGEXP_REPLACE(${value}, '^-0$', '0')`),
+  unsignedZero: (value) => Json(UnsignedZeros(value, "\\")),
   keepsInText: (value) => !Object.is(value, -0),
   boolean: (truth) =>
     sql`(CASE ${truth} WHEN TRUE THEN ${Json(lit("true"))} WHEN FALSE THEN ${Json(lit("false"))} END)`,
