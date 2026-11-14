@@ -1,10 +1,13 @@
 import { expect } from "chai";
 
-import { Bind, type Sql, param, sql } from "../statement";
+import { Bind, type Sql, int, param, sql } from "../statement";
 import { AcquireConnection, GetDialect, Read } from "../connection";
 import { OpenRowStream } from "../implementations/database/row-stream";
 
 const BATCH = 10;
+
+/** More rows than the 64 warnings MariaDB lists for a statement by default, each raising one. */
+const PAST_LISTED = 1000;
 
 /** The errno MariaDB fails a statement with past `max_statement_time`. */
 const STATEMENT_TIMEOUT = 1969;
@@ -63,6 +66,36 @@ describe("a cursor's stream over a statement that raises many warnings", functio
       nulls,
       isAnswered: failure !== undefined || seqs.length === 100,
     }).to.deep.equal({ nulls: 0, isAnswered: true });
+  });
+
+  /**
+   * Every row raises a truncation warning first, more than the 64 MariaDB lists by default, so a
+   * session that kept that default would not list the 4040 of the last row and the read would
+   * answer the NULL as the last row's value.
+   */
+  it("answers no read with a row read wrong past the warnings MariaDB lists", async () => {
+    const answer = await Read(
+      sql`SELECT s.seq AS seq, CAST(CONCAT(s.seq, 'x') AS INT) AS c, IF(s.seq = ${int(PAST_LISTED)}, JSON_EXTRACT(${param(TOO_DEEP)}, '$'), JSON_ARRAY()) AS j FROM seq_1_to_${int(PAST_LISTED)} AS s ORDER BY s.seq`,
+    ).then(
+      (rows) => ({
+        nulls: rows.filter((row) => row.get("j") === null).length,
+        isAnswered: rows.length === PAST_LISTED,
+      }),
+      () => ({ nulls: 0, isAnswered: true }),
+    );
+    expect(answer).to.deep.equal({ nulls: 0, isAnswered: true });
+  });
+
+  /**
+   * Each row raises a truncation warning, as a compiled read does for a JSON number past the
+   * doubles, more than the 64 MariaDB lists by default; a read that failed where its default
+   * list ran out would refuse rows it read whole.
+   */
+  it("answers a read whose many warnings MariaDB lists", async () => {
+    const rows = await Read(
+      sql`SELECT s.seq AS seq, CAST(CONCAT(s.seq, 'x') AS INT) AS c, JSON_ARRAY() AS j FROM seq_1_to_1000 AS s ORDER BY s.seq`,
+    );
+    expect(rows.length).to.equal(1000);
   });
 
   /**
