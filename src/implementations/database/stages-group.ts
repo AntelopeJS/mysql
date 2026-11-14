@@ -249,7 +249,10 @@ function GroupTerms(
   );
 }
 
-/** One part is the value itself; a compound index is a document of its parts, by field name. */
+/**
+ * The key the mapper reads, with a negative zero read as 0 in every part: one part is the value
+ * itself; a compound index is a document of its parts, by field name.
+ */
 function GroupValue(
   members: readonly IndexedMember[],
   context: DecodingContext,
@@ -281,12 +284,17 @@ function GroupValue(
 const GroupStage: PipelineStage = (relation, stage, context) => {
   const prepared = Prepare(relation, GROUP_BLOCKERS, context);
   AbsorbOrder(prepared);
-  const members = GroupTerms(
-    context.dialect,
-    IndexColumns(prepared, GroupName(stage)),
+  const columns = IndexColumns(prepared, GroupName(stage));
+  const value = GroupValue(
+    columns.map((member) => ({
+      ...member,
+      value: Deduplicable(context.dialect, member.value),
+    })),
+    context,
   );
-  const value = GroupValue(members, context);
-  prepared.groupBy.push(...members.map((member) => member.value));
+  prepared.groupBy.push(
+    ...GroupTerms(context.dialect, columns).map((member) => member.value),
+  );
   const mapped = DecodeFunction(RecordedLambda(stage, FIRST_OPERAND), context, [
     SubStreamProvider(prepared, context),
     value,

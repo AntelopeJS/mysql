@@ -22,7 +22,7 @@ describe("the group stage", () => {
       Root().group("byAgeActive", (stream, group) => ({ group })),
     ).sql;
     expect(sql).to.include(
-      "JSON_OBJECT('age', CAST(`t0`.`age` AS JSON), 'isActive', CAST((`t0`.`isActive`) <> 0 AS JSON))",
+      "JSON_OBJECT('age', CAST((`t0`.`age` + 0e0) AS JSON), 'isActive', CAST((`t0`.`isActive`) <> 0 AS JSON))",
     );
     expect(sql).to.match(/GROUP BY `t0`\.`age`, `t0`\.`isActive`$/);
   });
