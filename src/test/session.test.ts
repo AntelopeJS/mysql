@@ -1,6 +1,15 @@
 import { expect } from "chai";
 
-import { type Sql, Bind, int, param, sql } from "../statement";
+import {
+  type Sql,
+  Bind,
+  ident,
+  int,
+  join,
+  lit,
+  param,
+  sql,
+} from "../statement";
 import {
   AcquireConnection,
   GetDialect,
@@ -37,7 +46,40 @@ function expectPinned(row: Row) {
  */
 const SMALL_SORT_BUFFER = 262144;
 
-const SORTED_TEXTS = sql`SELECT v AS value FROM JSON_TABLE('["b","a"]', '$[*]' COLUMNS (v LONGTEXT PATH '$')) AS j ORDER BY v`;
+/** A sort buffer larger than the least the pin keeps, which the pin leaves as it is. */
+const LARGE_SORT_BUFFER = 8388608;
+
+/** The most texts one sort reads by in the sort buffer the MariaDB pin keeps. */
+const SORT_TEXTS = 8;
+
+/** Two rows that only the last of their texts sets apart, so the sort reads every one. */
+function SortedTexts(): Sql {
+  const row = (last: string) =>
+    JSON.stringify([
+      ...Array.from({ length: SORT_TEXTS - 1 }, () => "s"),
+      last,
+    ]);
+  const columns = Array.from({ length: SORT_TEXTS }, (_, text) =>
+    ident(`c${text}`),
+  );
+  const definitions = columns.map(
+    (column, text) => sql`${column} LONGTEXT PATH ${lit(`$[${text}]`)}`,
+  );
+  const last = ident(`c${SORT_TEXTS - 1}`);
+  return sql`SELECT ${last} AS value FROM JSON_TABLE(${param(`[${row("b")},${row("a")}]`)}, '$[*]' COLUMNS (${join(definitions, sql`, `)})) AS j ORDER BY ${join(columns, sql`, `)}`;
+}
+
+/** Runs the pin again on a held session that starts with `buffer` and the server's `sql_mode`. */
+async function Repin(
+  held: Awaited<ReturnType<typeof AcquireConnection>>,
+  buffer: number,
+): Promise<void> {
+  await Write(
+    sql`SET SESSION sort_buffer_size = ${int(buffer)}, sql_mode = @@global.sql_mode`,
+    held,
+  );
+  await held.query(Bind(GetDialect().session.pin({})).sql);
+}
 
 async function Value(statement: Sql) {
   return Only(await Read(statement)).get("value");
@@ -79,16 +121,23 @@ describe("a held connection", () => {
     }
   });
 
-  it("sorts a text column after its pin, whatever sort buffer the session had", async () => {
+  it("sorts by eight texts after its pin, from a small sort buffer", async () => {
     const held = await AcquireConnection();
     try {
-      await Write(
-        sql`SET SESSION sort_buffer_size = ${int(SMALL_SORT_BUFFER)}, sql_mode = @@global.sql_mode`,
-        held,
-      );
-      await held.query(Bind(GetDialect().session.pin({})).sql);
-      const rows = await Read(SORTED_TEXTS, held);
+      await Repin(held, SMALL_SORT_BUFFER);
+      const rows = await Read(SortedTexts(), held);
       expect(rows.map((row) => row.get("value"))).to.deep.equal(["a", "b"]);
+    } finally {
+      held.release();
+    }
+  });
+
+  it("keeps a sort buffer larger than its pin's least", async () => {
+    const held = await AcquireConnection();
+    try {
+      await Repin(held, LARGE_SORT_BUFFER);
+      const buffer = await Read(sql`SELECT @@sort_buffer_size AS value`, held);
+      expect(Number(Only(buffer).get("value"))).to.equal(LARGE_SORT_BUFFER);
     } finally {
       held.release();
     }
