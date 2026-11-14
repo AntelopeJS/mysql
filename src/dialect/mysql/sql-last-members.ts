@@ -37,10 +37,11 @@ function SpellsEachKeyOnce(object: Sql): Sql {
 /**
  * Whether the members of an object can be listed: those of an object that spells each key once
  * come from `JSON_KEYS`, which nests no deeper at any depth, and the others from
- * {@link Flavour.memberKeys}, only up to its depth.
+ * {@link Flavour.memberKeys}, up to its depth unless {@link Flavour.listsDeeper} holds.
  */
 export function Listable(flavour: Flavour, object: Sql): Sql {
-  return sql`(${SpellsEachKeyOnce(object)} OR JSON_DEPTH(${object}) <= ${int(flavour.maxJsonNesting)})`;
+  const deeper = flavour.listsDeeper ? sql` OR ${flavour.listsDeeper}` : sql``;
+  return sql`(${SpellsEachKeyOnce(object)} OR JSON_DEPTH(${object}) <= ${int(flavour.maxJsonNesting)}${deeper})`;
 }
 
 function MemberKeys(memberKeys: (object: Sql) => Sql, object: Sql): Sql {

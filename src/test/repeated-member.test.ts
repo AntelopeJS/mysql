@@ -184,30 +184,70 @@ const DEEP_ROWS = [
   { _id: "depth32", levels: 30, extra: '{"\\u00e9": "g"}' },
 ] as const;
 
+/**
+ * Rows of `deep` that spell `é` escaped twice the same way at `JSON_DEPTH` 32 and deeper, which
+ * MariaDB 11.8 cannot hold or list.
+ */
+const DEEP_TWICE_ROWS = [
+  {
+    _id: "depth32Twice",
+    levels: 30,
+    extra: '{"\\u00e9": "x", "\\u00e9": "g"}',
+  },
+  {
+    _id: "depth62Twice",
+    levels: 60,
+    extra: '{"\\u00e9": "x", "\\u00e9": "g"}',
+  },
+] as const;
+
+interface DeepRow {
+  _id: string;
+  levels: number;
+  extra: string;
+}
+
 /** How many objects a value nests. */
 function Levels(value: Nest | undefined): number {
   return JSON.stringify(value).split('{"n":').length - 1;
 }
 
-/**
- * Each row of `deep` merged with `{k: "1"}`, the row itself as the left operand, with `tree` as
- * the number of objects it nests.
- */
-async function MergedDeep(): Promise<unknown[]> {
+/** Stores `rows` in `deep`. */
+async function StoreDeep(rows: readonly DeepRow[]): Promise<void> {
   const deep = schema.instance(DEEP_INSTANCE).table("deep");
-  await deep
-    .insert(DEEP_ROWS.map(({ _id, levels }) => ({ _id, tree: Tree(levels) })))
-    .run();
-  for (const { _id, extra } of DEEP_ROWS) {
+  const table = ident(PhysicalTable(SCHEMA_ID, "deep"));
+  await deep.insert(rows.map(({ _id }) => ({ _id }))).run();
+  for (const { _id, levels, extra } of rows) {
     await Run(
-      sql`UPDATE ${ident(PhysicalTable(SCHEMA_ID, "deep"))} SET ${ident("_extra")} = ${param(extra)} WHERE ${ident("_id")} = ${param(_id)}`,
+      sql`UPDATE ${table} SET ${ident("tree")} = ${param(JSON.stringify(Tree(levels)))}, ${ident("_extra")} = ${param(extra)} WHERE ${ident("_id")} = ${param(_id)}`,
     );
   }
+}
+
+/**
+ * `rows` stored in `deep` and each merged with `{k: "1"}`, the row itself as the left operand,
+ * with `tree` as the number of objects it nests.
+ */
+async function MergedDeep(rows: readonly DeepRow[]): Promise<unknown[]> {
+  await StoreDeep(rows);
+  const deep = schema.instance(DEEP_INSTANCE).table("deep");
   const merged = await deep
+    .getAll(rows.map(({ _id }) => _id))
     .orderBy("_id")
     .map((row) => row.merge({ k: "1" }))
     .run();
   return merged.map(({ tree, ...rest }) => ({ ...rest, tree: Levels(tree) }));
+}
+
+/** What a merge of `rows` answers where it keeps the last member of `é`. */
+function KeptLast(rows: readonly DeepRow[]): unknown[] {
+  return rows.map(({ _id, levels }) => ({
+    _id,
+    _instance: DEEP_INSTANCE,
+    é: "g",
+    tree: levels,
+    k: "1",
+  }));
 }
 
 async function Ids(rows: Promise<Doc[]>): Promise<string[]> {
@@ -383,14 +423,31 @@ describe("a merge operand that spells a key escaped and nests deep", function ()
   });
 
   it("keeps the key's value where the operand has JSON_DEPTH 31 or more", async () => {
-    expect(await MergedDeep()).to.deep.equal(
-      DEEP_ROWS.map(({ _id, levels }) => ({
-        _id,
-        _instance: DEEP_INSTANCE,
-        é: "g",
-        tree: levels,
-        k: "1",
-      })),
+    expect(await MergedDeep(DEEP_ROWS)).to.deep.equal(KeptLast(DEEP_ROWS));
+  });
+
+  it("keeps the last member where the operand spells the key twice at JSON_DEPTH 32 or more", async function () {
+    const [version] = await Read(sql`SELECT VERSION() AS v`);
+    if (String(version?.get("v")).startsWith("11.8.")) {
+      this.skip();
+    }
+    expect(await MergedDeep(DEEP_TWICE_ROWS)).to.deep.equal(
+      KeptLast(DEEP_TWICE_ROWS),
     );
+  });
+
+  it("deletes no row a filter on such a merge does not match, and leaves no warning behind", async () => {
+    await StoreDeep([{ ...DEEP_TWICE_ROWS[0], _id: "deleteFiltered" }]);
+    const deep = schema.instance(DEEP_INSTANCE).table("deep");
+    await deep
+      .filter((row) => row.merge({ k: "1" }).key("k").eq("1").not())
+      .delete()
+      .run();
+    const [answer] = await Read(sql`SELECT 1 AS one`);
+    const kept = await deep.get("deleteFiltered").run();
+    expect({ one: Number(answer?.get("one")), kept: kept?._id }).to.deep.equal({
+      one: 1,
+      kept: "deleteFiltered",
+    });
   });
 });
