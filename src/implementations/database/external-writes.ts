@@ -35,7 +35,7 @@ import {
 } from "./external-write-shared";
 import { ExternalInsert } from "./external-insert";
 import { ExternalWriteFailure } from "./external-errors";
-import { InTransaction } from "./transaction";
+import { Atomically, InTransaction } from "./transaction";
 import { WRITE_ALIAS, type WriteTarget } from "./writes-shared";
 import { ClassifyMember, type DocumentView, StageOperand } from "./member";
 
@@ -302,7 +302,10 @@ async function InsertOne(
 
 async function Execute(write: ExternalWrite): Promise<string[] | number> {
   if (write.kind === "count") {
-    return write.statement ? Write(write.statement) : 0;
+    const { statement } = write;
+    return statement
+      ? Atomically((connection) => Write(statement, connection))
+      : 0;
   }
   if (write.rows.length === 0) {
     return [];
@@ -319,7 +322,10 @@ async function Execute(write: ExternalWrite): Promise<string[] | number> {
 /**
  * Runs a terminal write to an external relation: its constants checked before anything runs, an
  * insert's keys read back in input order, a write that changes nothing answered 0, and a refusal
- * the server reports read as what it means rather than as an errno.
+ * the server reports read as what it means rather than as an errno. Each write runs in a
+ * transaction, so one that fails, after the rows it changed included, changes none on a table
+ * whose engine rolls back. An update or a delete runs once at the session's isolation, as its
+ * statement alone would; an insert runs at READ COMMITTED and again after a deadlock.
  */
 export async function RunExternalWrite(
   target: WriteTarget,

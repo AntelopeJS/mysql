@@ -50,8 +50,10 @@ async function Clear(connection: PoolConnection, clear: Sql): Promise<void> {
 /**
  * The error the statement that just failed on `connection` with `failure` stands for. MariaDB lists
  * a cut aggregate's warning beside the error a later read of its cut JSON raised, so a server error
- * is reported as the cut that caused it, and the warning is cleared. A lost connection, a deadlock
- * or a lock wait keeps its own error, as does every failure on an engine that lists no warnings.
+ * is reported as the cut that caused it. Strict mode fails an `UPDATE` with the too-deep error that
+ * a read only warns of. MariaDB keeps either listed through statements that read no table, so
+ * either is cleared. A lost connection, a deadlock or a lock wait keeps its own error, as does
+ * every failure on an engine that lists no warnings.
  */
 export async function CutBehind(
   connection: PoolConnection,
@@ -65,11 +67,10 @@ export async function CutBehind(
     () => [],
   );
   const cut = listed.find((warning) => capture.cutAggregate(warning));
-  if (!cut) {
-    return failure;
+  if (cut || listed.some((warning) => capture.tooDeep(warning))) {
+    await Clear(connection, capture.warnings.clear);
   }
-  await Clear(connection, capture.warnings.clear);
-  return new AggregateTooLarge(cut);
+  return cut ? new AggregateTooLarge(cut) : failure;
 }
 
 /**
