@@ -57,16 +57,16 @@ const GROWTH = 7;
  */
 const MOST_ESCAPES = 1_000_000;
 
-/**
- * Text with a rewrite applied over its UTF-8 bytes: a MariaDB regular expression takes time in the
- * square of the length of text in a UTF-8 character set and in the length of bytes. The patterns
- * read only ASCII, which no byte of a longer UTF-8 character is.
- */
 /** Text in the binary collation MariaDB compares JSON text in, whatever collation it came in. */
 function Binary(text: Sql): Sql {
   return sql`CONVERT(${text} USING utf8mb4) COLLATE ${ident(BINARY_COLLATION)}`;
 }
 
+/**
+ * Text with a rewrite applied over its UTF-8 bytes: a MariaDB regular expression takes time in the
+ * square of the length of text in a UTF-8 character set and in the length of bytes. The patterns
+ * read only ASCII, which no byte of a longer UTF-8 character is.
+ */
 function Rewritten(text: Sql, { pattern, into }: Rewrite): Sql {
   const bytes = sql`CAST(CONVERT(${text} USING utf8mb4) AS BINARY)`;
   return Binary(sql`REGEXP_REPLACE(${bytes}, ${lit(pattern)}, ${lit(into)})`);
