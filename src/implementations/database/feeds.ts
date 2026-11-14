@@ -6,7 +6,6 @@ import type { Sql } from "../../statement";
 import type { Dialect } from "../../dialect";
 import { GetOptions, IsExternal, type ResolvedOptions } from "../../config";
 import {
-  AcquireConnection,
   GetDialect,
   Read,
   RegisterBeforeDisconnect,
@@ -95,49 +94,9 @@ const LIVE: FeedEnvironment = {
       await Sequence(session, dialect, "wait");
       return ReadFrontier(session, dialect);
     }),
-  read: ReadWarned,
+  read: Read,
   subscribe: SubscribeToChanges,
 };
-
-/** A warning the server raised, as the error a statement that failed for it would have raised. */
-class ServerWarning extends Error {
-  constructor(
-    readonly errno: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
-
-/**
- * Reads a poll, and fails it as MySQL does where the engine answered SQL NULL with a warning for a
- * document nested deeper than it builds, so the feed never delivers that NULL as a document.
- */
-async function ReadWarned(statement: Sql): Promise<Row[]> {
-  const { capture } = GetDialect();
-  if (!capture.warnings) {
-    return Read(statement);
-  }
-  const connection = await AcquireConnection();
-  try {
-    const rows = await Read(statement, connection);
-    const warned = (await Read(capture.warnings, connection))
-      .map(
-        (warning) =>
-          new ServerWarning(
-            Number(warning.get("Code")),
-            String(warning.get("Message")),
-          ),
-      )
-      .find((warning) => capture.tooDeep(warning));
-    if (warned) {
-      throw warned;
-    }
-    return rows;
-  } finally {
-    connection.release();
-  }
-}
 
 /** The range of `seq` a lapsed feed was promised and cannot be given, as the rejection names it. */
 interface FeedGap {

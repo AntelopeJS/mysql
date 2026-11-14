@@ -29,7 +29,7 @@ const COPIED = [
       await Sequence(session, dialect, "wait");
       return ReadFrontier(session, dialect);
     }),
-  read: ReadWarned,`,
+  read: Read,`,
   },
   {
     file: "src/implementations/database/change-loop.ts",
