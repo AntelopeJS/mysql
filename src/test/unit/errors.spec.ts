@@ -46,6 +46,18 @@ describe("A driver error", () => {
     ).to.deep.equal({ kind: "lockWait" });
   });
 
+  /** Fails where errno 1665 reads as any server error, which leaves the write's refusal unexplained. */
+  it("reads a refusal of the statement-format binary log as its own kind", () => {
+    expect(
+      classify(
+        ServerError(
+          1665,
+          "Cannot execute statement: impossible to write to binary log since BINLOG_FORMAT = STATEMENT",
+        ),
+      ),
+    ).to.deep.equal({ kind: "binlogFormat" });
+  });
+
   it("reads an error with no SQL state, or one that ended the connection, as the connection's", () => {
     expect(
       classify(Object.assign(new Error("read ECONNRESET"), { errno: -104 })),

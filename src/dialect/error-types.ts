@@ -6,6 +6,8 @@
  * - `deadlock`: the server rolled the transaction back to break a deadlock, which let the other
  *   transaction through, so running it again soon succeeds.
  * - `lockWait`: the transaction waited the server's whole lock wait timeout for a row.
+ * - `binlogFormat`: the server's binary log takes statements (`binlog_format = STATEMENT`), which
+ *   InnoDB cannot log a write at READ COMMITTED in; the statement did not apply.
  * - `server`: any other error the server answered; the statement did not apply.
  * - `connection`: the connection failed, so whether the statement applied is unknown.
  */
@@ -13,7 +15,12 @@ export type Failure =
   | { readonly kind: "duplicate"; readonly key: string }
   | { readonly kind: "tooLong"; readonly column: string }
   | {
-      readonly kind: "deadlock" | "lockWait" | "server" | "connection";
+      readonly kind:
+        | "deadlock"
+        | "lockWait"
+        | "binlogFormat"
+        | "server"
+        | "connection";
     };
 
 export interface ErrorSyntax {

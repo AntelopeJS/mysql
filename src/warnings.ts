@@ -22,6 +22,8 @@ class AggregateTooLarge extends Error {
   }
 }
 
+const STATEMENT_BINLOG_REFUSAL = `The server refused the write (errno 1665): its binary log records statements (binlog_format = STATEMENT), and InnoDB logs a write at READ COMMITTED, the isolation this module writes at, only as rows. Set binlog_format to ROW or MIXED on the server, the defaults of MySQL and MariaDB (SET GLOBAL binlog_format = 'ROW', and in its configuration file to keep it across a restart); a connection keeps the format it opened with, so restart the application after. See https://dev.mysql.com/doc/refman/8.4/en/binary-log-setting.html`;
+
 /** A row of the engine's warnings listing, read only through the two columns it names. */
 interface ListedWarning extends RowDataPacket {
   readonly Code: unknown;
@@ -52,15 +54,20 @@ async function Clear(connection: PoolConnection, clear: Sql): Promise<void> {
  * a cut aggregate's warning beside the error a later read of its cut JSON raised, so a server error
  * is reported as the cut that caused it. Strict mode fails an `UPDATE` with the too-deep error that
  * a read only warns of. MariaDB keeps either listed through statements that read no table, so
- * either is cleared. A lost connection, a deadlock or a lock wait keeps its own error, as does
- * every failure on an engine that lists no warnings.
+ * either is cleared. A write the server's statement-format binary log refused is reported as the
+ * setting that refused it. A lost connection, a deadlock or a lock wait keeps its own error, as
+ * does every failure on an engine that lists no warnings.
  */
 export async function CutBehind(
   connection: PoolConnection,
   { capture, errors }: Dialect,
   failure: Error,
 ): Promise<Error> {
-  if (!capture.warnings || errors.classify(failure).kind !== "server") {
+  const { kind } = errors.classify(failure);
+  if (kind === "binlogFormat") {
+    return new Error(STATEMENT_BINLOG_REFUSAL, { cause: failure });
+  }
+  if (!capture.warnings || kind !== "server") {
     return failure;
   }
   const listed = await Warnings(connection, capture.warnings.list).catch(

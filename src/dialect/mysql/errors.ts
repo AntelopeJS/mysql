@@ -5,10 +5,13 @@ const DUPLICATE_ENTRY = 1062;
 const DATA_TOO_LONG = 1406;
 const LOCK_WAIT_TIMEOUT = 1205;
 const DEADLOCK = 1213;
+/** `ER_BINLOG_STMT_MODE_AND_ROW_ENGINE`, on MySQL and MariaDB alike. */
+const STATEMENT_BINLOG = 1665;
 
-const WAITS: ReadonlyMap<number, Failure> = new Map([
+const BARE: ReadonlyMap<number, Failure> = new Map([
   [LOCK_WAIT_TIMEOUT, { kind: "lockWait" }],
   [DEADLOCK, { kind: "deadlock" }],
+  [STATEMENT_BINLOG, { kind: "binlogFormat" }],
 ]);
 
 /** `Duplicate entry '<value>' for key '<table>.<index>'`; the value may itself hold quotes. */
@@ -56,7 +59,7 @@ function Classify(error: Error): Failure {
       ? { kind: "server" }
       : { kind: "tooLong", column };
   }
-  return WAITS.get(server.errno) ?? { kind: "server" };
+  return BARE.get(server.errno) ?? { kind: "server" };
 }
 
 export const errors: ErrorSyntax = { classify: Classify };
