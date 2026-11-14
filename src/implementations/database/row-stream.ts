@@ -3,10 +3,12 @@ import { PoolConnection as CallbackPoolConnection } from "mysql2";
 
 import {
   AcquireUncapped,
+  GetDialect,
   ParseRow,
   type Row,
   ReleaseCapped,
 } from "../../connection";
+import { CutBehind, WarnedFailure } from "../../warnings";
 import { Bind, type Sql } from "../../statement";
 import { IsDocument } from "./guards";
 
@@ -58,8 +60,9 @@ function Arrival(stream: Readable): Promise<void> {
  * buffers between the server and the client. And the connection is out of the pool until the cursor
  * is read to its end or closed, which is what `maxOpenCursors` bounds.
  *
- * `close` after the last row hands the connection back to the pool. `close` before it destroys the
- * connection instead of draining it: the server aborts the statement, and the pool opens a
+ * `close` after a `next` read the result's end and found the statement whole hands the connection
+ * back to the pool. Any other `close` destroys the connection instead of draining it or clearing
+ * what the statement left listed on it: the server aborts the statement, and the pool opens a
  * replacement on demand.
  */
 export async function OpenRowStream(
@@ -78,6 +81,8 @@ export async function OpenRowStream(
     .stream({ highWaterMark: batchSize });
   let failure: Error | undefined;
   let isClosed = false;
+  let isSettled = false;
+  let isClean = false;
   stream.on("error", (err: Error) => {
     failure ??= err;
   });
@@ -93,6 +98,12 @@ export async function OpenRowStream(
       const row: unknown = stream.read();
       if (IsDocument(row)) {
         rows.push(ParseRow(Object.entries(row)));
+      } else if ((failure || stream.readableEnded) && !isSettled) {
+        isSettled = true;
+        failure = failure
+          ? await CutBehind(connection, GetDialect(), failure)
+          : await WarnedFailure(connection, GetDialect());
+        isClean = !failure;
       } else if (failure) {
         throw failure;
       } else if (stream.readableEnded || stream.destroyed) {
@@ -112,7 +123,7 @@ export async function OpenRowStream(
       }
       isClosed = true;
       driver.off("error", lost);
-      if (stream.readableEnded && !failure) {
+      if (isClean && !failure) {
         await ReleaseCapped(connection);
       } else {
         connection.destroy();
