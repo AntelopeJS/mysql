@@ -2,7 +2,7 @@ import { expect } from "chai";
 import { Schema } from "@antelopejs/interface-database/schema";
 
 import { param, sql } from "../statement";
-import { GetDialect, Read } from "../connection";
+import { AcquireConnection, GetDialect, Read } from "../connection";
 import type { Nest, Row } from "./watch";
 
 function Nested(levels: number): Nest {
@@ -54,5 +54,39 @@ describe("a plain read that builds a document deeper than the server builds", fu
       failure instanceof Error && GetDialect().capture.tooDeep(failure),
       String(failure),
     ).to.equal(true);
+  });
+});
+
+const DEEP = sql`SELECT JSON_VALID(${param("[".repeat(100) + "]".repeat(100))}) AS valid`;
+
+const TABLELESS = sql`SELECT 1 AS one`;
+
+function Ones(rows: readonly ReadonlyMap<string, unknown>[]): number[] {
+  return rows.map((row) => Number(row.get("one")));
+}
+
+describe("a table-less read after a too-deep read on the same connection", function () {
+  this.timeout(30_000);
+
+  /**
+   * MariaDB 11.8 keeps the too-deep read's warning 4040 listed through every statement that reads
+   * no table, so a read that lists the warnings without clearing them fails the next one falsely.
+   */
+  it("answers its rows on a held connection", async () => {
+    const held = await AcquireConnection();
+    try {
+      await Read(DEEP, held).catch(() => undefined);
+      expect(Ones(await Read(TABLELESS, held))).to.deep.equal([1]);
+    } finally {
+      held.release();
+    }
+  });
+
+  /** Fails where a pooled connection goes back to the pool still listing the warning. */
+  it("answers its rows on pooled connections", async () => {
+    for (let read = 0; read < 20; read += 1) {
+      await Read(DEEP).catch(() => undefined);
+      expect(Ones(await Read(TABLELESS))).to.deep.equal([1]);
+    }
   });
 });
