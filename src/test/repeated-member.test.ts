@@ -429,4 +429,16 @@ describe("a merge operand that spells a key escaped and nests deep", function ()
     }));
     expect(merged).to.deep.equal(nests31 ? { errno: 4040 } : KeptLast(rows));
   });
+
+  it("deletes no row a filter on such a merge does not match", async () => {
+    const deep = schema.instance(DEEP_INSTANCE).table("deep");
+    await deep
+      .filter((row) => row.merge({ k: "1" }).key("k").eq("1").not())
+      .delete()
+      .run()
+      .catch(() => undefined);
+    expect((await deep.orderBy("_id").run()).map(({ _id }) => _id)).to.include(
+      "depth32Twice",
+    );
+  });
 });

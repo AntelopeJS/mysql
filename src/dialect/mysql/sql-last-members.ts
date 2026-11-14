@@ -43,6 +43,19 @@ function MemberKeys(memberKeys: (object: Sql) => Sql, object: Sql): Sql {
 }
 
 /**
+ * Whether the engine lists the members of both objects. Where one nests too deep to list, the
+ * listing answers SQL NULL with a {@link Flavour.tooDeepErrno} warning, and {@link LastMembers}
+ * would answer `{}` to a statement that never reads its warnings.
+ */
+export function ListsMembers(
+  memberKeys: (object: Sql) => Sql,
+  leftSide: Sql,
+  rightSide: Sql,
+): Sql {
+  return sql`(${MemberKeys(memberKeys, leftSide)} IS NOT NULL AND ${MemberKeys(memberKeys, rightSide)} IS NOT NULL)`;
+}
+
+/**
  * The shallow merge of two objects from the members of both in order, the left's first. Each
  * decoded key stays where it first appears and takes the value of its last member, so the last
  * member of a key named twice wins as when MySQL stores the object, and the keys keep the order a
