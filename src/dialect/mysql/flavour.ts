@@ -100,10 +100,10 @@ export interface Flavour {
   /** A double as a JSON number, a negative zero included. */
   number(value: Sql): Sql;
   /**
-   * The JSON syntax's `unsignedZero`, which depends on how the engine stores a negative zero and
+   * The JSON syntax's `canonicalNumber`, which depends on how the engine stores a number and
    * whether its dedup compares a container as JSON or as text.
    */
-  unsignedZero(value: Sql): Sql;
+  canonicalNumber(value: Sql): Sql;
   /** Whether JSON text the engine parses keeps a finite number exactly. */
   keepsInText(value: number): boolean;
   /** A comparison's truth as a JSON boolean; SQL NULL stays SQL NULL. */
@@ -248,6 +248,28 @@ const UTC_OFFSET = "+00:00";
  */
 const MAX_TEXT_CHARS = 4294967295;
 
+/** 2^63, the first magnitude a `SIGNED` cannot hold, as a double. */
+const SIGNED_BOUND = sql`9223372036854775808e0`;
+
+/** 2^63 as an exact decimal, which a decimal just below it compares under, where a double rounds. */
+const SIGNED_BOUND_DECIMAL = sql`9223372036854775808`;
+
+/**
+ * MySQL parses `1` as an integer and `1.0` as a double, keeps `CAST(1.0 AS JSON)` as a decimal, and
+ * spells the three apart, so a double or a decimal that holds an integer becomes that integer, -0
+ * becoming 0. A decimal is read as one, which keeps the digits a double would round. The type name
+ * is compared as bytes: `JSON_TYPE` answers in `utf8mb4_bin`, which a literal in the session's
+ * collation cannot be compared with.
+ */
+function CanonicalNumber(value: Sql): Sql {
+  const type = sql`CAST(JSON_TYPE(${value}) AS BINARY)`;
+  const integer = (number: Sql, bound: Sql) =>
+    sql`${number} = FLOOR(${number}) AND ABS(${number}) < ${bound}`;
+  const double = sql`JSON_VALUE(${value}, '$' RETURNING DOUBLE)`;
+  const decimal = sql`JSON_VALUE(${value}, '$' RETURNING DECIMAL(65, 30))`;
+  return sql`(CASE WHEN ${type} = 'DOUBLE' AND ${integer(double, SIGNED_BOUND)} THEN CAST(CAST(${double} AS SIGNED) AS JSON) WHEN ${type} = 'DECIMAL' AND ${integer(decimal, SIGNED_BOUND_DECIMAL)} THEN CAST(CAST(${decimal} AS SIGNED) AS JSON) ELSE ${value} END)`;
+}
+
 /**
  * MySQL 8.4 LTS and 9.7 LTS. MySQL 8.4's JSON parser reads some doubles of 17 significant digits as
  * a neighbour, and JSON text spells a negative zero `0`, so of the finite numbers only a safe
@@ -279,8 +301,7 @@ export const MYSQL: Flavour = {
     sql`JSON_VALUE(${document}, ${path} RETURNING CHAR(${int(MAX_TEXT_CHARS)}))`,
   valueIsRead: true,
   number: (value) => sql`CAST(${value} AS JSON)`,
-  unsignedZero: (value) =>
-    sql`(CASE WHEN ${value} = 0 THEN CAST(0 AS JSON) ELSE ${value} END)`,
+  canonicalNumber: CanonicalNumber,
   keepsInText: (value) => Number.isSafeInteger(value) && !Object.is(value, -0),
   boolean: (truth) => sql`CAST(${truth} AS JSON)`,
   includes: (array, element) => sql`(${element} MEMBER OF (${array}))`,

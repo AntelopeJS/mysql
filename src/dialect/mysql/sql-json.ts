@@ -428,7 +428,7 @@ export function JsonOf(flavour: Flavour): JsonSyntax {
     compare: Comparison(flavour),
     order: Ordered(flavour),
     same: Sameness(flavour),
-    unsignedZero: (value) => flavour.unsignedZero(value),
+    canonicalNumber: (value) => flavour.canonicalNumber(value),
     of,
     parse,
     text,
