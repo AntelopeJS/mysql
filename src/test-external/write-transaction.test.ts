@@ -79,7 +79,7 @@ function WithGlobal(name: string, value: string | number): void {
   });
 }
 
-describe("an external update or delete where the server logs statements", function () {
+describe("an external write where the server logs statements", function () {
   this.timeout(60_000);
   WithGlobal("binlog_format", "STATEMENT");
 
@@ -90,6 +90,23 @@ describe("an external update or delete where the server logs statements", functi
       .run();
     const deleted = await Accounts().delete().run();
     expect({ updated, deleted }).to.deep.equal({ updated: 1, deleted: 1 });
+  });
+
+  /** Fails where the insert's refusal is the server's errno alone, which names no remedy. */
+  it("refuses an insert with an error that names binlog_format and the formats it takes", async () => {
+    const refusal = await sales
+      .instance()
+      .table("w_accounts")
+      .insert({ code: "txB", raw: { k: "0" } })
+      .run()
+      .then(
+        () => "inserted",
+        (err: unknown) => (err instanceof Error ? err.message : String(err)),
+      );
+    expect({
+      setting: refusal.includes("binlog_format"),
+      remedy: refusal.includes("ROW or MIXED"),
+    }).to.deep.equal({ setting: true, remedy: true });
   });
 });
 
