@@ -41,9 +41,9 @@ async function Refusal(pending: Promise<unknown>): Promise<Error> {
 
 describe("an owned update where the server logs statements", function () {
   this.timeout(60_000);
-  let admin: Connection;
+  let admin: Connection | undefined;
   let options: Options;
-  let saved: string;
+  let saved: string | undefined;
 
   before(async () => {
     options = GetOptions();
@@ -60,10 +60,12 @@ describe("an owned update where the server logs statements", function () {
 
   after(async () => {
     try {
-      await admin.query("SET GLOBAL binlog_format = ?", [saved]);
-      await Reconnect(options);
+      if (admin && saved !== undefined) {
+        await admin.query("SET GLOBAL binlog_format = ?", [saved]);
+        await Reconnect(options);
+      }
     } finally {
-      await admin.end();
+      await admin?.end();
     }
   });
 
