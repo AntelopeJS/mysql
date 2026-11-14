@@ -39,11 +39,7 @@ function expectPinned(row: Row) {
   expect(modes).to.not.include("ANSI_QUOTES");
 }
 
-/**
- * A sort buffer smaller than MariaDB's default, which a sort of the pinned length outgrows. The
- * session takes it with the server's `sql_mode`, as a new connection starts, since the pinned strict
- * mode refuses the pin's `group_concat_max_len` where the server clamps it.
- */
+/** A sort buffer smaller than MariaDB's default, which a sort of the pinned length outgrows. */
 const SMALL_SORT_BUFFER = 262144;
 
 /** A sort buffer larger than the least the pin keeps, which the pin leaves as it is. */
@@ -118,6 +114,17 @@ describe("a held connection", () => {
       } finally {
         held.release();
       }
+    }
+  });
+
+  it("pins a session that starts in strict mode", async () => {
+    const held = await AcquireConnection();
+    try {
+      await Write(sql`SET SESSION sql_mode = 'STRICT_ALL_TABLES'`, held);
+      await held.query(Bind(GetDialect().session.pin({})).sql);
+      expectPinned(Only(await Read(SESSION, held)));
+    } finally {
+      held.release();
     }
   });
 

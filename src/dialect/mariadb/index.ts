@@ -7,10 +7,11 @@ import { BINARY_COLLATION, Json } from "./json-text";
 import { CanonicalNumber, JsonEquals, JsonHash, JsonNumber } from "./numbers";
 
 /**
- * The largest `group_concat_max_len`. MariaDB builds `JSON_ARRAYAGG` and `JSON_OBJECTAGG` on its
- * group concatenation, which truncates an aggregate at this many bytes.
+ * The largest `group_concat_max_len`, 1 GiB. MariaDB builds `JSON_ARRAYAGG` and `JSON_OBJECTAGG` on
+ * its group concatenation, which truncates an aggregate at this many bytes. A larger value is
+ * clamped, which a session that starts in strict mode refuses.
  */
-const UNBOUNDED_AGGREGATE_BYTES = 4294967295;
+const UNBOUNDED_AGGREGATE_BYTES = 1073741824;
 
 /**
  * The leading characters of a text MariaDB sorts by, past which it sorts two texts as equal. Its
