@@ -108,25 +108,13 @@ export async function CutBehind(
   return cut ? new AggregateTooLarge(cut) : failure;
 }
 
-/** A read whose statement raised more warnings than MariaDB lists, so none of them can be read as harmless. */
+/** A cursor whose statement raised more warnings than MariaDB lists, so none of them can be read as harmless. */
 class UnlistedWarnings extends Error {
   constructor(listed: number, raised: number) {
     super(
-      `MariaDB raised ${raised} warnings computing the read's rows but lists only ${listed} (max_error_count), so the read cannot tell whether one is a cut aggregate or a document nested too deep`,
+      `MariaDB raised ${raised} warnings computing the cursor's rows but lists only ${listed} (max_error_count), so the cursor cannot tell whether one is a cut aggregate or a document nested too deep`,
     );
   }
-}
-
-/** How many warnings and errors MariaDB raised for the session's last statement. */
-async function Raised(
-  connection: PoolConnection,
-  warnings: NonNullable<Dialect["capture"]["warnings"]>,
-): Promise<number> {
-  const bound = Bind(warnings.count);
-  const [counted] = await connection.execute<CountedWarnings[]>(bound.sql, [
-    ...bound.args,
-  ]);
-  return Number(counted[0]?.warnings);
 }
 
 /** A row of the engine's warning count, read only through the column it names. */
@@ -161,7 +149,11 @@ export async function CheckedBehind(
   if (deep) {
     return deep;
   }
-  const raised = await Raised(connection, warnings);
+  const bound = Bind(warnings.count);
+  const [counted] = await connection.execute<CountedWarnings[]>(bound.sql, [
+    ...bound.args,
+  ]);
+  const raised = Number(counted[0]?.warnings);
   if (!Number.isSafeInteger(raised) || raised <= 1) {
     return failure;
   }
@@ -175,9 +167,8 @@ export async function CheckedBehind(
 /**
  * The error the statement that just answered on `connection` fails with, from the warnings MariaDB
  * listed for it: an aggregate cut at `max_allowed_packet`, or else a JSON document nested deeper
- * than the engine builds. Where it lists fewer warnings than the statement raised
- * (`max_error_count`), an unlisted one may be either, so the read fails. It clears the warnings it
- * fails with, so the next statement on the connection does not inherit them. `undefined` when the answer is whole, and always on an engine
+ * than the engine builds. It clears the warnings it fails with, so the next statement on the
+ * connection does not inherit them. `undefined` when the answer is whole, and always on an engine
  * that lists no warnings.
  */
 export async function WarnedFailure(
@@ -191,23 +182,9 @@ export async function WarnedFailure(
   const cut = warnings.find((warning) => capture.cutAggregate(warning));
   const warned = cut
     ? new AggregateTooLarge(cut)
-    : (warnings.find((warning) => capture.tooDeep(warning)) ??
-      (await Unlisted(connection, capture.warnings, warnings.length)));
+    : warnings.find((warning) => capture.tooDeep(warning));
   if (warned) {
     await Clear(connection, capture.warnings.clear);
   }
   return warned;
-}
-
-/** The failure of a statement that raised more warnings than the `listed` MariaDB lists for it. */
-async function Unlisted(
-  connection: PoolConnection,
-  warnings: NonNullable<Dialect["capture"]["warnings"]>,
-  listed: number,
-): Promise<UnlistedWarnings | undefined> {
-  if (listed === 0) {
-    return undefined;
-  }
-  const raised = await Raised(connection, warnings);
-  return raised > listed ? new UnlistedWarnings(listed, raised) : undefined;
 }

@@ -6,8 +6,8 @@ import { OpenRowStream } from "../implementations/database/row-stream";
 
 const BATCH = 10;
 
-/** More rows than the warnings MariaDB lists for a statement, each raising one. */
-const PAST_LISTED = 65_600;
+/** More rows than the 64 warnings MariaDB lists for a statement by default, each raising one. */
+const PAST_LISTED = 1000;
 
 /** The errno MariaDB fails a statement with past `max_statement_time`. */
 const STATEMENT_TIMEOUT = 1969;
@@ -69,9 +69,9 @@ describe("a cursor's stream over a statement that raises many warnings", functio
   });
 
   /**
-   * Every row raises a truncation warning first, more than MariaDB lists, so it does not list the
-   * 4040 of the last row; a read that took the warnings it lists for all it raised would answer
-   * the NULL as the last row's value.
+   * Every row raises a truncation warning first, more than the 64 MariaDB lists by default, so a
+   * session that kept that default would not list the 4040 of the last row and the read would
+   * answer the NULL as the last row's value.
    */
   it("answers no read with a row read wrong past the warnings MariaDB lists", async () => {
     const answer = await Read(

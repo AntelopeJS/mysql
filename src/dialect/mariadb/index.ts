@@ -31,9 +31,8 @@ const SORT_BUFFER_BYTES = 2097152;
 
 /**
  * The most warnings MariaDB lists for a statement, its largest `max_error_count`. A compiled read
- * raises a truncation warning for each row whose JSON number passes the doubles, and a read whose
- * statement raised more than the list holds fails, since an unlisted one may be a cut aggregate or
- * a document nested too deep.
+ * raises a truncation warning for each row whose JSON number passes the doubles, and a read finds a
+ * cut aggregate or a too-deep document only among the warnings MariaDB lists.
  */
 const LISTED_WARNINGS = 65535;
 
