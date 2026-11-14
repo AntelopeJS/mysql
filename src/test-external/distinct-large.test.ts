@@ -65,12 +65,6 @@ function Sorted(values: readonly unknown[] | undefined): unknown[] {
   );
 }
 
-/**
- * The times a group's dedup reads each document: to number its distinct values, to join each row
- * to its number, and to collect it.
- */
-const GROUP_READS = 3;
-
 /** The result of `run` and its fastest time over up to {@link ATTEMPTS} runs, stopping at one in `budget`. */
 async function Fastest<T>(
   run: () => Promise<T>,
@@ -130,8 +124,8 @@ describe("a dedup of large external JSON documents", function () {
     expect(await SortBuffer()).to.equal(before);
   });
 
-  it("keeps one value per document in a group in under 0.1 s a read of a row", async () => {
-    const budget = MS_PER_ROW * DOCUMENTS.length * GROUP_READS;
+  it("keeps one value per document in a group in under 0.1 s a row", async () => {
+    const budget = MS_PER_ROW * DOCUMENTS.length;
     const [groups, ms] = await Fastest(
       () =>
         Large()
