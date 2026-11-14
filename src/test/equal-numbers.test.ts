@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { Schema } from "@antelopejs/interface-database/schema";
 
+import { GetDialect } from "../connection";
 import { type Sql, ident, join, param, sql } from "../statement";
 import { PhysicalTable, Run } from "./tables";
 
@@ -27,6 +28,9 @@ const NUMBERS = [
   "9007199254740992e0",
   "1",
   "1.0",
+  "1e0",
+  "0.5",
+  "5e-1",
   "0.1",
   "0.10000000000000001",
   "4e-324",
@@ -38,6 +42,9 @@ const NUMBERS = [
   "1.8446744073709552e19",
   "18446744073709551616",
 ] as const;
+
+/** Spellings of numbers beyond the doubles, which MariaDB stores as written and MySQL refuses. */
+const OVERFLOWS = ["1e309", "1E309", "1e+309", "10e308", "-1e309"] as const;
 
 const SIGNED_MIN = -(2n ** 63n);
 const UNSIGNED_MAX = 2n ** 64n - 1n;
@@ -82,9 +89,16 @@ interface Single {
   n?: number;
 }
 
-const schema = new Schema<{ pairs: Pair; singles: Single }>(SCHEMA_ID, {
+const schema = new Schema<{
+  pairs: Pair;
+  singles: Single;
+  overflows: Single;
+  overflowPairs: Pair;
+}>(SCHEMA_ID, {
   pairs: { fields: {}, indexes: {} },
   singles: { fields: {}, indexes: {} },
+  overflows: { fields: {}, indexes: {} },
+  overflowPairs: { fields: {}, indexes: {} },
 });
 
 /** Each ordered pair of numbers MySQL finds equal, as `left right` texts. */
@@ -189,5 +203,61 @@ describe("eq on JSON numbers another writer spelled", function () {
     expect(
       pairs.map(({ left, right }) => Texts([left, right])).sort(),
     ).to.deep.equal(EQUAL);
+  });
+});
+
+describe("eq on JSON numbers beyond the doubles", function () {
+  this.timeout(30_000);
+
+  before(async function () {
+    if (GetDialect().id !== "mariadb") {
+      this.skip();
+    }
+    await schema.instance().table("overflows").delete().run();
+    await schema.instance().table("overflowPairs").delete().run();
+    await Run(
+      Insert(
+        "overflows",
+        OVERFLOWS.map(
+          (number, index) =>
+            [String(index), sql`JSON_OBJECT('n', ${Parsed(number)})`] as const,
+        ),
+      ),
+    );
+    await Run(
+      Insert(
+        "overflowPairs",
+        OVERFLOWS.flatMap((left, l) =>
+          OVERFLOWS.map(
+            (right, r) =>
+              [
+                `${l}-${r}`,
+                sql`JSON_OBJECT('l', ${Parsed(left)}, 'r', ${Parsed(right)})`,
+              ] as const,
+          ),
+        ),
+      ),
+    );
+  });
+
+  it("finds in a join that hashes the key the pairs eq finds between two keys of a row", async () => {
+    const joined = await schema
+      .instance()
+      .table("overflows")
+      .joinInner(
+        schema.instance().table("overflows"),
+        (left, right) => left.key("n").eq(right.key("n")),
+        (left, right) => ({ left: left.key("_id"), right: right.key("_id") }),
+      )
+      .run();
+    const equal = await schema
+      .instance()
+      .table("overflowPairs")
+      .filter((row) => row.key("l").eq(row.key("r")))
+      .map((row) => row.key("_id"))
+      .run();
+    expect(
+      joined.map(({ left, right }) => `${left}-${right}`).sort(),
+    ).to.deep.equal(equal.sort());
   });
 });
