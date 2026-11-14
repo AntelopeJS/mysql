@@ -1,7 +1,13 @@
 import { expect } from "chai";
 
-import { type Sql, param, sql } from "../statement";
-import { AcquireConnection, GetDialect, Read, type Row } from "../connection";
+import { type Sql, Bind, int, param, sql } from "../statement";
+import {
+  AcquireConnection,
+  GetDialect,
+  Read,
+  type Row,
+  Write,
+} from "../connection";
 
 const SESSION = sql`SELECT @@collation_connection AS collation, @@character_set_connection AS charset, @@time_zone AS zone, @@sql_mode AS mode, @@lc_messages AS messages`;
 
@@ -23,6 +29,15 @@ function expectPinned(row: Row) {
   expect(modes).to.not.include("PIPES_AS_CONCAT");
   expect(modes).to.not.include("ANSI_QUOTES");
 }
+
+/**
+ * A sort buffer smaller than MariaDB's default, which a sort of the pinned length outgrows. The
+ * session takes it with the server's `sql_mode`, as a new connection starts, since the pinned strict
+ * mode refuses the pin's `group_concat_max_len` where the server clamps it.
+ */
+const SMALL_SORT_BUFFER = 262144;
+
+const SORTED_TEXTS = sql`SELECT v AS value FROM JSON_TABLE('["b","a"]', '$[*]' COLUMNS (v LONGTEXT PATH '$')) AS j ORDER BY v`;
 
 async function Value(statement: Sql) {
   return Only(await Read(statement)).get("value");
@@ -61,6 +76,21 @@ describe("a held connection", () => {
       } finally {
         held.release();
       }
+    }
+  });
+
+  it("sorts a text column after its pin, whatever sort buffer the session had", async () => {
+    const held = await AcquireConnection();
+    try {
+      await Write(
+        sql`SET SESSION sort_buffer_size = ${int(SMALL_SORT_BUFFER)}, sql_mode = @@global.sql_mode`,
+        held,
+      );
+      await held.query(Bind(GetDialect().session.pin({})).sql);
+      const rows = await Read(SORTED_TEXTS, held);
+      expect(rows.map((row) => row.get("value"))).to.deep.equal(["a", "b"]);
+    } finally {
+      held.release();
     }
   });
 });

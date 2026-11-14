@@ -5,7 +5,6 @@ import { CATALOG } from "./catalog";
 import { ESCAPED_KEYS } from "./escaped-keys";
 import { BINARY_COLLATION, Json } from "./json-text";
 import { CanonicalNumber, JsonEquals, JsonHash, JsonNumber } from "./numbers";
-import { MAX_KEY_CHARS } from "../../implementations/database/utils";
 
 /**
  * The largest `group_concat_max_len`. MariaDB builds `JSON_ARRAYAGG` and `JSON_OBJECTAGG` on its
@@ -14,10 +13,20 @@ import { MAX_KEY_CHARS } from "../../implementations/database/utils";
 const UNBOUNDED_AGGREGATE_BYTES = 4294967295;
 
 /**
- * The bytes of a value MariaDB sorts by, past which it sorts two values as equal: the longest `_id`
- * at four bytes per character, so that a sort by identity orders every row of a table apart.
+ * The leading characters of a text MariaDB sorts by, past which it sorts two texts as equal. Its
+ * sort with a `LIMIT` reads `max_sort_length / 4` characters, and its other sorts read
+ * `max_sort_length` bytes, at most four per character.
  */
-const ID_SORT_BYTES = MAX_KEY_CHARS * 4;
+const SORTED_TEXT_CHARS = 16384;
+
+const SORT_BYTES = SORTED_TEXT_CHARS * 4;
+
+/**
+ * The least sort buffer a session keeps: a sort without a `LIMIT` needs about sixteen times
+ * `max_sort_length`, whatever the values' length, and fails with `Out of sort memory` below it.
+ * Twice that is MariaDB's default, so only a server set lower spends more per sort.
+ */
+const SORT_BUFFER_BYTES = SORT_BYTES * 32;
 
 /** MariaDB's statement timeout, in seconds, which a fraction of a second refines. */
 const MS_PER_SECOND = 1000;
@@ -290,7 +299,8 @@ const MARIADB: Flavour = {
   multiValuedIndex: false,
   pinned: [
     sql`group_concat_max_len = ${int(UNBOUNDED_AGGREGATE_BYTES)}`,
-    sql`max_sort_length = ${int(ID_SORT_BYTES)}`,
+    sql`max_sort_length = ${int(SORT_BYTES)}`,
+    sql`sort_buffer_size = GREATEST(@@global.sort_buffer_size, ${int(SORT_BUFFER_BYTES)})`,
   ],
   readTimeout: (ms) =>
     sql`max_statement_time = ${int(ms)} / ${int(MS_PER_SECOND)}`,
