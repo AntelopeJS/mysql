@@ -256,8 +256,8 @@ function TextsOf(
 
 /** A JSON value's default, with the value held at `alias` so the statement evaluates it once. */
 function HeldDefault(dialect: Dialect, pair: CompiledPair, alias: string) {
-  const held = dialect.sql.rows.hold(pair.left.sql, alias);
-  return sql`(SELECT COALESCE(${dialect.sql.json.present(held.value)}, ${pair.right.sql}) FROM ${held.from} AS ${ident(alias)})`;
+  const held = dialect.sql.rows.holdBare(pair.left.sql, alias);
+  return sql`COALESCE((SELECT ${dialect.sql.json.present(held.value)} FROM ${held.from} AS ${ident(alias)}), ${pair.right.sql})`;
 }
 
 /** The texts of a JSON value or its default, where both have texts. */
@@ -291,7 +291,7 @@ function DefaultType(value: SqlType, def: SqlType): SqlType {
  * the result on those rows and is NULL on the others. The result keeps that key column, marked
  * `set`, and the read it falls back from, through which a later cast finds the key column.
  *
- * Given `nextAlias`, a JSON-backed value other than a stored read is held once in a one-row table:
+ * Given `nextAlias`, a JSON-backed value that is not a member read is held once in a one-row table:
  * the absence test reads it through `NULLIF`, which evaluates its operand twice, so a chain of
  * defaults each over the one before would otherwise evaluate the first value twice per link.
  */

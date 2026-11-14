@@ -12,6 +12,8 @@ const SHALLOW = 5;
  * value twice, 2^14 reads per row: 2.8 s on MySQL 8.4 and 29 s on MariaDB 11.8.
  */
 const BUDGET_MS = 500;
+/** MariaDB's deepest JSON value: a row whose member is nested one level less. */
+const DEEPEST = 31;
 
 interface Nested {
   [key: string]: Nested | string | null;
@@ -68,6 +70,22 @@ describe("a chain of computed-key reads each followed by default()", function ()
 
   after(async () => {
     await schema.destroyInstance(INSTANCE).run();
+  });
+
+  it("defaults a row as deep as MariaDB stores", async () => {
+    const id = "d-deep";
+    await Docs()
+      .insert({ _id: id, nest: NestOf(DEEPEST - 1, "w"), nestKey: "k" })
+      .run();
+    try {
+      const [read] = await Docs()
+        .filter((row) => row.key("_id").eq(id))
+        .map((row) => row.default({}).cast<Doc>().key("nestKey"))
+        .run();
+      expect(read).to.equal("k");
+    } finally {
+      await Docs().get(id).delete().run();
+    }
   });
 
   it("reads each link's value once", async () => {

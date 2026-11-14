@@ -132,6 +132,7 @@ const MASKED_ROWS: RowSyntax = {
   joinScope: (column, value) => Marked(column, value),
   nestedLoopJoin: false,
   hold: (value) => ({ from: Marked(value), value: Marked() }),
+  holdBare: (value) => ({ from: Marked(value), value: Marked() }),
   returning: false,
 };
 

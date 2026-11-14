@@ -419,6 +419,14 @@ export interface RowSyntax {
    * selecting the value would, which MariaDB cannot correlate.
    */
   hold(value: Sql, alias: string): { readonly from: Sql; readonly value: Sql };
+  /**
+   * {@link RowSyntax.hold} of a value at the depth it has, nested no deeper by the table. It may
+   * have no row where the value is SQL NULL.
+   */
+  holdBare(
+    value: Sql,
+    alias: string,
+  ): { readonly from: Sql; readonly value: Sql };
   /** Whether an `INSERT` can answer values of the row it wrote, by a `RETURNING` clause. */
   readonly returning: boolean;
 }

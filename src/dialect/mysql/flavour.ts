@@ -115,6 +115,8 @@ export interface Flavour {
    * outer column inside a derived table; MariaDB reads one only inside `JSON_TABLE`.
    */
   hold(columns: readonly Held[]): Sql;
+  /** {@link Flavour.hold} of one JSON value without nesting it deeper; no row where it is SQL NULL. */
+  holdBare(held: Held): Sql;
   /** A JSON column of `JSON_TABLE` as a JSON value, which the JSON functions take whole. */
   tabled(column: Sql): Sql;
   /** ISO 8601 text, validated, read as the UTC instant it names, its `Z` or zone offset included. */
@@ -224,6 +226,7 @@ export const MYSQL: Flavour = {
       columns.map((held) => sql`${held.value} AS ${ident(held.name)}`),
       sql`, `,
     )})`,
+  holdBare: (held) => sql`(SELECT ${held.value} AS ${ident(held.name)})`,
   tabled: (column) => column,
   instant: (text) =>
     sql`CAST(REPLACE(${text}, 'Z', ${lit(UTC_OFFSET)}) AS DATETIME(6))`,
