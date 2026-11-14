@@ -1,7 +1,6 @@
 import { expect } from "chai";
 import type { Schema } from "@antelopejs/interface-database/schema";
 
-import { GetDialect } from "../connection";
 import { param, sql } from "../statement";
 import { NativeWrite, RegisterSales, type SalesTables } from "./sales";
 
@@ -100,10 +99,7 @@ describe("a dedup of large external JSON documents", function () {
     expect(ms).to.be.below(MS_PER_ROW * DOCUMENTS.length);
   });
 
-  it("keeps one value per document in a group on MariaDB in under 0.1 s a row", async function () {
-    if (GetDialect().id !== "mariadb") {
-      this.skip();
-    }
+  it("keeps one value per document in a group in under 0.1 s a row", async () => {
     const [groups, ms] = await Fastest(() =>
       Large()
         .group("status", (stream) => stream.distinct("raw"))
