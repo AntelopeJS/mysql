@@ -39,7 +39,7 @@ async function Refusal(pending: Promise<unknown>): Promise<Error> {
   return expect.fail("the server was expected to refuse the write");
 }
 
-describe("an owned update where the server logs statements", function () {
+describe("an owned write or change feed where the server logs statements", function () {
   this.timeout(60_000);
   let admin: Connection | undefined;
   let options: Options;
@@ -82,5 +82,16 @@ describe("an owned update where the server logs statements", function () {
           ? err.cause.errno
           : undefined,
     }).to.deep.equal({ setting: true, remedy: true, errno: 1665 });
+  });
+
+  /** Fails where the feed's numbering of its log fails with the server's errno alone. */
+  it("refuses to open a change feed with an error that names binlog_format and the formats it takes", async () => {
+    const feed = Items().changes().cursor();
+    const err = await Refusal(feed.next());
+    await feed.return?.();
+    expect({
+      setting: err.message.includes("binlog_format"),
+      remedy: err.message.includes("ROW or MIXED"),
+    }).to.deep.equal({ setting: true, remedy: true });
   });
 });
