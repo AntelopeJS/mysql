@@ -191,19 +191,6 @@ export class DecodingContext {
     }
   }
 
-  /**
-   * Builds a statement whose own source reads the row of a query outside it, as a feed's side reads
-   * the logged event its poll selects: every stage of it compiles as having read that outer row.
-   */
-  public overOuterRow<T>(build: () => T): T {
-    this.open.push({ reads: 1, rows: new Set() });
-    try {
-      return build();
-    } finally {
-      this.open.pop();
-    }
-  }
-
   /** Whether the subquery compiling now has so far read the row of a query outside it. */
   public get readsOuterRow(): boolean {
     return this.outerReadCount > 0;

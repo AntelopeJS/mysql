@@ -126,6 +126,12 @@ export interface Relation {
   table?: TableOrigin;
   /** The source a plain projection renamed — see {@link SetPlainProjection}. */
   projectedFrom?: RowSource;
+  /**
+   * Whether `from` reads a column of a query outside the statement, as a feed's side holds the
+   * image of the logged event its poll selects. Kept by every stage that keeps the relation's rows,
+   * walked back or not, so a wrap of them reads that column where the engine can.
+   */
+  readsOuterRow?: true;
 }
 
 type RelationSeed = Pick<
@@ -295,17 +301,20 @@ export function LoggedRelation(
   row: Sql,
   origin: TableOrigin,
 ): Relation {
-  return NewRelation({
-    dialect,
-    from,
-    alias,
-    source: new ColumnRowSource(
+  return {
+    ...NewRelation({
       dialect,
-      LoggedColumns(dialect, row, origin.model),
-      origin.model,
-    ),
-    origin,
-  });
+      from,
+      alias,
+      source: new ColumnRowSource(
+        dialect,
+        LoggedColumns(dialect, row, origin.model),
+        origin.model,
+      ),
+      origin,
+    }),
+    readsOuterRow: true,
+  };
 }
 
 /**
