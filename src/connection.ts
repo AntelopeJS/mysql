@@ -442,24 +442,69 @@ class ServerWarning extends Error {
   }
 }
 
+/** A read whose aggregate the engine cut short at `max_allowed_packet`, so its answer is not whole. */
+class AggregateTooLarge extends Error {
+  constructor(warning: ServerWarning) {
+    super(
+      `MariaDB cut an aggregate of the read short at max_allowed_packet, so the read cannot answer whole; raise max_allowed_packet on the server (${warning.message}, errno ${warning.errno})`,
+    );
+  }
+}
+
+async function Warnings(
+  connection: PoolConnection,
+  listing: Sql,
+): Promise<ServerWarning[]> {
+  return (await ReadOn(connection, listing)).map(
+    (warning) =>
+      new ServerWarning(
+        Number(warning.get("Code")),
+        String(warning.get("Message")),
+      ),
+  );
+}
+
+/**
+ * MariaDB lists a cut aggregate's warning beside the error a later read of its cut JSON raised, so
+ * a server error is reported as the cut that caused it. A lost connection, a deadlock or a lock wait
+ * keeps its own error.
+ */
+async function ReadFailingCut(
+  connection: PoolConnection,
+  statement: Sql,
+  warnings: { readonly list: Sql; readonly clear: Sql },
+): Promise<Row[]> {
+  try {
+    return await ReadOn(connection, statement);
+  } catch (err) {
+    const { capture, errors } = GetDialect();
+    if (!(err instanceof Error) || errors.classify(err).kind !== "server") {
+      throw err;
+    }
+    const listed = await Warnings(connection, warnings.list).catch(() => []);
+    const cut = listed.find((warning) => capture.cutAggregate(warning));
+    if (!cut) {
+      throw err;
+    }
+    await ReadOn(connection, warnings.clear);
+    throw new AggregateTooLarge(cut);
+  }
+}
+
 async function ReadFailingTooDeep(
   connection: PoolConnection,
   statement: Sql,
 ): Promise<Row[]> {
-  const rows = await ReadOn(connection, statement);
   const { capture } = GetDialect();
   if (!capture.warnings) {
-    return rows;
+    return ReadOn(connection, statement);
   }
-  const warned = (await ReadOn(connection, capture.warnings.list))
-    .map(
-      (warning) =>
-        new ServerWarning(
-          Number(warning.get("Code")),
-          String(warning.get("Message")),
-        ),
-    )
-    .find((warning) => capture.tooDeep(warning));
+  const rows = await ReadFailingCut(connection, statement, capture.warnings);
+  const warnings = await Warnings(connection, capture.warnings.list);
+  const cut = warnings.find((warning) => capture.cutAggregate(warning));
+  const warned = cut
+    ? new AggregateTooLarge(cut)
+    : warnings.find((warning) => capture.tooDeep(warning));
   if (warned) {
     await ReadOn(connection, capture.warnings.clear);
     throw warned;
