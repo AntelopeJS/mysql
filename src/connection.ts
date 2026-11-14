@@ -11,6 +11,7 @@ import { Logger } from "./logger";
 import { Bind, type Sql, sql } from "./statement";
 import { ANY_ENGINE, DIALECTS, type Dialect, DetectDialect } from "./dialect";
 import { DescribeConnectFailure } from "./connect-failure";
+import { CutBehind, WarnedFailure } from "./warnings";
 import {
   ClearOptions,
   type DialectSetting,
@@ -432,81 +433,20 @@ export async function ReleaseCapped(connection: PoolConnection): Promise<void> {
   connection.release();
 }
 
-/** A warning the server raised, as the error a statement that failed for it would have raised. */
-class ServerWarning extends Error {
-  constructor(
-    readonly errno: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
-
-/** A read whose aggregate the engine cut short at `max_allowed_packet`, so its answer is not whole. */
-class AggregateTooLarge extends Error {
-  constructor(warning: ServerWarning) {
-    super(
-      `MariaDB cut an aggregate of the read short at max_allowed_packet, so the read cannot answer whole; raise max_allowed_packet on the server (${warning.message}, errno ${warning.errno})`,
-    );
-  }
-}
-
-async function Warnings(
-  connection: PoolConnection,
-  listing: Sql,
-): Promise<ServerWarning[]> {
-  return (await ReadOn(connection, listing)).map(
-    (warning) =>
-      new ServerWarning(
-        Number(warning.get("Code")),
-        String(warning.get("Message")),
-      ),
-  );
-}
-
-/**
- * MariaDB lists a cut aggregate's warning beside the error a later read of its cut JSON raised, so
- * a server error is reported as the cut that caused it. A lost connection, a deadlock or a lock wait
- * keeps its own error.
- */
-async function ReadFailingCut(
-  connection: PoolConnection,
-  statement: Sql,
-  warnings: { readonly list: Sql; readonly clear: Sql },
-): Promise<Row[]> {
-  try {
-    return await ReadOn(connection, statement);
-  } catch (err) {
-    const { capture, errors } = GetDialect();
-    if (!(err instanceof Error) || errors.classify(err).kind !== "server") {
-      throw err;
-    }
-    const listed = await Warnings(connection, warnings.list).catch(() => []);
-    const cut = listed.find((warning) => capture.cutAggregate(warning));
-    if (!cut) {
-      throw err;
-    }
-    await ReadOn(connection, warnings.clear);
-    throw new AggregateTooLarge(cut);
-  }
-}
-
 async function ReadFailingTooDeep(
   connection: PoolConnection,
   statement: Sql,
 ): Promise<Row[]> {
-  const { capture } = GetDialect();
-  if (!capture.warnings) {
-    return ReadOn(connection, statement);
+  let rows: Row[];
+  try {
+    rows = await ReadOn(connection, statement);
+  } catch (err) {
+    throw err instanceof Error
+      ? await CutBehind(connection, GetDialect(), err)
+      : err;
   }
-  const rows = await ReadFailingCut(connection, statement, capture.warnings);
-  const warnings = await Warnings(connection, capture.warnings.list);
-  const cut = warnings.find((warning) => capture.cutAggregate(warning));
-  const warned = cut
-    ? new AggregateTooLarge(cut)
-    : warnings.find((warning) => capture.tooDeep(warning));
+  const warned = await WarnedFailure(connection, GetDialect());
   if (warned) {
-    await ReadOn(connection, capture.warnings.clear);
     throw warned;
   }
   return rows;

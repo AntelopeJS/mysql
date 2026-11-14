@@ -3,10 +3,12 @@ import { PoolConnection as CallbackPoolConnection } from "mysql2";
 
 import {
   AcquireUncapped,
+  GetDialect,
   ParseRow,
   type Row,
   ReleaseCapped,
 } from "../../connection";
+import { CutBehind, WarnedFailure } from "../../warnings";
 import { Bind, type Sql } from "../../statement";
 import { IsDocument } from "./guards";
 
@@ -78,6 +80,7 @@ export async function OpenRowStream(
     .stream({ highWaterMark: batchSize });
   let failure: Error | undefined;
   let isClosed = false;
+  let isSettled = false;
   stream.on("error", (err: Error) => {
     failure ??= err;
   });
@@ -93,6 +96,11 @@ export async function OpenRowStream(
       const row: unknown = stream.read();
       if (IsDocument(row)) {
         rows.push(ParseRow(Object.entries(row)));
+      } else if ((failure || stream.readableEnded) && !isSettled) {
+        isSettled = true;
+        failure = failure
+          ? await CutBehind(connection, GetDialect(), failure)
+          : await WarnedFailure(connection, GetDialect());
       } else if (failure) {
         throw failure;
       } else if (stream.readableEnded || stream.destroyed) {
