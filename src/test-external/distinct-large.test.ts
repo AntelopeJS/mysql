@@ -1,0 +1,115 @@
+import { expect } from "chai";
+import type { Schema } from "@antelopejs/interface-database/schema";
+
+import { GetDialect } from "../connection";
+import { param, sql } from "../statement";
+import { NativeWrite, RegisterSales, type SalesTables } from "./sales";
+
+/** The bytes of JSON text each document holds. */
+const DOCUMENT_BYTES = 400 * 1024;
+
+/** The longest a dedup may take per row it reads. */
+const MS_PER_ROW = 100;
+
+/** The runs a dedup gets to come in under its budget, since a busy host only adds to its time. */
+const ATTEMPTS = 3;
+
+/** How many times `part` and a comma fill {@link DOCUMENT_BYTES}. */
+function Fitting(part: string): number {
+  return Math.ceil(DOCUMENT_BYTES / (part.length + 1));
+}
+
+const KEYS = Array.from(
+  { length: Fitting('"k00000":12.0') },
+  (_, index) => `k${String(index).padStart(5, "0")}`,
+);
+const ELEMENTS = Fitting("12.0");
+const RECORDS = Fitting('{"a":12.0}');
+
+/**
+ * An array, an object and an array of objects, each of `12.0` spelled as another writer stores it,
+ * whose dedup respells every number nested in it.
+ */
+const DOCUMENTS = [
+  `[${Array.from({ length: ELEMENTS }, () => "12.0").join(",")}]`,
+  `{${KEYS.map((key) => `"${key}":12.0`).join(",")}}`,
+  `[${Array.from({ length: RECORDS }, () => '{"a":12.0}').join(",")}]`,
+];
+
+const EXPECTED = [
+  Array.from({ length: ELEMENTS }, () => 12),
+  Object.fromEntries(KEYS.map((key) => [key, 12])),
+  Array.from({ length: RECORDS }, () => ({ a: 12 })),
+];
+
+const CODES = "^jl";
+
+let sales: Schema<SalesTables>;
+
+function Large() {
+  return sales
+    .instance()
+    .table("w_accounts")
+    .filter((row) => row.key("code").match(CODES));
+}
+
+function Sorted(values: readonly unknown[] | undefined): unknown[] {
+  return [...(values ?? [])].sort((left, right) =>
+    JSON.stringify(left).localeCompare(JSON.stringify(right)),
+  );
+}
+
+/** The result of `run` and its fastest time over up to {@link ATTEMPTS} runs, stopping at one in budget. */
+async function Fastest<T>(run: () => Promise<T>): Promise<[T, number]> {
+  const budget = MS_PER_ROW * DOCUMENTS.length;
+  let [result, fastest] = await Timed(run);
+  for (let attempt = 1; attempt < ATTEMPTS && fastest >= budget; attempt++) {
+    const [next, ms] = await Timed(run);
+    result = next;
+    fastest = Math.min(fastest, ms);
+  }
+  return [result, fastest];
+}
+
+async function Timed<T>(run: () => Promise<T>): Promise<[T, number]> {
+  const started = performance.now();
+  const result = await run();
+  return [result, performance.now() - started];
+}
+
+describe("a dedup of large external JSON documents", function () {
+  this.timeout(120_000);
+
+  before(async () => {
+    sales = await RegisterSales();
+    await NativeWrite(sql`DELETE FROM sales.w_accounts WHERE code LIKE 'jl%'`);
+    for (const [index, text] of DOCUMENTS.entries()) {
+      await NativeWrite(
+        sql`INSERT INTO sales.w_accounts (code, raw) VALUES (${param(`jl${index}`)}, ${param(text)})`,
+      );
+    }
+  });
+
+  after(async () => {
+    await NativeWrite(sql`DELETE FROM sales.w_accounts WHERE code LIKE 'jl%'`);
+  });
+
+  it("keeps one value per document at the top in under 0.1 s a row", async () => {
+    const [values, ms] = await Fastest(() => Large().distinct("raw").run());
+    expect(Sorted(values)).to.deep.equal(Sorted(EXPECTED));
+    expect(ms).to.be.below(MS_PER_ROW * DOCUMENTS.length);
+  });
+
+  it("keeps one value per document in a group on MariaDB in under 0.1 s a row", async function () {
+    if (GetDialect().id !== "mariadb") {
+      this.skip();
+    }
+    const [groups, ms] = await Fastest(() =>
+      Large()
+        .group("status", (stream) => stream.distinct("raw"))
+        .run(),
+    );
+    expect(Sorted(groups[0])).to.deep.equal(Sorted(EXPECTED));
+    expect(ms).to.be.below(MS_PER_ROW * DOCUMENTS.length);
+  });
+});
