@@ -108,7 +108,7 @@ describe("a dedup of large external JSON documents", function () {
     await NativeWrite(sql`DELETE FROM sales.w_accounts WHERE code LIKE 'jl%'`);
   });
 
-  it("keeps one value per document at the top in under 0.1 s a row", async () => {
+  it("keeps one value per document at the top in under 0.15 s a row", async () => {
     const budget = MS_PER_ROW * DOCUMENTS.length;
     const [values, ms] = await Fastest(
       () => Large().distinct("raw").run(),
@@ -130,7 +130,7 @@ describe("a dedup of large external JSON documents", function () {
     expect(await SortBuffer()).to.equal(before);
   });
 
-  it("keeps one value per document in a group in under 0.1 s a read of a row", async () => {
+  it("keeps one value per document in a group in under 0.15 s a read of a row", async () => {
     const budget = MS_PER_ROW * DOCUMENTS.length * GROUP_READS;
     const [groups, ms] = await Fastest(
       () =>
