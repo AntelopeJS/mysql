@@ -3,6 +3,7 @@ import { PoolConnection as CallbackPoolConnection } from "mysql2";
 
 import {
   AcquireUncapped,
+  Discard,
   GetDialect,
   ParseRow,
   type Row,
@@ -224,7 +225,7 @@ export async function OpenRowStream(
       if (isClean && !attempt.failure && (await Restored(ladder))) {
         await ReleaseCapped(connection);
       } else {
-        connection.destroy();
+        Discard(connection);
         attempt.stream.destroy();
       }
     },
