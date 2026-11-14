@@ -328,6 +328,14 @@ function CanonicalNumber(value: Sql): Sql {
 }
 
 /**
+ * The least sort buffer a session keeps: the largest document the server stores. MySQL sorts a JSON
+ * column's whole value with each row, a `GROUP BY` that collects one included, and fails with
+ * `Out of sort memory` where one row outgrows the buffer. It allocates the buffer as a sort fills
+ * it, so a sort of small rows spends no more.
+ */
+const SORT_BUFFER = sql`sort_buffer_size = GREATEST(@@session.sort_buffer_size, @@max_allowed_packet)`;
+
+/**
  * MySQL 8.4 LTS and 9.7 LTS. MySQL 8.4's JSON parser reads some doubles of 17 significant digits as
  * a neighbour, and JSON text spells a negative zero `0`, so of the finite numbers only a safe
  * integer other than -0 survives the text; any other goes as a bound `DOUBLE`.
@@ -342,7 +350,7 @@ export const MYSQL: Flavour = {
   warnsTooDeep: false,
   heldNesting: 0,
   multiValuedIndex: true,
-  pinned: [],
+  pinned: [SORT_BUFFER],
   readTimeout: (ms) => sql`max_execution_time = ${int(ms)}`,
   uncapped: (statement) => statement,
   readTimeoutErrnos: [3024],

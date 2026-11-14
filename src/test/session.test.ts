@@ -42,8 +42,11 @@ function expectPinned(row: Row) {
 /** A sort buffer smaller than MariaDB's default, which a sort of the pinned length outgrows. */
 const SMALL_SORT_BUFFER = 262144;
 
-/** A sort buffer larger than the least the pin keeps, which the pin leaves as it is. */
-const LARGE_SORT_BUFFER = 8388608;
+/**
+ * A sort buffer larger than the least the pin keeps, which the pin leaves as it is: twice the
+ * largest `max_allowed_packet`, the least of MySQL's pin.
+ */
+const LARGE_SORT_BUFFER = 2147483648;
 
 /** The most texts one sort reads by in the sort buffer the MariaDB pin keeps. */
 const SORT_TEXTS = 8;
