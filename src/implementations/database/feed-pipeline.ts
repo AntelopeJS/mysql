@@ -149,7 +149,7 @@ function CompileSide(
     value,
     origin,
   );
-  return ApplyStages(relation, stages, context);
+  return context.overOuterRow(() => ApplyStages(relation, stages, context));
 }
 
 /**
