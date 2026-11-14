@@ -48,6 +48,27 @@ export interface PollRequest {
 }
 
 /**
+ * The statements that `list` the session's warnings, `clear` them and `count` them. A warning
+ * `list` answers counts as {@link CaptureSyntax.tooDeep} or {@link CaptureSyntax.cutAggregate} by
+ * its `Code` as an `errno`. The engine keeps a warning listed through every later statement that
+ * reads no table, so `clear` reads one that every account can read, and `count` answers the last
+ * statement's warnings and errors under `warnings`.
+ */
+interface WarningsSyntax {
+  readonly list: Sql;
+  readonly clear: Sql;
+  readonly count: Sql;
+  /**
+   * The statement a cursor streams for `statement`, which fails at its first row, before the
+   * server sends any, where computing its rows raised more than `tolerated` warnings, and answers
+   * every row of `statement` in its order otherwise, with one column more that no decoder reads.
+   */
+  checked(statement: Sql, tolerated: number): Sql;
+  /** Whether a statement {@link WarningsSyntax.checked} wrote may have failed at that check. */
+  checkFailed(error: Error): boolean;
+}
+
+/**
  * Change capture: the log's objects, the triggers that fill it, the sequencer that numbers it, the
  * feed's read of it and the reaper's delete. The log's shape is the same on every engine; what is
  * spelled here is how an engine writes, locks and reads it.
@@ -90,18 +111,11 @@ export interface CaptureSyntax {
    */
   cutAggregate(error: Error): boolean;
   /**
-   * The statement listing the warnings of the session's last statement, on an engine that answers
-   * SQL NULL for a JSON document nested deeper than it allows rather than failing; `undefined`
-   * where such a statement fails. A warning it lists counts as {@link CaptureSyntax.tooDeep} by its
-   * `Code` as an `errno`.
-   /**
-   * On an engine that answers SQL NULL for a JSON document nested deeper than it allows rather than
-   * failing, the statements that `list` the session's warnings and `clear` them; `undefined` where
-   * such a statement fails. A warning `list` answers counts as {@link CaptureSyntax.tooDeep} by its
-   * `Code` as an `errno`. The engine keeps a warning listed through every later statement that reads
-   * no table, so `clear` reads one that every account can read.
+   * How a read learns the warnings of its statement, on an engine that answers SQL NULL for a JSON
+   * document nested deeper than it allows rather than failing; `undefined` where such a statement
+   * fails.
    */
-  readonly warnings?: { readonly list: Sql; readonly clear: Sql };
+  readonly warnings?: WarningsSyntax;
   /** Holds a table against every other session, so no write runs while its triggers change. */
   lockTable(table: string): Sql;
   readonly unlockTables: Sql;

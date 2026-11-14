@@ -64,6 +64,25 @@ async function Clear(connection: PoolConnection, clear: Sql): Promise<void> {
   await connection.execute(bound.sql, [...bound.args]);
 }
 
+/** The warnings a read fails on that MariaDB listed for the session's last statement, cleared where it listed one. */
+async function Listed(
+  connection: PoolConnection,
+  capture: Dialect["capture"],
+  warnings: NonNullable<Dialect["capture"]["warnings"]>,
+): Promise<{
+  readonly cut: ServerWarning | undefined;
+  readonly deep: ServerWarning | undefined;
+  readonly listed: readonly ServerWarning[];
+}> {
+  const listed = await Warnings(connection, warnings.list).catch(() => []);
+  const cut = listed.find((warning) => capture.cutAggregate(warning));
+  const deep = listed.find((warning) => capture.tooDeep(warning));
+  if (cut || deep) {
+    await Clear(connection, warnings.clear);
+  }
+  return { cut, deep, listed };
+}
+
 /**
  * The error the statement that just failed on `connection` with `failure` stands for. MariaDB lists
  * a cut aggregate's warning beside the error a later read of its cut JSON raised, so a server error
@@ -85,14 +104,64 @@ export async function CutBehind(
   if (!capture.warnings || kind !== "server") {
     return failure;
   }
-  const listed = await Warnings(connection, capture.warnings.list).catch(
-    () => [],
-  );
-  const cut = listed.find((warning) => capture.cutAggregate(warning));
-  if (cut || listed.some((warning) => capture.tooDeep(warning))) {
-    await Clear(connection, capture.warnings.clear);
-  }
+  const { cut } = await Listed(connection, capture, capture.warnings);
   return cut ? new AggregateTooLarge(cut) : failure;
+}
+
+/** A cursor whose statement raised more warnings than MariaDB lists, so none of them can be read as harmless. */
+class UnlistedWarnings extends Error {
+  constructor(listed: number, raised: number) {
+    super(
+      `MariaDB raised ${raised} warnings computing the cursor's rows but lists only ${listed} (max_error_count), so the cursor cannot tell whether one is a cut aggregate or a document nested too deep`,
+    );
+  }
+}
+
+/** A row of the engine's warning count, read only through the column it names. */
+interface CountedWarnings extends RowDataPacket {
+  readonly warnings: unknown;
+}
+
+/**
+ * What a cursor's statement that `checked` wrote, which just failed on `connection` with
+ * `failure`, stands for. A failure at its check is the cut aggregate or the too-deep document
+ * MariaDB listed, or, where it listed neither, how many warnings the statement raised, which a
+ * second run of it tolerates. Where MariaDB lists fewer warnings than it raised, an unlisted one
+ * may be either, so the cursor fails. Any other failure is what {@link CutBehind} reports.
+ */
+export async function CheckedBehind(
+  connection: PoolConnection,
+  dialect: Dialect,
+  failure: Error,
+): Promise<Error | number> {
+  const warnings = dialect.capture.warnings;
+  if (!warnings?.checkFailed(failure)) {
+    return CutBehind(connection, dialect, failure);
+  }
+  const { cut, deep, listed } = await Listed(
+    connection,
+    dialect.capture,
+    warnings,
+  );
+  if (cut) {
+    return new AggregateTooLarge(cut);
+  }
+  if (deep) {
+    return deep;
+  }
+  const bound = Bind(warnings.count);
+  const [counted] = await connection.execute<CountedWarnings[]>(bound.sql, [
+    ...bound.args,
+  ]);
+  const raised = Number(counted[0]?.warnings);
+  if (!Number.isSafeInteger(raised) || raised <= 1) {
+    return failure;
+  }
+  const tolerated = raised - 1;
+  const harmless = listed.filter((warning) => !warnings.checkFailed(warning));
+  return harmless.length < tolerated
+    ? new UnlistedWarnings(harmless.length, tolerated)
+    : tolerated;
 }
 
 /**
