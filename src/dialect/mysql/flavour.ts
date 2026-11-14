@@ -192,28 +192,45 @@ const NO_SPELLED_ZERO = [
  */
 const NEXT_SPELLED_ZERO = String.raw`\G((?:${NO_SPELLED_ZERO})*+)-?(0)${ZERO_REST}`;
 
+/** The parts of JSON text that hold no integer spelled with a fraction of zeros, such as `1.0`. */
+const NO_ZERO_FRACTION = [
+  String.raw`[^"0-9-]++`,
+  String.raw`"(?:[^"\\]++|\\.)*+"`,
+  String.raw`-?[0-9]++(?:\.[0-9]++)?[eE][-+]?[0-9]++`,
+  String.raw`-?[0-9]++\.0*+[1-9][0-9]*+`,
+  String.raw`-?[0-9]++(?![.eE])`,
+].join("|");
+
 /**
- * JSON text with each zero spelled `0`, a nested one included, so a value spells the same text as
- * another with a zero of another sign or type where `DISTINCT` finds the two equal. `sigil` is what
- * the engine's replacement puts before a group's number. SQL NULL stays SQL NULL.
+ * The next integer of JSON text spelled with a fraction of zeros and no exponent: the text before it
+ * in group 1 and its integer part in group 2, read as {@link NEXT_SPELLED_ZERO} reads a zero.
  */
-export function UnsignedZeros(text: Sql, sigil: "$" | "\\"): Sql {
-  return sql`REGEXP_REPLACE(${text}, ${lit(NEXT_SPELLED_ZERO)}, ${lit(`${sigil}1${sigil}2`)})`;
+const NEXT_ZERO_FRACTION = String.raw`\G((?:${NO_ZERO_FRACTION})*+)(-?[0-9]++)\.0++(?![0-9eE])`;
+
+/**
+ * JSON text with each zero spelled `0` and each integer's fraction of zeros dropped, a nested one
+ * included, so a value spells the same text as another with a number spelled `1.0` rather than `1`,
+ * or a zero of another sign or type, where `DISTINCT` finds the two equal. `sigil` is what the
+ * engine's replacement puts before a group's number. SQL NULL stays SQL NULL.
+ */
+export function RespelledNumbers(text: Sql, sigil: "$" | "\\"): Sql {
+  const groups = lit(`${sigil}1${sigil}2`);
+  return sql`REGEXP_REPLACE(REGEXP_REPLACE(${text}, ${lit(NEXT_SPELLED_ZERO)}, ${groups}), ${lit(NEXT_ZERO_FRACTION)}, ${groups})`;
 }
 
 /**
  * The most characters of JSON text whose zeros a dedup key respells. MySQL stops a regular expression
- * at `regexp_time_limit`, which {@link UnsignedZeros} reaches at the default near 63,000 characters
+ * at `regexp_time_limit`, which {@link RespelledNumbers} reaches at the default near 63,000 characters
  * of an array of one-digit numbers, the text with the most parts per character.
  */
 const MAX_RESPELLED_CHARS = 32768;
 
 /**
- * The key a dedup gives a value's JSON text: the text with each zero spelled `0`. Longer text keeps
- * its own spelling, so two such values that differ only in a zero's spelling stay apart.
+ * The key a dedup gives a value's JSON text: its {@link RespelledNumbers}. Longer text keeps its own
+ * spelling, so two such values that differ only in a number's spelling stay apart.
  */
 function DedupKey(text: Sql): Sql {
-  return sql`(CASE WHEN CHAR_LENGTH(${text}) <= ${int(MAX_RESPELLED_CHARS)} THEN ${UnsignedZeros(text, "$")} ELSE ${text} END)`;
+  return sql`(CASE WHEN CHAR_LENGTH(${text}) <= ${int(MAX_RESPELLED_CHARS)} THEN ${RespelledNumbers(text, "$")} ELSE ${text} END)`;
 }
 
 /**
