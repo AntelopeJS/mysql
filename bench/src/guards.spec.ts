@@ -2,7 +2,13 @@ import { expect } from "chai";
 
 import type { BenchRecord, EngineRecord, RoundRecord } from "./record";
 import { IsBenchRecord } from "./record";
-import type { CaseTimings, MeasureOutput, SeedOutput } from "./results";
+import type {
+  CaptureOutput,
+  CaseTimings,
+  MeasureOutput,
+  RunOutput,
+  SeedOutput,
+} from "./results";
 import { IsRunOutput } from "./results";
 
 const SEED: SeedOutput = {
@@ -21,10 +27,18 @@ const TIMINGS: CaseTimings = {
   wrongRuns: 0,
 };
 
+const FAILED: CaseTimings = { ...TIMINGS, error: "boom" };
+
 const MEASURE: MeasureOutput = {
   mode: "measure",
   backend: "mysql",
-  cases: [TIMINGS],
+  cases: [TIMINGS, FAILED],
+};
+
+const CAPTURE: CaptureOutput = {
+  mode: "capture",
+  backend: "postgres",
+  cases: [{ id: "x", runs: 2, startedAt: 1, endedAt: 2, error: "boom" }],
 };
 
 const ENGINE: EngineRecord = {
@@ -50,7 +64,7 @@ const ROUND: RoundRecord = {
   engine: "mariadb-11.8",
   loadAverage: "0.10",
   containers: ["mariadb"],
-  cases: [TIMINGS],
+  cases: [TIMINGS, FAILED],
   base: false,
 };
 
@@ -82,27 +96,66 @@ const RECORD: BenchRecord = {
 
 const UNTIMED = { id: "x", answer: [], expected: [], wrongRuns: 0 };
 
+type Json =
+  | null
+  | boolean
+  | number
+  | string
+  | readonly Json[]
+  | { readonly [key: string]: Json };
+
+/**
+ * The JSON of `value` once per value it holds, with that one value written as `null`, named by its
+ * key: a guard that skips a field or an element accepts the copy that nulls it.
+ */
+function EachNulled(
+  value: RunOutput | BenchRecord,
+): (readonly [string, string])[] {
+  const keys: string[] = [];
+  JSON.stringify(value, (key: string, field: Json): Json => {
+    keys.push(key);
+    return field;
+  });
+  return keys.slice(1).map((key, index) => {
+    let seen = 0;
+    const json = JSON.stringify(value, (_key: string, field: Json): Json => {
+      seen += 1;
+      return seen === index + 2 ? null : field;
+    });
+    return [`"${key}" (value ${index + 1})`, json] as const;
+  });
+}
+
 describe("bench JSON guards", () => {
+  const written = { ...RECORD, baseRevision: "abc1234" };
+
   it("accepts each run output and a record as the bench writes them", () => {
-    const capture = {
-      mode: "capture",
-      backend: "postgres",
-      cases: [{ id: "x", runs: 2, startedAt: 1, endedAt: 2, error: "boom" }],
-    };
-    expect([SEED, MEASURE, capture].map(IsRunOutput)).to.deep.equal([
+    expect([SEED, MEASURE, CAPTURE].map(IsRunOutput)).to.deep.equal([
       true,
       true,
       true,
     ]);
-    const written: unknown = JSON.parse(
-      JSON.stringify({ ...RECORD, baseRevision: "abc1234" }),
-    );
-    expect([RECORD, written].map(IsBenchRecord)).to.deep.equal([true, true]);
+    const parsed: unknown = JSON.parse(JSON.stringify(written));
+    expect([RECORD, parsed].map(IsBenchRecord)).to.deep.equal([true, true]);
   });
 
+  for (const output of [SEED, MEASURE, CAPTURE]) {
+    for (const [name, json] of EachNulled(output)) {
+      it(`refuses a ${output.mode} output with a null ${name}`, () => {
+        const parsed: unknown = JSON.parse(json);
+        expect(IsRunOutput(parsed)).to.equal(false);
+      });
+    }
+  }
+
+  for (const [name, json] of EachNulled(written)) {
+    it(`refuses a record with a null ${name}`, () => {
+      const parsed: unknown = JSON.parse(json);
+      expect(IsBenchRecord(parsed)).to.equal(false);
+    });
+  }
+
   const runOutputs = {
-    "a seed with a null fillMs": { ...SEED, fillMs: null },
-    "a seed whose fillMs holds a string": { ...SEED, fillMs: { books: "1" } },
     "a measured case without timings": {
       ...MEASURE,
       cases: [UNTIMED],
@@ -112,11 +165,11 @@ describe("bench JSON guards", () => {
       cases: [{ ...TIMINGS, timings: ["1.5"] }],
     },
     "a captured case without its window": {
-      mode: "capture",
-      backend: "mysql",
+      ...CAPTURE,
       cases: [{ id: "x", runs: 2 }],
     },
     "an unknown backend": { ...MEASURE, backend: "sqlite" },
+    "a seed whose fillMs holds a string": { ...SEED, fillMs: { books: "1" } },
   };
   for (const [name, value] of Object.entries(runOutputs)) {
     it(`refuses as run output ${name}`, () => {
@@ -125,10 +178,6 @@ describe("bench JSON guards", () => {
   }
 
   const records = {
-    "an engine seed with a null fillMs": {
-      ...RECORD,
-      engines: [{ ...ENGINE, seed: { ...SEED, fillMs: null } }],
-    },
     "a round case without timings": {
       ...RECORD,
       rounds: [{ ...ROUND, cases: [UNTIMED] }],
@@ -145,24 +194,22 @@ describe("bench JSON guards", () => {
       ...RECORD,
       rounds: [{ ...ROUND, engine: "sqlite-3" }],
     },
-    "a plan statement without its plan": {
+    "a case of an unknown kind": {
       ...RECORD,
-      engines: [
-        {
-          ...ENGINE,
-          plans: [{ ...ENGINE.plans[0], statements: [{ text: "SELECT 1" }] }],
-        },
-      ],
+      cases: [{ ...RECORD.cases[0], kind: "scan" }],
     },
     "a case on an unknown field": {
       ...RECORD,
       cases: [{ ...RECORD.cases[0], field: "author" }],
     },
+    "a case in an unknown form": {
+      ...RECORD,
+      cases: [{ ...RECORD.cases[0], form: "raw" }],
+    },
     "a missing setting": {
       ...RECORD,
       settings: { rows: 1000, rounds: 3, budgetMs: 1000, captureRuns: 2 },
     },
-    "a numeric base revision": { ...RECORD, baseRevision: 7 },
   };
   for (const [name, value] of Object.entries(records)) {
     it(`refuses as a record ${name}`, () => {
