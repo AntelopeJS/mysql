@@ -91,7 +91,7 @@ export function Walked(
   const type = CurrentValue(relation).type;
   const origin = relation.origin;
   const ordered = relation.orderBy.length > 0;
-  const { single, absent } = relation;
+  const { single, absent, readsOuterRow } = relation;
   const collected = CollectedInPlace(
     relation,
     inPlace,
@@ -103,6 +103,7 @@ export function Walked(
   walked.origin = origin;
   walked.single = single;
   walked.absent = absent;
+  walked.readsOuterRow = readsOuterRow;
   if (ordered) {
     walked.orderBy = [{ sql: numbered.rowNumber, descending: false }];
   }
@@ -164,7 +165,10 @@ export function Prepare(
   if (!HasFlag(relation, blockedBy)) {
     return relation;
   }
-  const inPlace = InPlaceFor(context, context.readsOuterRow);
+  const inPlace = InPlaceFor(
+    context,
+    context.readsOuterRow || relation.readsOuterRow === true,
+  );
   if (inPlace) {
     const bounded = BoundedInPlace(relation, inPlace, context);
     return HasFlag(bounded, blockedBy)
