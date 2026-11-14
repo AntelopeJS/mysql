@@ -6,7 +6,7 @@ import { NativeWrite, RegisterSales, type SalesTables } from "./sales";
 
 /**
  * Spellings of 0, 1, 1.5, 1e19, 1e20, the greatest double below 2^64, 2^64 and 2^64 - 1, 1e35, 2e35, the greatest double and a 1 nested in an array or an
- * object another writer stores in a JSON column: MySQL parses text into integers and doubles and
+ * object, and a 1 with an exponent nested in an array, another writer stores in a JSON column: MySQL parses text into integers and doubles and
  * keeps an SQL decimal as a decimal, MariaDB keeps each one's text.
  */
 const SPELLINGS = sql`INSERT INTO sales.w_accounts (code, raw) VALUES
@@ -22,7 +22,8 @@ const SPELLINGS = sql`INSERT INTO sales.w_accounts (code, raw) VALUES
   ('jn24', '1e19'), ('jn25', '10000000000000000000'),
   ('jn26', JSON_EXTRACT(JSON_ARRAY(10000000000000000000.0), '$[0]')),
   ('jn27', '18446744073709549568e0'), ('jn28', '18446744073709550000'),
-  ('jn29', '1.8446744073709552e19'), ('jn30', '18446744073709551615')`;
+  ('jn29', '1.8446744073709552e19'), ('jn30', '18446744073709551615'),
+  ('jn31', '[1e0]'), ('jn32', '[10e-1]')`;
 
 const EXPECTED = [
   Sorted([
