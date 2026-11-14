@@ -80,6 +80,15 @@ describe("SetOptions on integer options", () => {
     );
   });
 
+  it("accepts a statementTimeoutMs of one year, MariaDB's max_statement_time ceiling, and refuses one millisecond more", () => {
+    WithOptions({ statementTimeoutMs: 31_536_000_000 }, () => {
+      expect(GetOptions().statementTimeoutMs).to.equal(31_536_000_000);
+    });
+    expect(() => SetOptions({ statementTimeoutMs: 31_536_000_001 })).to.throw(
+      "statementTimeoutMs must be at most 31536000000, received 31536000001",
+    );
+  });
+
   it("defaults maxOpenCursors to half of pool.connectionLimit, and to one at the least", () => {
     const defaults = [
       [1, 1],

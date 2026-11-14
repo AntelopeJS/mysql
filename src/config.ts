@@ -107,7 +107,8 @@ export interface Options {
   maxOpenCursors?: number;
   /**
    * Read timeout applied to every pooled connection, as `max_execution_time`, which MySQL applies to
-   * `SELECT` statements only. Unset or 0 leaves reads unbounded.
+   * `SELECT` statements only. Unset or 0 leaves reads unbounded. At most 31536000000, one year,
+   * since MariaDB refuses a longer `max_statement_time`.
    */
   statementTimeoutMs?: number;
   /**
@@ -174,6 +175,8 @@ const DEFAULT_CHANGE_POLL_INTERVAL_MS = 100;
 
 const SMALLEST_POSITIVE_INTEGER = 1;
 const SMALLEST_TIMEOUT = 0;
+/** MariaDB's ceiling on `max_statement_time`, 31,536,000 seconds, in milliseconds. */
+const LONGEST_STATEMENT_TIMEOUT_MS = 31_536_000_000;
 
 const NOT_CONFIGURED = `${ANY_ENGINE} adapter is not configured: construct() has not run yet`;
 
@@ -190,6 +193,7 @@ function SafeInteger(
   supplied: number | undefined,
   fallback: number,
   minimum = SMALLEST_POSITIVE_INTEGER,
+  maximum = Number.MAX_SAFE_INTEGER,
 ): number {
   if (supplied === undefined) {
     return fallback;
@@ -198,6 +202,11 @@ function SafeInteger(
     const kind = minimum === SMALLEST_TIMEOUT ? "non-negative" : "positive";
     throw new Error(
       `${option} must be a ${kind} safe integer, received ${String(supplied)}`,
+    );
+  }
+  if (supplied > maximum) {
+    throw new Error(
+      `${option} must be at most ${String(maximum)}, received ${String(supplied)}`,
     );
   }
   return supplied;
@@ -300,6 +309,7 @@ export function SetOptions(options?: Options): ResolvedOptions {
             options.statementTimeoutMs,
             SMALLEST_TIMEOUT,
             SMALLEST_TIMEOUT,
+            LONGEST_STATEMENT_TIMEOUT_MS,
           ),
     changeRetentionMs: SafeInteger(
       "changeRetentionMs",
