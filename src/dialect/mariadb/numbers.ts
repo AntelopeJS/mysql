@@ -7,13 +7,14 @@ import { BINARY_COLLATION, Json } from "./json-text";
  * and any other pair where `JSON_EQUALS` holds, an object whatever its key order. `JSON_EQUALS`
  * compares numbers by their exact decimal values, so it finds `0.1` unequal to
  * `0.10000000000000001` and `18446744073709549568e0` equal to `18446744073709549568`, which MySQL,
- * reading each as a double or an integer, does not. Two numbers whose texts are {@link Short} hold at
- * most 15 significant digits, which tell doubles apart, so `JSON_EQUALS` answers for them. `JSON_EQUALS` is
+ * reading each as a double or an integer, does not. Two {@link Short} numbers hold at most 15
+ * significant digits, which tell normal doubles apart, so `JSON_EQUALS` answers for them. `JSON_EQUALS` is
  * compared with 1 rather than read as a truth, which MariaDB 11.8 and 12.3 take to hold where it is
  * SQL NULL, in a `WHERE` and a `CASE` alike.
  */
 export function JsonEquals(left: Sql, right: Sql): Sql {
-  return sql`(CASE WHEN ${IsNumber(left)} AND ${IsNumber(right)} AND NOT (${Short(left)} AND ${Short(right)}) THEN ${NumberKey(left)} = ${NumberKey(right)} ELSE JSON_EQUALS(${left}, ${right}) = 1 END)`;
+  const equals = sql`JSON_EQUALS(${left}, ${right}) = 1`;
+  return sql`(CASE WHEN NOT (${IsNumber(left)} AND ${IsNumber(right)}) THEN ${equals} WHEN ${Short(left)} AND ${Short(right)} THEN ${equals} ELSE ${NumberKey(left)} = ${NumberKey(right)} END)`;
 }
 
 /**
@@ -81,9 +82,15 @@ function IsNumber(value: Sql): Sql {
 /** The most characters of a number's text that hold at most 15 significant digits. */
 const SHORT_TEXT = 15;
 
-/** Whether a value's text is {@link SHORT_TEXT} characters or fewer. */
+/** The least normal double, below which two numbers of 15 significant digits can be one double. */
+const LEAST_NORMAL = sql`2.2250738585072014e-308`;
+
+/**
+ * Whether a number's text is {@link SHORT_TEXT} characters or fewer and it is a normal double or
+ * a zero spelled without a nonzero digit, as `1e-400` is not.
+ */
 function Short(value: Sql): Sql {
-  return sql`CHAR_LENGTH(${value}) <= ${int(SHORT_TEXT)}`;
+  return sql`(CHAR_LENGTH(${value}) <= ${int(SHORT_TEXT)} AND (ABS(CAST(JSON_VALUE(${value}, '$') AS DOUBLE)) >= ${LEAST_NORMAL} OR ${value} NOT REGEXP '[1-9]'))`;
 }
 
 /**

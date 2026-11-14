@@ -123,15 +123,20 @@ function KindTagged(value: Sql): Sql {
 /** 2^53, the least magnitude of two numbers one double holds and equality tells apart. */
 const SAFE_BOUND = sql`9007199254740992e0`;
 
+/** 2^64, the double every integer from just below it up to 2^64 - 1 is held by. */
+const UNSIGNED_BOUND = sql`18446744073709551616e0`;
+
 /**
- * The exact value of a number from 2^53 in magnitude whose dedup key is an integer's digits, and 0
- * for any other value: two numbers one double holds and equality tells apart, as
- * `9007199254740993` and `9007199254740992e0`, are both such integers, which MySQL orders by their
- * exact values.
+ * The exact value of a number from 2^53 to 2^64 in magnitude: an integer's digits where its dedup
+ * key is them, and otherwise the shortest decimal of its double, as MySQL compares an integer with a
+ * double; 0 for any other value. Two numbers one double holds and equality tells apart, as
+ * `9007199254740993` and `9007199254740992e0`, or `18446744073709551615` and `1.8446744073709552e19`,
+ * are ordered by these values.
  */
 function ExactInteger(flavour: Flavour, value: Sql): Sql {
   const key = flavour.canonicalNumber(value);
-  return sql`(CASE WHEN NOT ${Is(value, ["number"])} THEN 0 WHEN ABS(CAST(${value} AS DOUBLE)) < ${SAFE_BOUND} THEN 0 WHEN ${key} REGEXP '^-?[0-9]{1,20}$' THEN CAST(${key} AS DECIMAL(65, 0)) ELSE 0 END)`;
+  const double = sql`CAST(${value} AS DOUBLE)`;
+  return sql`(CASE WHEN NOT ${Is(value, ["number"])} THEN 0 WHEN ABS(${double}) < ${SAFE_BOUND} OR ABS(${double}) > ${UNSIGNED_BOUND} THEN 0 WHEN ${key} REGEXP '^-?[0-9]{1,20}$' THEN CAST(${key} AS DECIMAL(65, 0)) ELSE CAST(${double} AS DECIMAL(65, 0)) END)`;
 }
 
 /**
