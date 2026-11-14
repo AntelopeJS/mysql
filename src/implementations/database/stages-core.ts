@@ -75,7 +75,9 @@ const ObjIndexStage: StageHandler = (state, stage, context) => ({
  * `Defaulted`: this default is an alternative value, not one of the column's type.
  */
 const DefaultStage = Lift((value, args, _stage, context) =>
-  WithDefault(context.dialect, value, args[FIRST_OPERAND]),
+  WithDefault(context.dialect, value, args[FIRST_OPERAND], () =>
+    context.nextAlias(),
+  ),
 );
 
 /**
