@@ -185,8 +185,8 @@ const DEEP_ROWS = [
 ] as const;
 
 /**
- * Rows of `deep` that spell `é` escaped twice the same way at `JSON_DEPTH` 32 and deeper. MariaDB
- * 11.8 holds only the first.
+ * Rows of `deep` that spell `é` escaped twice the same way at `JSON_DEPTH` 32 and deeper, which
+ * MariaDB 11.8 cannot hold or list.
  */
 const DEEP_TWICE_ROWS = [
   {
@@ -212,11 +212,8 @@ function Levels(value: Nest | undefined): number {
   return JSON.stringify(value).split('{"n":').length - 1;
 }
 
-/**
- * `rows` stored in `deep` and each merged with `{k: "1"}`, the row itself as the left operand,
- * with `tree` as the number of objects it nests.
- */
-async function MergedDeep(rows: readonly DeepRow[]): Promise<unknown[]> {
+/** Stores `rows` in `deep`. */
+async function StoreDeep(rows: readonly DeepRow[]): Promise<void> {
   const deep = schema.instance(DEEP_INSTANCE).table("deep");
   const table = ident(PhysicalTable(SCHEMA_ID, "deep"));
   await deep.insert(rows.map(({ _id }) => ({ _id }))).run();
@@ -225,6 +222,15 @@ async function MergedDeep(rows: readonly DeepRow[]): Promise<unknown[]> {
       sql`UPDATE ${table} SET ${ident("tree")} = ${param(JSON.stringify(Tree(levels)))}, ${ident("_extra")} = ${param(extra)} WHERE ${ident("_id")} = ${param(_id)}`,
     );
   }
+}
+
+/**
+ * `rows` stored in `deep` and each merged with `{k: "1"}`, the row itself as the left operand,
+ * with `tree` as the number of objects it nests.
+ */
+async function MergedDeep(rows: readonly DeepRow[]): Promise<unknown[]> {
+  await StoreDeep(rows);
+  const deep = schema.instance(DEEP_INSTANCE).table("deep");
   const merged = await deep
     .getAll(rows.map(({ _id }) => _id))
     .orderBy("_id")
@@ -420,25 +426,28 @@ describe("a merge operand that spells a key escaped and nests deep", function ()
     expect(await MergedDeep(DEEP_ROWS)).to.deep.equal(KeptLast(DEEP_ROWS));
   });
 
-  it("keeps the last member where the operand spells the key twice at JSON_DEPTH 32 or more, and MariaDB 11.8 refuses it as too deep", async () => {
+  it("keeps the last member where the operand spells the key twice at JSON_DEPTH 32 or more", async function () {
     const [version] = await Read(sql`SELECT VERSION() AS v`);
-    const nests31 = String(version?.get("v")).startsWith("11.8.");
-    const rows = nests31 ? DEEP_TWICE_ROWS.slice(0, 1) : DEEP_TWICE_ROWS;
-    const merged = await MergedDeep(rows).catch((err: unknown) => ({
-      errno: err instanceof Error && "errno" in err ? err.errno : err,
-    }));
-    expect(merged).to.deep.equal(nests31 ? { errno: 4040 } : KeptLast(rows));
+    if (String(version?.get("v")).startsWith("11.8.")) {
+      this.skip();
+    }
+    expect(await MergedDeep(DEEP_TWICE_ROWS)).to.deep.equal(
+      KeptLast(DEEP_TWICE_ROWS),
+    );
   });
 
-  it("deletes no row a filter on such a merge does not match", async () => {
+  it("deletes no row a filter on such a merge does not match, and leaves no warning behind", async () => {
+    await StoreDeep([{ ...DEEP_TWICE_ROWS[0], _id: "deleteFiltered" }]);
     const deep = schema.instance(DEEP_INSTANCE).table("deep");
     await deep
       .filter((row) => row.merge({ k: "1" }).key("k").eq("1").not())
       .delete()
-      .run()
-      .catch(() => undefined);
-    expect((await deep.orderBy("_id").run()).map(({ _id }) => _id)).to.include(
-      "depth32Twice",
-    );
+      .run();
+    const [answer] = await Read(sql`SELECT 1 AS one`);
+    const kept = await deep.get("deleteFiltered").run();
+    expect({ one: Number(answer?.get("one")), kept: kept?._id }).to.deep.equal({
+      one: 1,
+      kept: "deleteFiltered",
+    });
   });
 });

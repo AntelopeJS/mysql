@@ -16,11 +16,7 @@ import {
   Holdable,
   type MemberPath,
 } from "./flavour";
-import {
-  LastMembers,
-  EscapesOrRepeatsKey,
-  ListsMembers,
-} from "./sql-last-members";
+import { LastMembers, EscapesOrRepeatsKey, Listable } from "./sql-last-members";
 import { IsoText, ParseInstant } from "./sql-time";
 
 /** What `JSON_TYPE` answers for each kind; a JSON number has four. */
@@ -383,10 +379,9 @@ function ShallowMerge(
     HeldRead(flavour, alias, side),
   );
   const keyed = KeyedMerge(leftSide, rightSide, alias);
-  const listed = (memberKeys: (object: Sql) => Sql) =>
-    sql`(${EscapesOrRepeatsKey(flavour, leftSide, `${alias}_a`)} OR ${EscapesOrRepeatsKey(flavour, rightSide, `${alias}_b`)}) AND ${ListsMembers(memberKeys, leftSide, rightSide)}`;
+  const listable = sql`${Listable(flavour, leftSide)} AND ${Listable(flavour, rightSide)} AND (${EscapesOrRepeatsKey(flavour, leftSide, `${alias}_a`)} OR ${EscapesOrRepeatsKey(flavour, rightSide, `${alias}_b`)})`;
   const merged = flavour.memberKeys
-    ? sql`(CASE WHEN ${listed(flavour.memberKeys)} THEN ${LastMembers(flavour, flavour.memberKeys, leftSide, rightSide, alias)} ELSE ${keyed} END)`
+    ? sql`(CASE WHEN ${listable} THEN ${LastMembers(flavour, flavour.memberKeys, leftSide, rightSide, alias)} ELSE ${keyed} END)`
     : keyed;
   const bothObjects = sql`${Is(leftSide, ["object"])} AND ${Is(rightSide, ["object"])}`;
   return sql`(SELECT CASE WHEN ${bothObjects} THEN ${merged} END FROM ${flavour.hold(sides)} AS ${ident(alias)})`;

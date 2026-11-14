@@ -1,4 +1,4 @@
-import { type Sql, ident, sql } from "../../statement";
+import { type Sql, ident, int, sql } from "../../statement";
 import type { Flavour } from "./flavour";
 
 const ORDINAL = ident("ord");
@@ -35,24 +35,17 @@ function SpellsEachKeyOnce(object: Sql): Sql {
 }
 
 /**
- * The key of each member of an object in order. An object that spells each key once takes them
- * from `JSON_KEYS`, which nests no deeper at any depth; any other from {@link Flavour.memberKeys}.
+ * Whether the members of an object can be listed: those of an object that spells each key once
+ * come from `JSON_KEYS`, which nests no deeper at any depth, and the others from
+ * {@link Flavour.memberKeys}, up to its depth unless {@link Flavour.listsDeeper} holds.
  */
-function MemberKeys(memberKeys: (object: Sql) => Sql, object: Sql): Sql {
-  return sql`IF(${SpellsEachKeyOnce(object)}, JSON_KEYS(${object}), ${memberKeys(object)})`;
+export function Listable(flavour: Flavour, object: Sql): Sql {
+  const deeper = flavour.listsDeeper ? sql` OR ${flavour.listsDeeper}` : sql``;
+  return sql`(${SpellsEachKeyOnce(object)} OR JSON_DEPTH(${object}) <= ${int(flavour.maxJsonNesting)}${deeper})`;
 }
 
-/**
- * Whether the engine lists the members of both objects. Where one nests too deep to list, the
- * listing answers SQL NULL with a {@link Flavour.tooDeepErrno} warning, and {@link LastMembers}
- * would answer `{}` to a statement that never reads its warnings.
- */
-export function ListsMembers(
-  memberKeys: (object: Sql) => Sql,
-  leftSide: Sql,
-  rightSide: Sql,
-): Sql {
-  return sql`(${MemberKeys(memberKeys, leftSide)} IS NOT NULL AND ${MemberKeys(memberKeys, rightSide)} IS NOT NULL)`;
+function MemberKeys(memberKeys: (object: Sql) => Sql, object: Sql): Sql {
+  return sql`IF(${SpellsEachKeyOnce(object)}, JSON_KEYS(${object}), ${memberKeys(object)})`;
 }
 
 /**
