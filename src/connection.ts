@@ -75,6 +75,9 @@ export type PoolTeardown = () => Promise<void>;
 
 const beforeDisconnect = new Set<BeforeDisconnect>();
 
+/** Connections {@link Discard} destroyed, whose later failures are their destroy's own. */
+const discarded = new WeakSet<object>();
+
 /** Turns a callback's synchronous throw into a rejection, which is all `allSettled` can absorb. */
 async function Invoke(callback: BeforeDisconnect) {
   return callback();
@@ -102,8 +105,23 @@ function ConfiguredEngine(setting: DialectSetting): string {
  * pool creates the connection, and stays for the connection's life, so it never accumulates.
  */
 export function GuardConnection<T extends EventEmitter>(connection: T): T {
-  connection.on(CONNECTION_ERROR, ReportConnectionError);
+  connection.on(CONNECTION_ERROR, (err: Error) => {
+    if (!discarded.has(connection)) {
+      ReportConnectionError(err);
+    }
+  });
   return connection;
+}
+
+/**
+ * Destroys a pooled connection whose statement is given up before it ended. The driver closes the
+ * socket for writes only, so a statement it is still preparing goes on to send its execute and the
+ * driver reports that write as a failed connection; such a failure is the destroy's own, so it is
+ * not logged.
+ */
+export function Discard(connection: PoolConnection): void {
+  discarded.add(connection.connection);
+  connection.destroy();
 }
 
 /**
