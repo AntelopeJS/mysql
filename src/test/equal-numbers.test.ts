@@ -46,6 +46,12 @@ const NUMBERS = [
 /** Spellings of numbers beyond the doubles, which MariaDB stores as written and MySQL refuses. */
 const OVERFLOWS = ["1e309", "1E309", "1e+309", "10e308", "-1e309"] as const;
 
+/** The values {@link OVERFLOWS} spell: four spellings of 10^309 and one of -10^309. */
+const OVERFLOW_VALUES = 2;
+
+/** The ordered pairs of {@link OVERFLOWS} of one value: 4 × 4 and 1 × 1. */
+const OVERFLOW_PAIRS = 17;
+
 const SIGNED_MIN = -(2n ** 63n);
 const UNSIGNED_MAX = 2n ** 64n - 1n;
 
@@ -251,7 +257,10 @@ describe("eq on JSON numbers beyond the doubles", function () {
         "overflows",
         OVERFLOWS.map(
           (number, index) =>
-            [String(index), sql`JSON_OBJECT('n', ${Parsed(number)})`] as const,
+            [
+              String(index),
+              sql`JSON_OBJECT('n', ${Parsed(number)}, 'na', JSON_ARRAY(${Parsed(number)}))`,
+            ] as const,
         ),
       ),
     );
@@ -263,7 +272,7 @@ describe("eq on JSON numbers beyond the doubles", function () {
             (right, r) =>
               [
                 `${l}-${r}`,
-                sql`JSON_OBJECT('l', ${Parsed(left)}, 'r', ${Parsed(right)})`,
+                sql`JSON_OBJECT('l', ${Parsed(left)}, 'r', ${Parsed(right)}, 'la', JSON_ARRAY(${Parsed(left)}), 'ra', JSON_ARRAY(${Parsed(right)}))`,
               ] as const,
           ),
         ),
@@ -290,5 +299,28 @@ describe("eq on JSON numbers beyond the doubles", function () {
     expect(
       joined.map(({ left, right }) => `${left}-${right}`).sort(),
     ).to.deep.equal(equal.sort());
+  });
+
+  it("keeps one value per number eq finds equal, at the top and in an array", async () => {
+    const overflows = () => schema.instance().table("overflows");
+    const pairs = () => schema.instance().table("overflowPairs");
+    const counts = await Promise.all([
+      overflows().distinct("n").count().run(),
+      overflows().distinct("na").count().run(),
+      pairs()
+        .filter((row) => row.key("l").eq(row.key("r")))
+        .count()
+        .run(),
+      pairs()
+        .filter((row) => row.key("la").eq(row.key("ra")))
+        .count()
+        .run(),
+    ]);
+    expect(counts).to.deep.equal([
+      OVERFLOW_VALUES,
+      OVERFLOW_VALUES,
+      OVERFLOW_PAIRS,
+      OVERFLOW_PAIRS,
+    ]);
   });
 });
