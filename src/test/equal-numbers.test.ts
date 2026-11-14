@@ -82,11 +82,14 @@ interface Pair {
   _id: string;
   l?: number;
   r?: number;
+  la?: number[];
+  ra?: number[];
 }
 
 interface Single {
   _id: string;
   n?: number;
+  na?: number[];
 }
 
 const schema = new Schema<{
@@ -138,7 +141,7 @@ describe("eq on JSON numbers another writer spelled", function () {
             (right, r) =>
               [
                 `${l}-${r}`,
-                sql`JSON_OBJECT('l', ${Parsed(left)}, 'r', ${Parsed(right)})`,
+                sql`JSON_OBJECT('l', ${Parsed(left)}, 'r', ${Parsed(right)}, 'la', JSON_ARRAY(${Parsed(left)}), 'ra', JSON_ARRAY(${Parsed(right)}))`,
               ] as const,
           ),
         ),
@@ -149,7 +152,10 @@ describe("eq on JSON numbers another writer spelled", function () {
         "singles",
         NUMBERS.map(
           (number, index) =>
-            [String(index), sql`JSON_OBJECT('n', ${Parsed(number)})`] as const,
+            [
+              String(index),
+              sql`JSON_OBJECT('n', ${Parsed(number)}, 'na', JSON_ARRAY(${Parsed(number)}))`,
+            ] as const,
         ),
       ),
     );
@@ -163,6 +169,31 @@ describe("eq on JSON numbers another writer spelled", function () {
       .map((row) => row.key("_id"))
       .run();
     expect(ids.map((id) => Texts(id.split("-"))).sort()).to.deep.equal(EQUAL);
+  });
+
+  it("answers as MySQL's JSON = between two arrays of one number", async () => {
+    const ids = await schema
+      .instance()
+      .table("pairs")
+      .filter((row) => row.key("la").eq(row.key("ra")))
+      .map((row) => row.key("_id"))
+      .run();
+    expect(ids.map((id) => Texts(id.split("-"))).sort()).to.deep.equal(EQUAL);
+  });
+
+  it("answers as MySQL's JSON = between two arrays of one number in a join that hashes them", async () => {
+    const pairs = await schema
+      .instance()
+      .table("singles")
+      .joinInner(
+        schema.instance().table("singles"),
+        (left, right) => left.key("na").eq(right.key("na")),
+        (left, right) => ({ left: left.key("_id"), right: right.key("_id") }),
+      )
+      .run();
+    expect(
+      pairs.map(({ left, right }) => Texts([left, right])).sort(),
+    ).to.deep.equal(EQUAL);
   });
 
   it("orders two keys of a row as MySQL's JSON orderings do", async () => {
