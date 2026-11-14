@@ -104,6 +104,12 @@ export interface Compiled {
    */
   texts?: readonly Sql[];
   /**
+   * Set on a value read through a computed key, and on a fixed member read of one. Its text read
+   * spells it twice, so a reader of its text holds it once; a chain of computed keys then grows
+   * the statement linearly.
+   */
+  computed?: true;
+  /**
    * A condition true on exactly the rows where `sql` is true, and cheaper to evaluate; it may be
    * false where `sql` is SQL NULL, so only a reader of the truth alone, such as a `WHERE`, takes it.
    */

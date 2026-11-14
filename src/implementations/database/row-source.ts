@@ -392,6 +392,7 @@ export class JsonRowSource implements RowSource {
       sql: this.dialect.sql.json.member(path.document, ...path.path),
       type: OPAQUE,
       path,
+      ...(parent.computed && { computed: parent.computed }),
     };
     return WithDefault(
       this.dialect,

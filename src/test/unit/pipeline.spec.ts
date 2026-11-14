@@ -26,6 +26,22 @@ function NameKey(): string {
   return `\`t0\`.\`${key?.name ?? "missing"}\``;
 }
 
+type Doc = ValueProxy<Person>;
+type Key = ValueProxy<keyof Person>;
+
+/** One hop of a computed key chain, by the shape that sits between two computed reads. */
+const HOPS: readonly (readonly [string, (doc: Doc, key: Key) => Key])[] = [
+  ["a computed read", (doc, key) => doc.key(key).cast<keyof Person>()],
+  [
+    "a fixed member after the computed read",
+    (doc, key) => doc.key(key).cast<Record<"next", keyof Person>>().key("next"),
+  ],
+  [
+    "a string operation on the computed read",
+    (doc, key) => doc.key(key).cast<string>().upcase().cast<keyof Person>(),
+  ],
+];
+
 describe("A read", () => {
   it("selects the stored columns of the default instance, binding its empty id", () => {
     expect(Compile(Root())).to.deep.equal({
@@ -98,27 +114,30 @@ describe("A read", () => {
     expect(bound.sql).to.include("CONCAT('$.', CAST(JSON_QUOTE(?) AS CHAR))");
   });
 
-  it("grows a chain of keys each computed from the one before by the same length per level", () => {
-    for (const dialect of [DIALECTS.mysql, DIALECTS.mariadb]) {
-      const chained = (levels: number) =>
-        Compile(
-          Root().map((doc) => {
-            let key = doc.key("name").cast<keyof Person>();
-            for (let level = 0; level < levels; level++) {
-              key = doc.key(key).cast<keyof Person>();
-            }
-            return key;
-          }),
-          dialect,
-        ).sql.length;
-      const growth = (levels: number) => chained(levels + 1) - chained(levels);
-      for (let levels = 2; levels < 8; levels++) {
-        expect(growth(levels), `${dialect.id} level ${levels}`).to.equal(
-          growth(1),
-        );
+  for (const [between, hop] of HOPS) {
+    it(`grows a chain of keys each computed from the one before by the same length per level, ${between}`, () => {
+      for (const dialect of [DIALECTS.mysql, DIALECTS.mariadb]) {
+        const chained = (levels: number) =>
+          Compile(
+            Root().map((doc) => {
+              let key = doc.key("name").cast<keyof Person>();
+              for (let level = 0; level < levels; level++) {
+                key = hop(doc, key);
+              }
+              return key;
+            }),
+            dialect,
+          ).sql.length;
+        const growth = (levels: number) =>
+          chained(levels + 1) - chained(levels);
+        for (let levels = 2; levels < 8; levels++) {
+          expect(growth(levels), `${dialect.id} level ${levels}`).to.equal(
+            growth(1),
+          );
+        }
       }
-    }
-  });
+    });
+  }
 
   it("tests a null against both SQL NULL and a JSON null where the operand is JSON", () => {
     const bound = Compile(Root().filter((doc) => doc.key("nickname").eq(null)));
