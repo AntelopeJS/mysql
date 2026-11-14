@@ -55,7 +55,7 @@ const GREATEST_EXPONENT = 308;
  */
 function RespelledBytes(value: Sql): Sql {
   const bytes = sql`CAST(CONVERT(${value} USING utf8mb4) AS BINARY)`;
-  return sql`CONVERT(${RespelledNumbers(bytes, "\\")} USING utf8mb4) COLLATE ${ident(BINARY_COLLATION)}`;
+  return sql`CONVERT(${RespelledNumbers(bytes)} USING utf8mb4) COLLATE ${ident(BINARY_COLLATION)}`;
 }
 
 /**

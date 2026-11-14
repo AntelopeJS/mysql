@@ -261,9 +261,16 @@ export interface JsonSyntax {
   truthy(value: Sql): Sql;
   /**
    * Aggregates JSON elements into an array, empty rather than SQL NULL over no row, in the order of
-   * `ordinal`, a distinct positive integer per row, or deduplicated, never both.
+   * `ordinal`, a distinct positive integer per row, or deduplicated, never both. A dedup is asked
+   * of it only where {@link JsonSyntax.collectsDistinct} holds.
    */
   collect(element: Sql, ordinal: Sql | undefined, distinct: boolean): Sql;
+  /**
+   * Whether {@link JsonSyntax.collect} deduplicates elements as a `DISTINCT` does. Where it does
+   * not, a dedup collects the elements ordered by `ordinal`, a number that two elements share
+   * exactly when a `DISTINCT` keeps one of them, so one element is kept per number.
+   */
+  readonly collectsDistinct: boolean;
   /**
    * How a nested query is answered without a derived table. Absent where a derived table reads the
    * outer row, and {@link JsonSyntax.collect} aggregates one instead.
