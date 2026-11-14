@@ -2,7 +2,7 @@ import { expect } from "chai";
 import type { ValueProxy } from "@antelopejs/interface-database";
 import { Schema } from "@antelopejs/interface-database/schema";
 
-import { GetDialect } from "../connection";
+import { GetDialect, Read } from "../connection";
 import { ident, param, sql } from "../statement";
 import { WaitForIndexes } from "../implementations/database/schema";
 import { PhysicalTable, Run } from "./tables";
@@ -231,15 +231,47 @@ describe("an object that names one key twice", function () {
     }).to.deep.equal({ ...expected, values: IDS.map(() => expected.values) });
   });
 
-  it("stores the member a path read takes where an update writes a merged object", async () => {
+  it("pairs whole objects by their text on MariaDB 11.8 and as MySQL does on 12.3", async () => {
+    const [version] = await Read(sql`SELECT VERSION() AS v`);
+    const pairs = await Table("bare")
+      .joinInner(
+        Table("bare"),
+        (left, right) => left.key("o").eq(right.key("o")),
+        (left, right) => ({ left: left.key("_id"), right: right.key("_id") }),
+      )
+      .run();
+    const groups = await Table("bare")
+      .group("o", (stream) => stream.count())
+      .run();
+    const sameTextOnly = String(version?.get("v")).startsWith("11.8.");
+    expect({ pairs: pairs.length, groups: groups.length }).to.deep.equal({
+      pairs: sameTextOnly ? IDS.length : IDS.length * IDS.length,
+      groups: GetDialect().id === "mariadb" ? IDS.length : 1,
+    });
+  });
+
+  it("writes back the member a path read takes, as often as the object spells it, where an update merges the object", async () => {
     await Table("bare")
-      .get("plain")
       .update((row) => ({ o: row.key("o").merge({ k: "1" }) }))
       .run();
-    const stored = await Table("bare").get("plain").run();
-    expect(stored?.o).to.deep.equal({
-      é: GetDialect().id === "mariadb" ? "x" : "g",
-      k: "1",
-    });
+    const rows = await Table("bare")
+      .orderBy("_id")
+      .map((row) => ({ id: row.key("_id"), values: row.key("o").values() }))
+      .run();
+    expect(
+      Object.fromEntries(rows.map((row) => [row.id, row.values])),
+    ).to.deep.equal(
+      GetDialect().id === "mariadb"
+        ? {
+            escapedFirst: ["g", "g", "1"],
+            escapedLast: ["x", "x", "1"],
+            plain: ["x", "1"],
+          }
+        : {
+            escapedFirst: ["1", "g"],
+            escapedLast: ["1", "g"],
+            plain: ["1", "g"],
+          },
+    );
   });
 });
