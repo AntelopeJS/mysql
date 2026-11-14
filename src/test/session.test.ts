@@ -1,7 +1,22 @@
 import { expect } from "chai";
 
-import { type Sql, param, sql } from "../statement";
-import { AcquireConnection, GetDialect, Read, type Row } from "../connection";
+import {
+  type Sql,
+  Bind,
+  ident,
+  int,
+  join,
+  lit,
+  param,
+  sql,
+} from "../statement";
+import {
+  AcquireConnection,
+  GetDialect,
+  Read,
+  type Row,
+  Write,
+} from "../connection";
 
 const SESSION = sql`SELECT @@collation_connection AS collation, @@character_set_connection AS charset, @@time_zone AS zone, @@sql_mode AS mode, @@lc_messages AS messages`;
 
@@ -22,6 +37,48 @@ function expectPinned(row: Row) {
   expect(modes).to.not.include("ONLY_FULL_GROUP_BY");
   expect(modes).to.not.include("PIPES_AS_CONCAT");
   expect(modes).to.not.include("ANSI_QUOTES");
+}
+
+/**
+ * A sort buffer smaller than MariaDB's default, which a sort of the pinned length outgrows. The
+ * session takes it with the server's `sql_mode`, as a new connection starts, since the pinned strict
+ * mode refuses the pin's `group_concat_max_len` where the server clamps it.
+ */
+const SMALL_SORT_BUFFER = 262144;
+
+/** A sort buffer larger than the least the pin keeps, which the pin leaves as it is. */
+const LARGE_SORT_BUFFER = 8388608;
+
+/** The most texts one sort reads by in the sort buffer the MariaDB pin keeps. */
+const SORT_TEXTS = 8;
+
+/** Two rows that only the last of their texts sets apart, so the sort reads every one. */
+function SortedTexts(): Sql {
+  const row = (last: string) =>
+    JSON.stringify([
+      ...Array.from({ length: SORT_TEXTS - 1 }, () => "s"),
+      last,
+    ]);
+  const columns = Array.from({ length: SORT_TEXTS }, (_, text) =>
+    ident(`c${text}`),
+  );
+  const definitions = columns.map(
+    (column, text) => sql`${column} LONGTEXT PATH ${lit(`$[${text}]`)}`,
+  );
+  const last = ident(`c${SORT_TEXTS - 1}`);
+  return sql`SELECT ${last} AS value FROM JSON_TABLE(${param(`[${row("b")},${row("a")}]`)}, '$[*]' COLUMNS (${join(definitions, sql`, `)})) AS j ORDER BY ${join(columns, sql`, `)}`;
+}
+
+/** Runs the pin again on a held session that starts with `buffer` and the server's `sql_mode`. */
+async function Repin(
+  held: Awaited<ReturnType<typeof AcquireConnection>>,
+  buffer: number,
+): Promise<void> {
+  await Write(
+    sql`SET SESSION sort_buffer_size = ${int(buffer)}, sql_mode = @@global.sql_mode`,
+    held,
+  );
+  await held.query(Bind(GetDialect().session.pin({})).sql);
 }
 
 async function Value(statement: Sql) {
@@ -61,6 +118,28 @@ describe("a held connection", () => {
       } finally {
         held.release();
       }
+    }
+  });
+
+  it("sorts by eight texts after its pin, from a small sort buffer", async () => {
+    const held = await AcquireConnection();
+    try {
+      await Repin(held, SMALL_SORT_BUFFER);
+      const rows = await Read(SortedTexts(), held);
+      expect(rows.map((row) => row.get("value"))).to.deep.equal(["a", "b"]);
+    } finally {
+      held.release();
+    }
+  });
+
+  it("keeps a sort buffer larger than its pin's least", async () => {
+    const held = await AcquireConnection();
+    try {
+      await Repin(held, LARGE_SORT_BUFFER);
+      const buffer = await Read(sql`SELECT @@sort_buffer_size AS value`, held);
+      expect(Number(Only(buffer).get("value"))).to.equal(LARGE_SORT_BUFFER);
+    } finally {
+      held.release();
     }
   });
 });
