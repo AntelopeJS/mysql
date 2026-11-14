@@ -8,8 +8,8 @@ import { NativeWrite, RegisterSales, type SalesTables } from "./sales";
 /** The bytes of JSON text each document holds. */
 const DOCUMENT_BYTES = 400 * 1024;
 
-/** The longest a dedup may take per row it reads. */
-const MS_PER_ROW = 100;
+/** The longest a dedup may take per row it reads, which respelling each number nested in an object costs. */
+const MS_PER_ROW = 150;
 
 /** The runs a dedup gets to come in under its budget, since a busy host only adds to its time. */
 const ATTEMPTS = 3;
