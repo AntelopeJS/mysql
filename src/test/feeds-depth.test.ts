@@ -189,12 +189,14 @@ describe("a watched table holding JSON as deep as the server stores it", functio
     const feed = await Opened(rows, "hollows");
     try {
       const levels = [3, 2, 1].map((short) => depths.inColumn - short);
-      await rows.insert(
-        levels.map((level) => ({
-          _id: `hollow-${level}`,
-          tree: Hollow(level),
-        })),
-      );
+      await rows
+        .insert(
+          levels.map((level) => ({
+            _id: `hollow-${level}`,
+            tree: Hollow(level),
+          })),
+        )
+        .run();
       for (const level of levels) {
         const id = `hollow-${level}`;
         expect((await DeliveredRow(feed, id)).newValue).to.deep.equal({
@@ -348,8 +350,8 @@ describe("a change feed whose stages build a document deeper than the server bui
     );
     try {
       const tree = Nested(depths.inColumn);
-      await rows.insert({ _id: "shallow", label: "before" });
-      await rows.insert({ _id: "deepest", label: "deep", tree });
+      await rows.insert({ _id: "shallow", label: "before" }).run();
+      await rows.insert({ _id: "deepest", label: "deep", tree }).run();
       for (const feed of [plucked, dropped]) {
         expect(await DeliveredRow(feed, "shallow")).to.have.nested.property(
           "newValue._id",
