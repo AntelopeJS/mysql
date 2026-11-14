@@ -4,7 +4,7 @@ import type { QueryStage } from "@antelopejs/interface-database/common";
 import { type Sql, sql } from "../../statement";
 import type { Dialect } from "../../dialect";
 import type { Compiled } from "./sql";
-import { IsOpaque, type SqlType } from "./types";
+import { IsJsonBacked, type SqlType } from "./types";
 import { AsFloat, Numeric } from "./readings";
 import type { PipelineStage, PipelineStageMap } from "./pipeline";
 import { CurrentValue, type Relation, SetProjection } from "./relation";
@@ -217,14 +217,15 @@ const DistinctStage: PipelineStage = (relation, stage, context) => {
 
 /**
  * The value a dedup compares, which `eq` finds equal exactly where the dedup keeps one of them: a
- * number or an opaque JSON value with a negative zero read as 0. A declared number's `+ 0e0` turns
- * -0 into 0, as IEEE 754 adds. A value of any other type cannot be a negative zero.
+ * number or a JSON value, a declared list or object included, with a negative zero read as 0. A
+ * declared number's `+ 0e0` turns -0 into 0, as IEEE 754 adds. A value of any other type cannot hold
+ * a negative zero.
  */
 export function Deduplicable(dialect: Dialect, value: Compiled): Compiled {
   if (value.type.kind === "float") {
     return { sql: sql`(${value.sql} + 0e0)`, type: value.type };
   }
-  if (IsOpaque(value.type)) {
+  if (IsJsonBacked(value.type)) {
     return { sql: dialect.sql.json.unsignedZero(value.sql), type: value.type };
   }
   return value;

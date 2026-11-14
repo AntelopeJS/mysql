@@ -95,7 +95,10 @@ export interface Flavour {
   readonly valueIsRead: boolean;
   /** A double as a JSON number, a negative zero included. */
   number(value: Sql): Sql;
-  /** The JSON syntax's `unsignedZero`, which depends on how the engine stores a negative zero. */
+  /**
+   * The JSON syntax's `unsignedZero`, which depends on how the engine stores a negative zero and
+   * whether its dedup compares a container as JSON or as text.
+   */
   unsignedZero(value: Sql): Sql;
   /** Whether JSON text the engine parses keeps a finite number exactly. */
   keepsInText(value: number): boolean;
@@ -157,14 +160,58 @@ export interface Flavour {
 /** The digits of the largest row number, to which an ordinal is padded so its text sorts as it does. */
 const ORDINAL_DIGITS = 20;
 
+/** The rest of a JSON number equal to zero after its sign and first `0`; `0.5` and `05` are not one. */
+const ZERO_REST = String.raw`(?:\.0+)?(?:[eE][-+]?[0-9]+)?(?![0-9.eE])`;
+
+/** The parts of JSON text that hold no zero spelled other than `0`, such as `-0` or `0.0`. */
+const NO_SPELLED_ZERO = [
+  String.raw`[^"0-9-]++`,
+  String.raw`"(?:[^"\\]++|\\.)*+"`,
+  String.raw`-?[1-9][0-9]*+(?:\.[0-9]++)?(?:[eE][-+]?[0-9]++)?`,
+  String.raw`-?0\.0*+[1-9][0-9]*+(?:[eE][-+]?[0-9]++)?`,
+  String.raw`0(?![.eE])`,
+].join("|");
+
+/**
+ * The next zero of JSON text spelled other than `0`: the text before it in group 1 and its first `0`
+ * in group 2. `\G` starts each match where the last one ended, and group 1 crosses whole strings and
+ * other numbers, so no `-` or digit inside either is read as a zero. Every quantifier is possessive,
+ * since the parts of group 1 never overlap.
+ */
+const NEXT_SPELLED_ZERO = String.raw`\G((?:${NO_SPELLED_ZERO})*+)-?(0)${ZERO_REST}`;
+
+/**
+ * JSON text with each zero spelled `0`, a nested one included, so a value spells the same text as
+ * another with a zero of another sign or type where `DISTINCT` finds the two equal. `sigil` is what
+ * the engine's replacement puts before a group's number. SQL NULL stays SQL NULL.
+ */
+export function UnsignedZeros(text: Sql, sigil: "$" | "\\"): Sql {
+  return sql`REGEXP_REPLACE(${text}, ${lit(NEXT_SPELLED_ZERO)}, ${lit(`${sigil}1${sigil}2`)})`;
+}
+
+/**
+ * The most characters of JSON text whose zeros a dedup key respells. MySQL stops a regular expression
+ * at `regexp_time_limit`, which {@link UnsignedZeros} reaches at the default near 63,000 characters
+ * of an array of one-digit numbers, the text with the most parts per character.
+ */
+const MAX_RESPELLED_CHARS = 32768;
+
+/**
+ * The key a dedup gives a value's JSON text: the text with each zero spelled `0`. Longer text keeps
+ * its own spelling, so two such values that differ only in a zero's spelling stay apart.
+ */
+function DedupKey(text: Sql): Sql {
+  return sql`(CASE WHEN CHAR_LENGTH(${text}) <= ${int(MAX_RESPELLED_CHARS)} THEN ${UnsignedZeros(text, "$")} ELSE ${text} END)`;
+}
+
 /**
  * Collects JSON values without reading any back from text, since MySQL 8.4's JSON parser reads some
  * doubles of 17 significant digits as a neighbour. `JSON_ARRAYAGG` takes no order, so an ordered
  * array is first an object keyed by each row's ordinal at a fixed width: the server keeps an
  * object's keys sorted, and `$.*` reads its members in that order. A dedup keys each element by its
- * text instead, which keeps one element per text, and an absent element by the empty key, which no
- * JSON text is, so it stays apart from a JSON null as a dedup at the top does. An absent element
- * reads back as a JSON null either way.
+ * {@link DedupKey} instead, which keeps one element per value as `DISTINCT` compares JSON, and an
+ * absent element by the empty key, which no JSON text is, so it stays apart from a JSON null as a
+ * dedup at the top does. An absent element reads back as a JSON null either way.
  */
 function Collect(
   element: Sql,
@@ -177,7 +224,7 @@ function Collect(
   }
   const key =
     ordinal === undefined
-      ? sql`COALESCE(${textOf(element)}, '')`
+      ? sql`COALESCE(${DedupKey(textOf(element))}, '')`
       : sql`LPAD(${ordinal}, ${int(ORDINAL_DIGITS)}, '0')`;
   return sql`COALESCE(JSON_EXTRACT(JSON_OBJECTAGG(${key}, ${element}), '$.*'), JSON_ARRAY())`;
 }

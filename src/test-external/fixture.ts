@@ -90,7 +90,6 @@ const READ_TABLES: readonly string[] = [
   )`,
   "CREATE TABLE sales.raw_log (at TIMESTAMP(6) NULL, msg TEXT)",
   "CREATE TABLE sales.countries (code CHAR(2) PRIMARY KEY, name TEXT)",
-  "CREATE TABLE sales.COUNTRIES (code CHAR(2) PRIMARY KEY)",
   "CREATE TABLE sales.flags (id INT PRIMARY KEY, ref CHAR(36), n INT)",
   `INSERT INTO sales.flags VALUES (1, ${Uuid("'flag1'")}, 5), (2, NULL, NULL)`,
   "CREATE TABLE sales.tags (id INT PRIMARY KEY, label TEXT) PARTITION BY HASH (id) PARTITIONS 2",
@@ -246,11 +245,21 @@ const RECURSION_LIMITS: Record<Engine, string> = {
 /** The engines the fixture is written for, as the module's dialect names them. */
 export type Engine = "mysql" | "mariadb";
 
-/** The fixture's statements for a server of `engine`. */
-export function Fixture(engine: Engine): readonly string[] {
+/**
+ * A relation whose name differs from the readable `countries` only by case, which only a server
+ * that keeps table names as written (`lower_case_table_names = 0`) can hold beside it.
+ */
+const CASE_VARIANT = "CREATE TABLE sales.COUNTRIES (code CHAR(2) PRIMARY KEY)";
+
+/** The fixture's statements for a server of `engine`, whose table names are case-sensitive or not. */
+export function Fixture(
+  engine: Engine,
+  caseSensitiveNames: boolean,
+): readonly string[] {
   return [
     RECURSION_LIMITS[engine],
     ...READ_TABLES,
+    ...(caseSensitiveNames ? [CASE_VARIANT] : []),
     ...WriteTables(engine),
     ...ZERO_DATES,
     `ANALYZE TABLE ${READABLE.filter((name) => !VIEWS.includes(name))
@@ -293,10 +302,14 @@ const DEFAULT_ROLE: Record<Engine, string> = {
 /**
  * The account the DMS connects with, as a client would set it up over the fixture's tables: it
  * reads through a role it holds through another role, writes through the role it holds, and may
- * read and write only some of `people`'s columns by grants of its own. It may only insert into
- * `COUNTRIES`, whose name differs from the readable `countries` only by case.
+ * read and write only some of `people`'s columns by grants of its own. Where table names are
+ * case-sensitive, it may only insert into `COUNTRIES`, whose name differs from the readable
+ * `countries` only by case.
  */
-export function ClientAccount(engine: Engine): readonly string[] {
+export function ClientAccount(
+  engine: Engine,
+  caseSensitiveNames: boolean,
+): readonly string[] {
   return [
     `DROP USER IF EXISTS ${CLIENT_ACCOUNT}`,
     `DROP ROLE IF EXISTS ${READER_ROLE}, ${ACCESS_ROLE}`,
@@ -309,6 +322,8 @@ export function ClientAccount(engine: Engine): readonly string[] {
     DEFAULT_ROLE[engine],
     ...WriterGrants(ACCESS_ROLE),
     `GRANT SELECT (id, name), INSERT (id, name), UPDATE (id, name) ON sales.people TO ${CLIENT_ACCOUNT}`,
-    `GRANT INSERT ON sales.COUNTRIES TO ${CLIENT_ACCOUNT}`,
+    ...(caseSensitiveNames
+      ? [`GRANT INSERT ON sales.COUNTRIES TO ${CLIENT_ACCOUNT}`]
+      : []),
   ];
 }

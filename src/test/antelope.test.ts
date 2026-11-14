@@ -108,6 +108,19 @@ async function EngineOf(url: string) {
   }
 }
 
+/** Whether the server keeps table names as written, so two that differ only by case are two tables. */
+async function CaseSensitiveNames(url: string): Promise<boolean> {
+  const connection = await createConnection(url);
+  try {
+    const [rows] = await connection.query<RowDataPacket[]>(
+      "SELECT @@lower_case_table_names AS folding",
+    );
+    return Number(rows[0]?.folding) === 0;
+  } finally {
+    await connection.end();
+  }
+}
+
 async function Run(url: string, statements: readonly string[]) {
   const connection = await createConnection(url);
   try {
@@ -142,11 +155,12 @@ async function SuiteDatabase(url: string): Promise<string> {
  */
 async function ClientDatabase(url: string): Promise<string> {
   const engine = await EngineOf(url);
+  const caseSensitiveNames = await CaseSensitiveNames(url);
   await Run(url, [
     `DROP DATABASE IF EXISTS ${CLIENT_DATABASE}`,
     `CREATE DATABASE ${CLIENT_DATABASE}`,
-    ...Fixture(engine),
-    ...ClientAccount(engine),
+    ...Fixture(engine, caseSensitiveNames),
+    ...ClientAccount(engine, caseSensitiveNames),
   ]);
   return WithDatabase(url, CLIENT_DATABASE, CLIENT_USER);
 }

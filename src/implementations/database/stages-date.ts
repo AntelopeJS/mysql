@@ -1,6 +1,6 @@
 import type { QueryStage } from "@antelopejs/interface-database/common";
 
-import type { TimePart } from "../../dialect/sql-types";
+import type { TimePart } from "../../dialect/sql-time-types";
 import { sql } from "../../statement";
 import { BOOL } from "./types";
 import { AsFloat, MILLISECONDS_PER_SECOND, Moment } from "./readings";

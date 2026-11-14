@@ -13,6 +13,7 @@ import { ExternalOf } from "./external";
 import { CaptureOf } from "./capture";
 
 export type { EscapedKeys, Flavour, Held, MemberPath } from "./flavour";
+export { UnsignedZeros } from "./flavour";
 
 /** The dialect of an engine of the MySQL family, from what it spells its own way. */
 export function FamilyDialect(flavour: Flavour): Dialect {

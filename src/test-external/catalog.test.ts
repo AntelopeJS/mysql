@@ -181,7 +181,13 @@ describe("the catalog of an external instance", function () {
 describe("the privileges the catalog reports", function () {
   this.timeout(120_000);
 
-  it("keeps apart relations whose names differ only by case", async () => {
+  it("keeps apart relations whose names differ only by case", async function () {
+    const [server] = await Native(
+      sql`SELECT @@lower_case_table_names AS folding`,
+    );
+    if (Number(server?.folding) !== 0) {
+      this.skip();
+    }
     const listed = await ListRelations([SALES]);
     expect(Named(listed, "countries")).to.not.have.property("unmappable");
     expect(Named(listed, "COUNTRIES").unmappable).to.match(/cannot SELECT/);

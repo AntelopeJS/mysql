@@ -249,10 +249,12 @@ describe("reading across external relations", function () {
   });
 
   it("adds up a group's distinct decimals exactly, as the server's SUM(DISTINCT) does", async () => {
-    const groups = await Accounts().group("status", (rows, status) => ({
-      status,
-      total: rows.distinct("revenue").sum(),
-    }));
+    const groups = await Accounts()
+      .group("status", (rows, status) => ({
+        status,
+        total: rows.distinct("revenue").sum(),
+      }))
+      .run();
     const expected = await Native(
       sql`SELECT status, SUM(DISTINCT revenue) AS total FROM sales.accounts GROUP BY status`,
     );
