@@ -13,7 +13,7 @@ interface Reading {
 const schema = new Schema<{ readings: Reading }>(SCHEMA_ID, {
   readings: {
     fields: { n: "number" },
-    indexes: { byN: { fields: ["n"] } },
+    indexes: { byN: { fields: ["n"] }, byNLoose: { fields: ["n", "loose"] } },
   },
 });
 
@@ -33,7 +33,9 @@ const ROWS: Reading[] = [
 ];
 
 /** Each group's size, smallest first. */
-async function GroupSizes(key: "n" | "loose" | "byN"): Promise<number[]> {
+async function GroupSizes(
+  key: "n" | "loose" | "byN" | "byNLoose",
+): Promise<number[]> {
   const groups = await Readings()
     .group(key, (rows) => ({ size: rows.count() }))
     .run();
@@ -60,7 +62,7 @@ describe("a group key of 0 and -0", function () {
     expect(Object.is(zeros?.key, 0), String(zeros?.key)).to.equal(true);
   });
 
-  for (const key of ["n", "loose", "byN"] as const) {
+  for (const key of ["n", "loose", "byN", "byNLoose"] as const) {
     it(`puts 0 and -0 in one group by ${key}`, async () => {
       expect(await GroupSizes(key)).to.deep.equal([1, 1, 2]);
     });
