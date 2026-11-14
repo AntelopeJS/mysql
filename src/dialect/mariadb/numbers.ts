@@ -1,10 +1,11 @@
 import { type Sql, int, sql } from "../../statement";
 import { Json } from "./json-text";
-import { IsContainer, NormalizedContainer } from "./normalized";
+import { ContainerKey, IsContainer, ShortNumbered } from "./containers";
 
 /**
  * Equality as JSON: two numbers where they share a {@link NumberKey}, as MySQL's JSON `=` finds them,
- * and any other pair where `JSON_EQUALS` holds, an object whatever its key order. `JSON_EQUALS`
+ * and any other pair where `JSON_EQUALS` holds of their {@link Comparable} texts, an object whatever
+ * its key order. `JSON_EQUALS`
  * compares numbers by their exact decimal values, so it finds `0.1` unequal to
  * `0.10000000000000001` and `18446744073709549568e0` equal to `18446744073709549568`, which MySQL,
  * reading each as a double or an integer, does not. Two {@link Short} numbers hold at most 15
@@ -14,16 +15,29 @@ import { IsContainer, NormalizedContainer } from "./normalized";
  */
 export function JsonEquals(left: Sql, right: Sql): Sql {
   const equals = sql`JSON_EQUALS(${left}, ${right}) = 1`;
-  return sql`(CASE WHEN NOT (${IsNumber(left)} AND ${IsNumber(right)}) THEN ${equals} WHEN ${Short(left)} AND ${Short(right)} THEN ${equals} ELSE ${NumberKey(left)} = ${NumberKey(right)} END)`;
+  const comparable = sql`JSON_EQUALS(${Comparable(left)}, ${Comparable(right)}) = 1`;
+  return sql`(CASE WHEN NOT (${IsNumber(left)} AND ${IsNumber(right)}) THEN ${comparable} WHEN ${Short(left)} AND ${Short(right)} THEN ${equals} ELSE ${NumberKey(left)} = ${NumberKey(right)} END)`;
 }
 
 /**
- * The CRC-32 of a number's {@link NumberKey} and of any other value's normalized text, in one
- * character set whatever the value's, which {@link JsonEquals} finds the same for every pair it
- * holds for: `JSON_EQUALS` holds where two values normalize to the same text.
+ * The CRC-32 of a number's {@link NumberKey} and of any other value's normalized {@link Comparable}
+ * text, in one character set whatever the value's, which {@link JsonEquals} finds the same for every
+ * pair it holds for: `JSON_EQUALS` holds where two values normalize to the same text.
  */
 export function JsonHash(value: Sql): Sql {
-  return sql`CRC32(CONVERT(IF(${IsNumber(value)}, ${NumberKey(value)}, JSON_NORMALIZE(${value})) USING utf8mb4))`;
+  return sql`CRC32(CONVERT(IF(${IsNumber(value)}, ${NumberKey(value)}, JSON_NORMALIZE(${Comparable(value)})) USING utf8mb4))`;
+}
+
+/**
+ * A value as `JSON_EQUALS` compares it as MySQL's JSON `=` does: a container that spells a number of
+ * more than 15 digits or one with an exponent as its {@link ContainerKey}, each nested number as its
+ * {@link NumberKey}, and any other value as it is. `JSON_EQUALS` compares nested numbers by their
+ * exact decimal values, which tell numbers of at most 15 digits and no exponent apart as their
+ * doubles do, and finds `[18446744073709549568e0]` unequal to `[18446744073709550000]`, which MySQL
+ * reads as one double.
+ */
+function Comparable(value: Sql): Sql {
+  return sql`(CASE WHEN ${IsContainer(value)} AND NOT ${ShortNumbered(value)} THEN ${Json(ContainerKey(value, NumberKey))} ELSE ${value} END)`;
 }
 
 /**
@@ -53,12 +67,13 @@ const GREATEST_EXPONENT = 308;
 
 /**
  * The JSON syntax's `canonicalNumber` on MariaDB, which stores JSON as text and dedups by it. An
- * array or an object is its {@link NormalizedContainer} text, each nested number in the one exact
- * spelling `JSON_NORMALIZE` writes, as {@link JsonEquals} compares it: `1`, `1.0`, `1e0`, `10e-1`
- * and `1.` alike. A number is its {@link NumberKey}, and any other value its text.
+ * array or an object is its {@link ContainerKey} text, each nested number spelled as its
+ * {@link NumberKey}, as {@link JsonEquals} compares it: `1`, `1.0`, `1e0` and `10e-1` alike, and
+ * `0.1` and `0.10000000000000001` alike. A number is its {@link NumberKey}, and any other value its
+ * text.
  */
 export function CanonicalNumber(value: Sql): Sql {
-  return sql`(CASE WHEN ${IsContainer(value)} THEN ${Json(NormalizedContainer(value))} WHEN NOT ${IsNumber(value)} THEN ${Json(value)} ELSE ${NumberKey(value)} END)`;
+  return sql`(CASE WHEN ${IsContainer(value)} THEN ${Json(ContainerKey(value, NumberKey))} WHEN NOT ${IsNumber(value)} THEN ${Json(value)} ELSE ${NumberKey(value)} END)`;
 }
 
 function IsNumber(value: Sql): Sql {
