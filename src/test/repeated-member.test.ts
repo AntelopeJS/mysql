@@ -6,9 +6,11 @@ import { GetDialect, Read } from "../connection";
 import { ident, param, sql } from "../statement";
 import { WaitForIndexes } from "../implementations/database/schema";
 import { PhysicalTable, Run } from "./tables";
+import type { Nest } from "./watch";
 
 const SCHEMA_ID = "repeated_member";
 const INSTANCE = "one";
+const DEEP_INSTANCE = "deep";
 
 interface Doc {
   _id: string;
@@ -21,10 +23,21 @@ interface Side {
   v: string;
 }
 
-const schema = new Schema<{ bare: Doc; indexed: Doc; side: Side }>(SCHEMA_ID, {
+interface Deep {
+  _id: string;
+  tree?: Nest;
+}
+
+const schema = new Schema<{
+  bare: Doc;
+  indexed: Doc;
+  side: Side;
+  deep: Deep;
+}>(SCHEMA_ID, {
   bare: { fields: {}, indexes: {} },
   indexed: { fields: {}, indexes: { o: { fields: ["o.é"] } } },
   side: { fields: {}, indexes: {} },
+  deep: { fields: { tree: "object" }, indexes: {} },
 });
 
 type TableId = "bare" | "indexed";
@@ -147,6 +160,54 @@ async function MergedEscaped(): Promise<(string[] | undefined)[]> {
     .map((row) => ({ o: row.key("o").values(), p: row.key("p").values() }))
     .run();
   return [doc?.o.sort(), doc?.p];
+}
+
+/** A value nested `levels` objects deep; a row holding it has `JSON_DEPTH` `levels + 2`. */
+function Tree(levels: number): Nest {
+  return Array.from({ length: levels }).reduce<Nest>(
+    (value) => ({ n: value }),
+    "deep",
+  );
+}
+
+/**
+ * Rows of `deep`, each with `é` spelled escaped by another writer beside a `tree` of `levels`. The
+ * deepest one MariaDB 11.8 holds only because `tree` has a column of its own.
+ */
+const DEEP_ROWS = [
+  { _id: "depth31", levels: 29, extra: '{"\\u00e9": "g"}' },
+  {
+    _id: "depth31Twice",
+    levels: 29,
+    extra: '{"\\u00e9": "x", "\\u00e9": "g"}',
+  },
+  { _id: "depth32", levels: 30, extra: '{"\\u00e9": "g"}' },
+] as const;
+
+/** How many objects a value nests. */
+function Levels(value: Nest | undefined): number {
+  return JSON.stringify(value).split('{"n":').length - 1;
+}
+
+/**
+ * Each row of `deep` merged with `{k: "1"}`, the row itself as the left operand, with `tree` as
+ * the number of objects it nests.
+ */
+async function MergedDeep(): Promise<unknown[]> {
+  const deep = schema.instance(DEEP_INSTANCE).table("deep");
+  await deep
+    .insert(DEEP_ROWS.map(({ _id, levels }) => ({ _id, tree: Tree(levels) })))
+    .run();
+  for (const { _id, extra } of DEEP_ROWS) {
+    await Run(
+      sql`UPDATE ${ident(PhysicalTable(SCHEMA_ID, "deep"))} SET ${ident("_extra")} = ${param(extra)} WHERE ${ident("_id")} = ${param(_id)}`,
+    );
+  }
+  const merged = await deep
+    .orderBy("_id")
+    .map((row) => row.merge({ k: "1" }))
+    .run();
+  return merged.map(({ tree, ...rest }) => ({ ...rest, tree: Levels(tree) }));
 }
 
 async function Ids(rows: Promise<Doc[]>): Promise<string[]> {
@@ -307,5 +368,29 @@ describe("an object that names one key twice", function () {
 
   it("keeps the value of a key spelled escaped where an update merges the object", async () => {
     expect(await MergedEscaped()).to.deep.equal([["1", "g"], ["g"]]);
+  });
+});
+
+describe("a merge operand that spells a key escaped and nests deep", function () {
+  this.timeout(60_000);
+
+  before(async () => {
+    await schema.createInstance(DEEP_INSTANCE).run();
+  });
+
+  after(async () => {
+    await schema.destroyInstance(DEEP_INSTANCE).run();
+  });
+
+  it("keeps the key's value where the operand has JSON_DEPTH 31 or more", async () => {
+    expect(await MergedDeep()).to.deep.equal(
+      DEEP_ROWS.map(({ _id, levels }) => ({
+        _id,
+        _instance: DEEP_INSTANCE,
+        é: "g",
+        tree: levels,
+        k: "1",
+      })),
+    );
   });
 });
