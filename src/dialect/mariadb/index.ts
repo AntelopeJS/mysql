@@ -29,6 +29,14 @@ const SORT_BYTES = SORTED_TEXT_CHARS * 4;
  */
 const SORT_BUFFER_BYTES = 2097152;
 
+/**
+ * The most warnings MariaDB lists for a statement, its largest `max_error_count`. A compiled read
+ * raises a truncation warning for each row whose JSON number passes the doubles, and a read whose
+ * statement raised more than the list holds fails, since an unlisted one may be a cut aggregate or
+ * a document nested too deep.
+ */
+const LISTED_WARNINGS = 65535;
+
 /** MariaDB's statement timeout, in seconds, which a fraction of a second refines. */
 const MS_PER_SECOND = 1000;
 
@@ -301,6 +309,7 @@ const MARIADB: Flavour = {
   pinned: [
     sql`group_concat_max_len = ${int(UNBOUNDED_AGGREGATE_BYTES)}`,
     sql`max_sort_length = ${int(SORT_BYTES)}`,
+    sql`max_error_count = ${int(LISTED_WARNINGS)}`,
     sql`sort_buffer_size = GREATEST(@@session.sort_buffer_size, ${int(SORT_BUFFER_BYTES)})`,
   ],
   readTimeout: (ms) =>
