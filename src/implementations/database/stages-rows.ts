@@ -31,6 +31,7 @@ import { ConcatenatedInPlace, InPlaceFor, Prepare, Walked } from "./wrap";
 import { IsString } from "./guards";
 import { ClassifyMember, StageOperand } from "./member";
 import { OptionsOf } from "./utils";
+import { ComparesIdWithOneValue } from "./join-key";
 
 /** An `ORDER BY` runs before the row bounds, so those and an aggregate are what block it. */
 const ORDER_BLOCKERS: readonly RelationFlag[] = [
@@ -160,13 +161,14 @@ function Bounded(
  */
 const FilterStage: PipelineStage = (relation, stage, context) => {
   const prepared = Prepare(relation, WHERE_BLOCKERS, context);
+  const lambda = RecordedLambda(stage, FIRST_OPERAND);
+  prepared.idBound ||=
+    prepared.table !== undefined &&
+    !prepared.crossInstance &&
+    ComparesIdWithOneValue(lambda);
   prepared.where.push(
     context.fragment(() => {
-      const body = DecodeFunction(
-        RecordedLambda(stage, FIRST_OPERAND),
-        context,
-        [prepared.source],
-      );
+      const body = DecodeFunction(lambda, context, [prepared.source]);
       const predicate = RequireOperand(body, stage, FIRST_OPERAND);
       return sql`(${Holds(context.dialect, predicate)})`;
     }),

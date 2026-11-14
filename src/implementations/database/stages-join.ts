@@ -227,11 +227,13 @@ function MapperSource(right: Relation, flavour: JoinFlavour): RowSource {
 /** Brings a second query into the pipeline as a `JOIN`, with the mapper's result as the projection. */
 const JoinStage: PipelineStage = (relation, stage, context) => {
   const flavour = FlavourOf(stage);
-  const leftRows = relation.single ? SINGLE_ROW : relation.limit;
+  const leftRows =
+    relation.single || relation.idBound ? SINGLE_ROW : relation.limit;
   const prepared = Prepare(relation, JOIN_BLOCKERS, context);
   const side = JoinedSide(stage, prepared.source, context, leftRows);
   const right = side.relation;
   prepared.joins.push(JoinOn(flavour.kind, side.item, side.on));
+  prepared.idBound = false;
   const mapped = DecodeFunction(
     RecordedLambda(stage, MAPPER_OPERAND),
     context,
