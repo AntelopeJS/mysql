@@ -8,12 +8,19 @@ interface Reading {
   _id: string;
   n: number;
   loose: number | string;
+  label: string;
+  list: number[];
 }
 
 const schema = new Schema<{ readings: Reading }>(SCHEMA_ID, {
   readings: {
-    fields: { n: "number" },
-    indexes: { byN: { fields: ["n"] }, byNLoose: { fields: ["n", "loose"] } },
+    fields: { n: "number", label: "string", list: "number[]" },
+    indexes: {
+      byN: { fields: ["n"] },
+      byNLoose: { fields: ["n", "loose"] },
+      byNLabel: { fields: ["n", "label"] },
+      byNList: { fields: ["n", "list"] },
+    },
   },
 });
 
@@ -22,20 +29,21 @@ function Readings() {
 }
 
 /**
- * 0 and -0 in a declared number and in an undeclared field: one value, so one group. The string
- * `"0"` in the undeclared field is another value, which no group may merge with the number 0.
+ * 0 and -0 in a declared number and in an undeclared field: one value, so one group, alone or beside
+ * a declared string or list in a compound key. The string `"0"` in the undeclared field is another
+ * value, which no group may merge with the number 0.
  */
 const ROWS: Reading[] = [
-  { _id: "negative", n: -0, loose: -0 },
-  { _id: "positive", n: 0, loose: 0 },
-  { _id: "one", n: 1, loose: 1 },
-  { _id: "text", n: 2, loose: "0" },
+  { _id: "negative", n: -0, loose: -0, label: "a", list: [1] },
+  { _id: "positive", n: 0, loose: 0, label: "a", list: [1] },
+  { _id: "one", n: 1, loose: 1, label: "a", list: [1] },
+  { _id: "text", n: 2, loose: "0", label: "a", list: [1] },
 ];
 
+const KEYS = ["n", "loose", "byN", "byNLoose", "byNLabel", "byNList"] as const;
+
 /** Each group's size, smallest first. */
-async function GroupSizes(
-  key: "n" | "loose" | "byN" | "byNLoose",
-): Promise<number[]> {
+async function GroupSizes(key: (typeof KEYS)[number]): Promise<number[]> {
   const groups = await Readings()
     .group(key, (rows) => ({ size: rows.count() }))
     .run();
@@ -62,7 +70,7 @@ describe("a group key of 0 and -0", function () {
     expect(Object.is(zeros?.key, 0), String(zeros?.key)).to.equal(true);
   });
 
-  for (const key of ["n", "loose", "byN", "byNLoose"] as const) {
+  for (const key of KEYS) {
     it(`puts 0 and -0 in one group by ${key}`, async () => {
       expect(await GroupSizes(key)).to.deep.equal([1, 1, 2]);
     });
