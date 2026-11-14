@@ -1,7 +1,8 @@
 import assert from "node:assert";
 import type { QueryStage } from "@antelopejs/interface-database/common";
 
-import { ArrayOf } from "./types";
+import type { Dialect } from "../../dialect";
+import { ArrayOf, IsOpaque, type SqlType } from "./types";
 import { Collected } from "./json";
 import { AsJson } from "./readings";
 import type { Compiled } from "./sql";
@@ -221,6 +222,33 @@ function GroupName(stage: QueryStage): string {
   return name;
 }
 
+/** The kinds of key part beside which MySQL keeps a declared -0 and 0 in groups of their own. */
+const SPLITS_ZERO_BESIDE: ReadonlySet<SqlType["kind"]> = new Set([
+  "text",
+  "array",
+  "json",
+]);
+
+/**
+ * The parts of the group key as the `GROUP BY` compares them, with a negative zero read as 0
+ * wherever an engine would keep it apart: an opaque JSON part, whose text MariaDB groups as is, and
+ * a declared number beside a text or JSON part, which MySQL groups by sign. Any other part stays
+ * bare, so a key of declared numbers, booleans and timestamps is still one an index can serve.
+ */
+function GroupTerms(
+  dialect: Dialect,
+  members: readonly IndexedMember[],
+): IndexedMember[] {
+  const mixed = members.some((member) =>
+    SPLITS_ZERO_BESIDE.has(member.value.type.kind),
+  );
+  return members.map((member) =>
+    IsOpaque(member.value.type) || (mixed && members.length > 1)
+      ? { ...member, value: Deduplicable(dialect, member.value) }
+      : member,
+  );
+}
+
 /** One part is the value itself; a compound index is a document of its parts, by field name. */
 function GroupValue(
   members: readonly IndexedMember[],
@@ -253,7 +281,10 @@ function GroupValue(
 const GroupStage: PipelineStage = (relation, stage, context) => {
   const prepared = Prepare(relation, GROUP_BLOCKERS, context);
   AbsorbOrder(prepared);
-  const members = IndexColumns(prepared, GroupName(stage));
+  const members = GroupTerms(
+    context.dialect,
+    IndexColumns(prepared, GroupName(stage)),
+  );
   const value = GroupValue(members, context);
   prepared.groupBy.push(...members.map((member) => member.value));
   const mapped = DecodeFunction(RecordedLambda(stage, FIRST_OPERAND), context, [
