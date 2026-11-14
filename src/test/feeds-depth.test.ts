@@ -114,22 +114,26 @@ describe("a watched table holding JSON as deep as the server stores it", functio
 
   it("updates and deletes a row stored before it was watched", async () => {
     const rows = deep.instance().table("stored");
-    await rows.insert({
-      _id: "deep",
-      deep: Nested(depths.inExtra),
-      tree: Nested(depths.inColumn),
-    });
+    await rows
+      .insert({
+        _id: "deep",
+        deep: Nested(depths.inExtra),
+        tree: Nested(depths.inColumn),
+      })
+      .run();
     const feed = await Opened(rows, "probe");
     await feed.return?.();
-    expect(await rows.get("deep").update({ label: "changed" })).to.equal(1);
-    expect(await rows.get("deep")).to.have.property("label", "changed");
-    expect(await rows.get("deep").delete()).to.equal(1);
-    expect(await rows.get("deep")).to.equal(undefined);
+    expect(await rows.get("deep").update({ label: "changed" }).run()).to.equal(
+      1,
+    );
+    expect(await rows.get("deep").run()).to.have.property("label", "changed");
+    expect(await rows.get("deep").delete().run()).to.equal(1);
+    expect(await rows.get("deep").run()).to.equal(undefined);
   });
 
   it("logs a column of empty arrays nested to each depth around the image's limit", async () => {
     const rows = deep.instance().table("stored");
-    await rows.insert({ _id: "hollow" });
+    await rows.insert({ _id: "hollow" }).run();
     const feed = await Opened(rows, "hollow-probe");
     await feed.return?.();
     const table = ident(PhysicalTable("feeds-depth", "stored"));
@@ -140,7 +144,7 @@ describe("a watched table holding JSON as deep as the server stores it", functio
         sql`UPDATE ${table} SET tree = ${GetDialect().sql.json.parse(param(hollow))} WHERE _instance = '' AND _id = 'hollow'`,
       );
     }
-    expect(await rows.get("hollow").delete()).to.equal(1);
+    expect(await rows.get("hollow").delete().run()).to.equal(1);
   });
 
   it("delivers the changes of a row as deep as a document holds", async () => {
@@ -149,10 +153,12 @@ describe("a watched table holding JSON as deep as the server stores it", functio
       deep: Nested(depths.inExtra),
       tree: Nested(depths.inDocument),
     };
-    await rows.insert({ _id: "deep", ...stored });
+    await rows.insert({ _id: "deep", ...stored }).run();
     const feed = await Opened(rows, "probe");
     try {
-      expect(await rows.get("deep").update({ label: "changed" })).to.equal(1);
+      expect(
+        await rows.get("deep").update({ label: "changed" }).run(),
+      ).to.equal(1);
       const modified = await Delivered(feed.next());
       expect(modified.oldValue).to.deep.equal({ _id: "deep", ...stored });
       expect(modified.newValue).to.deep.equal({
@@ -160,7 +166,7 @@ describe("a watched table holding JSON as deep as the server stores it", functio
         label: "changed",
         ...stored,
       });
-      expect(await rows.get("deep").delete()).to.equal(1);
+      expect(await rows.get("deep").delete().run()).to.equal(1);
       const removed = await Delivered(feed.next());
       expect(removed).to.have.property("changeType", "removed");
       expect(removed.oldValue).to.deep.include(stored);
@@ -187,8 +193,10 @@ describe("a change feed reaching a document deeper than the server builds", func
     const rows = deep.instance().table("ending");
     const feed = await Opened(rows, "ending");
     try {
-      await rows.insert({ _id: "shallow", label: "before" });
-      await rows.insert({ _id: "deepest", tree: Nested(depths.inColumn) });
+      await rows.insert({ _id: "shallow", label: "before" }).run();
+      await rows
+        .insert({ _id: "deepest", tree: Nested(depths.inColumn) })
+        .run();
       expect(await DeliveredRow(feed, "shallow")).to.have.nested.property(
         "newValue.label",
         "before",
@@ -220,10 +228,12 @@ describe("a change feed reaching a document deeper than the server builds", func
     const feed = await Opened(rows, "hollowed");
     try {
       const tree = Hollow(depths.inColumn);
-      await rows.insert([
-        { _id: "shallow", label: "before" },
-        { _id: "hollowest", tree },
-      ]);
+      await rows
+        .insert([
+          { _id: "shallow", label: "before" },
+          { _id: "hollowest", tree },
+        ])
+        .run();
       expect(await DeliveredRow(feed, "shallow")).to.have.nested.property(
         "newValue.label",
         "before",
@@ -255,11 +265,13 @@ describe("a change feed reaching a document deeper than the server builds", func
       .cursor();
     const feed = await OpenedOver(wrapped, rows, { _id: "mapped" });
     try {
-      await rows.insert([
-        { _id: "first", tree: Nested(1) },
-        { _id: "second", tree: Nested(1) },
-        { _id: "wrapped", tree: Nested(depths.inDocument) },
-      ]);
+      await rows
+        .insert([
+          { _id: "first", tree: Nested(1) },
+          { _id: "second", tree: Nested(1) },
+          { _id: "wrapped", tree: Nested(depths.inDocument) },
+        ])
+        .run();
       expect(await DeliveredRow(feed, "first")).to.have.nested.property(
         "newValue.w.x.n",
         "🦌 deep",
@@ -307,8 +319,8 @@ describe("a change feed whose stages never build a deep row's document", functio
     );
     try {
       const tree = Nested(depths.inColumn);
-      await rows.insert({ _id: "deepest", label: "drop", tree });
-      await rows.insert({ _id: "after", label: "keep" });
+      await rows.insert({ _id: "deepest", label: "drop", tree }).run();
+      await rows.insert({ _id: "after", label: "keep" }).run();
       expect((await DeliveredRow(plucked, "deepest")).newValue).to.deep.equal({
         _id: "deepest",
         label: "drop",

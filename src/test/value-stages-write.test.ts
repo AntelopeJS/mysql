@@ -20,7 +20,7 @@ describe("An update through the value stages", function () {
         bornAt: doc.key("bornAt").add(60),
       }))
       .run();
-    const [row] = await table.rows();
+    const [row] = await table.rows().run();
     assert.deepEqual(row.nums, [6, 2, 4]);
     assert.deepEqual(row.tags, ["b", "c"]);
     assert.deepEqual(row.meta, { a: 9, b: { x: 1 }, empty: null });

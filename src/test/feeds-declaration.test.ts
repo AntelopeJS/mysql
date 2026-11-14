@@ -27,12 +27,12 @@ describe("a feed open while its table is declared again", function () {
     const rows = watched.instance().table("rows");
     const feed = await Opened(rows, "declared");
     try {
-      await rows.insert({ _id: "before", label: "undeclared", size: 3 });
+      await rows.insert({ _id: "before", label: "undeclared", size: 3 }).run();
       const before = await DeliveredRow(feed, "before");
       expect(before).to.have.nested.property("newValue.size", 3);
       await Schemas.register(SCHEMA_ID, DECLARED);
-      await rows.insert({ _id: "after", label: "declared", size: 5 });
-      await rows.get("before").update({ label: "changed" });
+      await rows.insert({ _id: "after", label: "declared", size: 5 }).run();
+      await rows.get("before").update({ label: "changed" }).run();
       const after = await DeliveredRow(feed, "after");
       expect(after).to.have.nested.property("newValue.size", 5);
       const changed = await DeliveredRow(feed, "before");
@@ -63,8 +63,8 @@ describe("a feed reading events logged before a field was declared", function ()
     const rows = logged.instance().table("rows");
     const feed = await Opened(rows, "logged");
     try {
-      await rows.insert({ _id: "early", label: "x", size: 3 });
-      await rows.get("early").update({ label: "y" });
+      await rows.insert({ _id: "early", label: "x", size: 3 }).run();
+      await rows.get("early").update({ label: "y" }).run();
       await Schemas.register(LOGGED_ID, DECLARED);
       const added = await Delivered(feed.next());
       expect(added.newValue).to.deep.equal({

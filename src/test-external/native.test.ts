@@ -61,14 +61,15 @@ describe("an external key that its column cannot hold", function () {
     ["order_lines", '{"0": "1"}'],
   ]) {
     it(`gets nothing for ${JSON.stringify(key)} on ${table}, rather than failing the request`, async () => {
-      expect(await Table(table).get(key)).to.equal(undefined);
+      expect(await Table(table).get(key).run()).to.equal(undefined);
     });
   }
 
   it("filters nothing for an enum label the type does not have", async () => {
     const total = await Table("accounts")
       .filter((row) => row.key("status").eq("archived"))
-      .count();
+      .count()
+      .run();
     expect(total).to.equal(0);
   });
 });
@@ -114,7 +115,10 @@ describe("the indexes that serve reads of an external relation", function () {
   });
 
   it("orders by a bigint read as text in its own numeric order", async () => {
-    const [first] = await Table("accounts").orderBy("id", "asc").slice(9, 10);
+    const [first] = await Table("accounts")
+      .orderBy("id", "asc")
+      .slice(9, 10)
+      .run();
     expect(first.id).to.equal("10");
   });
 });
@@ -128,7 +132,8 @@ describe("numbers read from an external relation's exact types", function () {
   it("sums a decimal column exactly", async () => {
     const total = await Table("accounts")
       .filter((row) => row.key("active").eq(true))
-      .sum("revenue");
+      .sum("revenue")
+      .run();
     const [expected] = await Native(
       sql`SELECT CAST(SUM(revenue) AS DOUBLE) AS total FROM sales.accounts WHERE active`,
     );
@@ -147,7 +152,8 @@ describe("numbers read from an external relation's exact types", function () {
     it(`keeps the meaning of '${method} 5.5' on an integer column`, async () => {
       const total = await Table("accounts")
         .filter((row) => row.key("score")[method](5.5))
-        .count();
+        .count()
+        .run();
       expect(total).to.equal(
         await NativeCount(
           sql`SELECT COUNT(*) FROM sales.accounts WHERE CAST(score AS DECIMAL(65,30)) ${operator} 5.5`,
@@ -174,10 +180,12 @@ describe("inequality against an external column's own type", function () {
     it(`answers ${field} ne ${JSON.stringify(value)} as the complement of eq, keeping NULL rows`, async () => {
       const unequal = await Table("flags")
         .filter((row) => row.key(field).ne(value))
-        .count();
+        .count()
+        .run();
       const equal = await Table("flags")
         .filter((row) => row.key(field).eq(value))
-        .count();
+        .count()
+        .run();
       expect(unequal).to.equal(expected);
       expect(unequal + equal).to.equal(2);
     });

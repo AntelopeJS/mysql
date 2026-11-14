@@ -43,24 +43,24 @@ describe("a double written into an external JSON column", function () {
   });
 
   it("is stored exactly by an insert", async () => {
-    const [id] = await Accounts().insert({ code: "dbl1", raw: RAW });
-    expect((await Accounts().get(id))?.raw).to.deep.equal(RAW);
+    const [id] = await Accounts().insert({ code: "dbl1", raw: RAW }).run();
+    expect((await Accounts().get(id).run())?.raw).to.deep.equal(RAW);
     expect(JSON.parse(await PrintedRaw(id))).to.deep.equal(RAW);
   });
 
   it("is stored exactly by an update", async () => {
-    const [id] = await Accounts().insert({ code: "dbl2" });
-    expect(await Accounts().get(id).update({ raw: RAW })).to.equal(1);
-    expect((await Accounts().get(id))?.raw).to.deep.equal(RAW);
+    const [id] = await Accounts().insert({ code: "dbl2" }).run();
+    expect(await Accounts().get(id).update({ raw: RAW }).run()).to.equal(1);
+    expect((await Accounts().get(id).run())?.raw).to.deep.equal(RAW);
     expect(JSON.parse(await PrintedRaw(id))).to.deep.equal(RAW);
   });
 
   it("is stored exactly by a replace", async () => {
-    const [id] = await Accounts().insert({ code: "dbl3" });
+    const [id] = await Accounts().insert({ code: "dbl3" }).run();
     expect(
-      await Accounts().get(id).replace({ code: "dbl3", raw: RAW }),
+      await Accounts().get(id).replace({ code: "dbl3", raw: RAW }).run(),
     ).to.equal(1);
-    expect((await Accounts().get(id))?.raw).to.deep.equal(RAW);
+    expect((await Accounts().get(id).run())?.raw).to.deep.equal(RAW);
     expect(JSON.parse(await PrintedRaw(id))).to.deep.equal(RAW);
   });
 });

@@ -45,11 +45,11 @@ describe("a change log dropped and created again", function () {
     const rows = logged.instance().table("rows");
     const feed = await Opened(rows, "probe");
     try {
-      await rows.insert({ _id: "unread", label: "lost with the log" });
+      await rows.insert({ _id: "unread", label: "lost with the log" }).run();
       await Pause(QUIET_MS);
       await Run(sql`DROP TABLE ${ident(CHANGE_LOG.log)}`);
       await Schemas.register(SCHEMA_ID, DEFINITION);
-      await rows.insert({ _id: "after", label: "logged anew" });
+      await rows.insert({ _id: "after", label: "logged anew" }).run();
       const failure = await feed.next().then(
         (step) => `delivered ${JSON.stringify(step.value)}`,
         (err: unknown) => String(err),
@@ -66,12 +66,14 @@ describe("a change log dropped and created again", function () {
     const feed = await Opened(rows, "copied");
     try {
       const definition = await LogDefinition();
-      await rows.insert({ _id: "unread-copied", label: "lost with the log" });
+      await rows
+        .insert({ _id: "unread-copied", label: "lost with the log" })
+        .run();
       await Pause(NEXT_SECOND_MS);
       await Run(sql`DROP TABLE ${ident(CHANGE_LOG.log)}`);
       await RunText(definition);
       await Schemas.register(SCHEMA_ID, DEFINITION);
-      await rows.insert({ _id: "after-copied", label: "logged anew" });
+      await rows.insert({ _id: "after-copied", label: "logged anew" }).run();
       const failure = await feed.next().then(
         (step) => `delivered ${JSON.stringify(step.value)}`,
         (err: unknown) => String(err),
@@ -88,10 +90,12 @@ async function AnsweredAfter(probe: string, change: Sql): Promise<string> {
   const rows = logged.instance().table("rows");
   const feed = await Opened(rows, probe);
   try {
-    await rows.insert({ _id: `${probe}-unread`, label: "written before" });
+    await rows
+      .insert({ _id: `${probe}-unread`, label: "written before" })
+      .run();
     await Pause(NEXT_SECOND_MS);
     await Run(change);
-    await rows.insert({ _id: `${probe}-after`, label: "logged anew" });
+    await rows.insert({ _id: `${probe}-after`, label: "logged anew" }).run();
     return await feed.next().then(
       (step) => `delivered ${JSON.stringify(step.value)}`,
       (err: unknown) => String(err),
@@ -137,7 +141,7 @@ describe("a change log emptied or altered under an open feed", function () {
     const feed = await Opened(rows, "reopened");
     try {
       await Schemas.register(SCHEMA_ID, DEFINITION);
-      await rows.insert({ _id: "reopened-after", label: "logged anew" });
+      await rows.insert({ _id: "reopened-after", label: "logged anew" }).run();
       expect(
         await DeliveredRow(feed, "reopened-after"),
       ).to.have.nested.property("newValue.label", "logged anew");
