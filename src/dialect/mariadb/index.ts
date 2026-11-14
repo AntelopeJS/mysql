@@ -17,16 +17,16 @@ const UNBOUNDED_AGGREGATE_BYTES = 4294967295;
  * sort with a `LIMIT` reads `max_sort_length / 4` characters, and its other sorts read
  * `max_sort_length` bytes, at most four per character.
  */
-const SORTED_TEXT_CHARS = 16384;
+const SORTED_TEXT_CHARS = 4096;
 
 const SORT_BYTES = SORTED_TEXT_CHARS * 4;
 
 /**
- * The least sort buffer a session keeps: a sort without a `LIMIT` needs about sixteen times
- * `max_sort_length`, whatever the values' length, and fails with `Out of sort memory` below it.
- * Twice that is MariaDB's default, so only a server set lower spends more per sort.
+ * The least sort buffer a session keeps. A sort needs about fifteen times `max_sort_length` for each
+ * text it sorts by, whatever the values' length, and fails with `Out of sort memory` below it, so this
+ * holds a sort by eight texts. It is MariaDB's default, so only a server set lower spends more.
  */
-const SORT_BUFFER_BYTES = SORT_BYTES * 32;
+const SORT_BUFFER_BYTES = 2097152;
 
 /** MariaDB's statement timeout, in seconds, which a fraction of a second refines. */
 const MS_PER_SECOND = 1000;
@@ -300,7 +300,7 @@ const MARIADB: Flavour = {
   pinned: [
     sql`group_concat_max_len = ${int(UNBOUNDED_AGGREGATE_BYTES)}`,
     sql`max_sort_length = ${int(SORT_BYTES)}`,
-    sql`sort_buffer_size = GREATEST(@@global.sort_buffer_size, ${int(SORT_BUFFER_BYTES)})`,
+    sql`sort_buffer_size = GREATEST(@@session.sort_buffer_size, ${int(SORT_BUFFER_BYTES)})`,
   ],
   readTimeout: (ms) =>
     sql`max_statement_time = ${int(ms)} / ${int(MS_PER_SECOND)}`,

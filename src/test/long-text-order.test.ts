@@ -9,9 +9,45 @@ interface Entry {
   name: string;
 }
 
-const schema = new Schema<{ entries: Entry }>(SCHEMA_ID, {
+/** The most texts a sort reads by in the sort buffer every MariaDB session keeps. */
+const SORTED_TEXTS = 8;
+
+const TEXT_FIELDS = Array.from(
+  { length: SORTED_TEXTS },
+  (_, field) => `t${field}`,
+);
+
+type Texts = { _id: string } & Record<string, string>;
+
+const schema = new Schema<{ entries: Entry; texts: Texts }>(SCHEMA_ID, {
   entries: { fields: { name: "string" }, indexes: {} },
+  texts: {
+    fields: Object.fromEntries(
+      TEXT_FIELDS.map((field) => [field, "string" as const]),
+    ),
+    indexes: {},
+  },
 });
+
+const TEXT_ROWS = 40;
+
+/** Each row's texts, the last of which alone sets the rows apart, so the sort reads every one. */
+function TextsOf(row: number): Texts {
+  const texts: Texts = { _id: `r${row}` };
+  TEXT_FIELDS.forEach((field, position) => {
+    texts[field] =
+      position === TEXT_FIELDS.length - 1
+        ? String((row * 7) % TEXT_ROWS).padStart(2, "0")
+        : "same";
+  });
+  return texts;
+}
+
+const BY_TEXTS = Array.from({ length: TEXT_ROWS }, (_, row) => TextsOf(row))
+  .sort((a, b) =>
+    a[TEXT_FIELDS.at(-1) ?? ""] < b[TEXT_FIELDS.at(-1) ?? ""] ? -1 : 1,
+  )
+  .map((texts) => texts._id);
 
 /** More characters than MariaDB's sort with a `LIMIT` reads of a computed text. */
 const SHARED = "x".repeat(2100);
@@ -41,6 +77,33 @@ async function Seed(): Promise<void> {
   await Entries()
     .insert(NAMES.map((name, n) => ({ _id: `e${n}`, name })))
     .run();
+  await schema
+    .instance(INSTANCE)
+    .table("texts")
+    .insert(Array.from({ length: TEXT_ROWS }, (_, row) => TextsOf(row)))
+    .run();
+}
+
+/**
+ * A sort by as many texts as the session's sort buffer holds, whole and sliced: a sort length that
+ * outgrows the buffer fails it with `Out of sort memory`.
+ */
+async function SortsByEveryText(): Promise<void> {
+  const [last, ...others] = [...TEXT_FIELDS].reverse();
+  const ordered = () =>
+    others.reduce(
+      (query, field) => query.orderBy(field),
+      schema.instance(INSTANCE).table("texts").orderBy(last),
+    );
+  const whole = await ordered()
+    .map((row) => row.key("_id"))
+    .run();
+  expect(whole).to.deep.equal(BY_TEXTS);
+  const sliced = await ordered()
+    .slice(1, 3)
+    .map((row) => row.key("_id"))
+    .run();
+  expect(sliced).to.deep.equal(BY_TEXTS.slice(1, 4));
 }
 
 async function Unseed(): Promise<void> {
@@ -87,6 +150,8 @@ describe("a slice of rows sorted by a long text", function () {
   it("keeps the rows its whole names sort to", KeepsTheSlicedNames);
 
   it("keeps every row in its whole names' order", KeepsEveryRowInOrder);
+
+  it("sorts by as many texts as the sort buffer holds", SortsByEveryText);
 
   it(
     "keeps the rows its whole names sort to descending",
