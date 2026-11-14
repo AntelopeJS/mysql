@@ -1,6 +1,6 @@
 import { RespelledNumbers } from "../mysql";
-import { type Sql, int, sql } from "../../statement";
-import { Json } from "./json-text";
+import { type Sql, ident, int, sql } from "../../statement";
+import { BINARY_COLLATION, Json } from "./json-text";
 
 /**
  * Equality as JSON: a number however it is spelled, an object whatever its key order. `JSON_EQUALS`
@@ -48,6 +48,17 @@ const GREATEST_DOUBLE = sql`1.7976931348623157e308`;
 const GREATEST_EXPONENT = 308;
 
 /**
+ * {@link RespelledNumbers} of JSON text read as its UTF-8 bytes. A MariaDB regular expression over
+ * text in a UTF-8 character set takes time in the square of the text's length, and over bytes in
+ * its length. The patterns read only ASCII, which no byte of a longer UTF-8 character is, so the
+ * bytes respell as the characters do.
+ */
+function RespelledBytes(value: Sql): Sql {
+  const bytes = sql`CAST(CONVERT(${value} USING utf8mb4) AS BINARY)`;
+  return sql`CONVERT(${RespelledNumbers(bytes, "\\")} USING utf8mb4) COLLATE ${ident(BINARY_COLLATION)}`;
+}
+
+/**
  * The JSON syntax's `canonicalNumber` on MariaDB, which stores JSON as text and dedups by it. An
  * array whose text holds no `{` is its `JSON_NORMALIZE` text, as {@link JsonEquals} compares it,
  * each nested number in one exact spelling: `1`, `1.0`, `1e0`, `10e-1` and `1.` alike. Text with a
@@ -76,6 +87,6 @@ export function CanonicalNumber(value: Sql): Sql {
   const flat = sql`JSON_TYPE(${value}) = 'ARRAY' AND INSTR(${value}, '{') = 0`;
   const exact = sql`${text} REGEXP '^-?[0-9]{1,20}$' AND CAST(${text} AS DECIMAL(65, 0)) BETWEEN ${SIGNED_MIN} AND ${UNSIGNED_MAX}`;
   return Json(
-    sql`(CASE WHEN ${flat} THEN JSON_NORMALIZE(${value}) WHEN NOT ${number} THEN ${RespelledNumbers(value, "\\")} WHEN ${exact} THEN REGEXP_REPLACE(${text}, '^-0$', '0') WHEN ${text} REGEXP '^-?[0-9]{309,}$' THEN ${text} WHEN ${integral} THEN CAST(${double} AS SIGNED) WHEN ${unsigned} THEN CAST(CAST(${double} AS DECIMAL(20, 0)) AS UNSIGNED) WHEN ${finite} THEN ${double} ELSE ${text} END)`,
+    sql`(CASE WHEN ${flat} THEN JSON_NORMALIZE(${value}) WHEN NOT ${number} THEN ${RespelledBytes(value)} WHEN ${exact} THEN REGEXP_REPLACE(${text}, '^-0$', '0') WHEN ${text} REGEXP '^-?[0-9]{309,}$' THEN ${text} WHEN ${integral} THEN CAST(${double} AS SIGNED) WHEN ${unsigned} THEN CAST(CAST(${double} AS DECIMAL(20, 0)) AS UNSIGNED) WHEN ${finite} THEN ${double} ELSE ${text} END)`,
   );
 }
