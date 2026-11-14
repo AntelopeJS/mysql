@@ -156,15 +156,16 @@ export function FieldOf(
 ): Compiled {
   const def = DecodeOperand(stage, SECOND_OPERAND, context);
   const name = StageOperand(stage, FIRST_OPERAND);
+  const nextAlias = () => context.nextAlias();
   if (IsString(name)) {
-    return source.field(name, def);
+    return source.field(name, def, nextAlias);
   }
   const key = RequireOperand(
     DecodeValue(ClassifyMember(name), context),
     stage,
     FIRST_OPERAND,
   );
-  return source.dynamicField(KeyText(key, context), def);
+  return source.dynamicField(KeyText(key, context), def, nextAlias);
 }
 
 /**
