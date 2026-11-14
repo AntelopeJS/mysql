@@ -62,9 +62,14 @@ const MOST_ESCAPES = 1_000_000;
  * square of the length of text in a UTF-8 character set and in the length of bytes. The patterns
  * read only ASCII, which no byte of a longer UTF-8 character is.
  */
+/** Text in the binary collation MariaDB compares JSON text in, whatever collation it came in. */
+function Binary(text: Sql): Sql {
+  return sql`CONVERT(${text} USING utf8mb4) COLLATE ${ident(BINARY_COLLATION)}`;
+}
+
 function Rewritten(text: Sql, { pattern, into }: Rewrite): Sql {
   const bytes = sql`CAST(CONVERT(${text} USING utf8mb4) AS BINARY)`;
-  return sql`CONVERT(REGEXP_REPLACE(${bytes}, ${lit(pattern)}, ${lit(into)}) USING utf8mb4) COLLATE ${ident(BINARY_COLLATION)}`;
+  return Binary(sql`REGEXP_REPLACE(${bytes}, ${lit(pattern)}, ${lit(into)})`);
 }
 
 /** Whether a JSON value is an array or an object. */
@@ -89,8 +94,8 @@ function ElementKeys(compact: Sql, key: (number: Sql) => Sql): Sql {
     ident("ajs_element"),
   ];
   const element = sql`CONCAT(${column}, '')`;
-  const read = sql`(CASE JSON_TYPE(${element}) WHEN 'ARRAY' THEN JSON_VALUE(${element}, '$[0]') WHEN 'INTEGER' THEN ${key(element)} WHEN 'DOUBLE' THEN ${key(element)} ELSE ${element} END)`;
-  return sql`(SELECT GROUP_CONCAT(CONVERT(${read} USING utf8mb4) ORDER BY ${ordinal} SEPARATOR '') FROM JSON_TABLE(${array}, '$[*]' COLUMNS (${ordinal} FOR ORDINALITY, ${column} JSON PATH '$')) AS ${ident("ajs_elements")})`;
+  const read = sql`(CASE JSON_TYPE(${element}) WHEN 'ARRAY' THEN ${Binary(sql`JSON_VALUE(${element}, '$[0]')`)} WHEN 'INTEGER' THEN ${Binary(key(element))} WHEN 'DOUBLE' THEN ${Binary(key(element))} ELSE ${Binary(element)} END)`;
+  return sql`(SELECT GROUP_CONCAT(${read} ORDER BY ${ordinal} SEPARATOR '') FROM JSON_TABLE(${array}, '$[*]' COLUMNS (${ordinal} FOR ORDINALITY, ${column} JSON PATH '$')) AS ${ident("ajs_elements")})`;
 }
 
 /**
@@ -105,5 +110,5 @@ export function ContainerKey(value: Sql, key: (number: Sql) => Sql): Sql {
   const compact = sql`JSON_COMPACT(${value})`;
   const escapes = sql`LENGTH(REGEXP_REPLACE(CAST(CONVERT(${value} USING utf8mb4) AS BINARY), ${lit(String.raw`[^\\]++`)}, ''))`;
   const fits = sql`LENGTH(${value}) * ${int(GROWTH)} <= @@max_allowed_packet`;
-  return sql`(CASE WHEN ${escapes} > ${int(MOST_ESCAPES)} THEN ${compact} WHEN ${ShortNumbered(value)} THEN ${Rewritten(compact, SHORT_NUMBERS)} WHEN ${fits} THEN ${ElementKeys(compact, key)} ELSE ${compact} END)`;
+  return sql`(CASE WHEN ${escapes} > ${int(MOST_ESCAPES)} THEN ${Binary(compact)} WHEN ${ShortNumbered(value)} THEN ${Rewritten(compact, SHORT_NUMBERS)} WHEN ${fits} THEN ${Binary(ElementKeys(compact, key))} ELSE ${Binary(compact)} END)`;
 }

@@ -1,5 +1,5 @@
-import { type Sql, int, sql } from "../../statement";
-import { Json } from "./json-text";
+import { type Sql, ident, int, sql } from "../../statement";
+import { BINARY_COLLATION, Json } from "./json-text";
 import { ContainerKey, IsContainer, ShortNumbered } from "./containers";
 
 /**
@@ -37,7 +37,7 @@ export function JsonHash(value: Sql): Sql {
  * reads as one double.
  */
 function Comparable(value: Sql): Sql {
-  return sql`(CASE WHEN ${IsContainer(value)} AND NOT ${ShortNumbered(value)} THEN ${Json(ContainerKey(value, NumberKey))} ELSE ${value} END)`;
+  return sql`(CASE WHEN ${IsContainer(value)} AND NOT ${ShortNumbered(value)} THEN ${Json(ContainerKey(value, NumberKey))} ELSE ${Json(value)} END)`;
 }
 
 /**
@@ -129,7 +129,7 @@ function NumberKey(value: Sql): Sql {
   const finite = sql`(ABS(${double}) < ${GREATEST_DOUBLE} OR ${exponent} <= ${int(GREATEST_EXPONENT)})`;
   const exact = sql`${text} REGEXP '^-?[0-9]{1,20}$' AND CAST(${text} AS DECIMAL(65, 0)) BETWEEN ${SIGNED_MIN} AND ${UNSIGNED_MAX}`;
   const greatest = sql`${normalized} = ${Normalized(sql`CAST(${double} AS CHAR)`)}`;
-  const beyond = sql`IF(${greatest}, ${double}, ${normalized})`;
+  const beyond = sql`CONVERT(IF(${greatest}, ${double}, ${normalized}) USING utf8mb4) COLLATE ${ident(BINARY_COLLATION)}`;
   return Json(
     sql`(CASE WHEN ${exact} THEN REGEXP_REPLACE(${text}, '^-0$', '0') WHEN ${text} REGEXP '^-?[0-9]{309,}$' THEN ${beyond} WHEN ${integral} THEN CAST(${double} AS DECIMAL(20, 0)) WHEN ${finite} THEN ${double} ELSE ${beyond} END)`,
   );
