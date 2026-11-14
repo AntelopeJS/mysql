@@ -291,9 +291,10 @@ function DefaultType(value: SqlType, def: SqlType): SqlType {
  * the result on those rows and is NULL on the others. The result keeps that key column, marked
  * `set`, and the read it falls back from, through which a later cast finds the key column.
  *
- * Given `nextAlias`, a JSON-backed value that is not a member read is held once in a one-row table:
- * the absence test reads it through `NULLIF`, which evaluates its operand twice, so a chain of
- * defaults each over the one before would otherwise evaluate the first value twice per link.
+ * Given `nextAlias`, a JSON-backed value that is not a read of a stored column is held once in a
+ * one-row table: the absence test reads it through `NULLIF`, which evaluates its operand twice, so a
+ * chain of defaults each over the one before would otherwise evaluate the first value twice per
+ * link. A key read of an earlier link is such a value.
  */
 export function WithDefault(
   dialect: Dialect,
@@ -313,7 +314,7 @@ export function WithDefault(
   };
   return {
     sql:
-      nextAlias && IsJsonBacked(type) && !left.path
+      nextAlias && IsJsonBacked(type) && !left.path?.column
         ? HeldDefault(dialect, pair, nextAlias())
         : sql`COALESCE(${Absent(dialect, pair)}, ${pair.right.sql})`,
     type: pair.type,

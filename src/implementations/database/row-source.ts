@@ -37,8 +37,13 @@ import {
  * against a JSON value.
  */
 export interface RowSource {
-  field(name: string, def?: Compiled): Compiled;
-  dynamicField(key: Compiled, def?: Compiled): Compiled;
+  /** A member, or `def` where it is absent; `nextAlias` names a table holding a computed value once. */
+  field(name: string, def?: Compiled, nextAlias?: () => string): Compiled;
+  dynamicField(
+    key: Compiled,
+    def?: Compiled,
+    nextAlias?: () => string,
+  ): Compiled;
   toJson(): Compiled;
   keyTypes(): KeyTypes | undefined;
 }
@@ -374,7 +379,11 @@ export class JsonRowSource implements RowSource {
   ) {}
 
   /** A member, read from the document the value itself was read from where it still is a read. */
-  public field(name: string, def?: Compiled): Compiled {
+  public field(
+    name: string,
+    def?: Compiled,
+    nextAlias?: () => string,
+  ): Compiled {
     const parent = this.toJson();
     const path: ValuePath = parent.path
       ? { ...parent.path, path: [...parent.path.path, name] }
@@ -388,10 +397,15 @@ export class JsonRowSource implements RowSource {
       this.dialect,
       Cast(this.dialect, raw, this.fieldType(name)),
       def,
+      nextAlias,
     );
   }
 
-  public dynamicField(key: Compiled, def?: Compiled): Compiled {
+  public dynamicField(
+    key: Compiled,
+    def?: Compiled,
+    nextAlias?: () => string,
+  ): Compiled {
     const name = Cast(this.dialect, key, TEXT).sql;
     return WithDefault(
       this.dialect,
@@ -400,6 +414,7 @@ export class JsonRowSource implements RowSource {
         type: OPAQUE,
       },
       def,
+      nextAlias,
     );
   }
 
