@@ -1,7 +1,7 @@
 import { has, type Journey, type JourneyContext } from "@antelopejs/tooling-configs/verify";
 
 import { pick, text, type Json } from "./json.ts";
-import { answered, client, close, logs, open, ownedConfig, part, same, sees, server, sql, type Engine, type Session } from "./session.ts";
+import { answered, client, close, logs, open, orderedArray, ownedConfig, part, same, sees, server, sql, type Engine, type Session } from "./session.ts";
 
 const LAYOUT = `{ items: { fields: { name: "string", price: "number", sku: "string", tags: "string[]", title: "object" }, indexes: { price: {}, name: { crossInstance: true }, sku: { unique: true }, tags: { multi: true }, titleFr: { fields: ["title.fr"] } } } }`;
 
@@ -112,7 +112,7 @@ return {
       context,
       engine,
       "read the instance registry",
-      `SELECT JSON_ARRAYAGG(instance_id) FROM (SELECT instance_id FROM __antelope_instances WHERE schema_id = 'verify-layout' ORDER BY instance_id) r`,
+      `SELECT ${orderedArray("JSON_QUOTE(instance_id)", "instance_id", "__antelope_instances WHERE schema_id = 'verify-layout'")}`,
     );
     context.expect(registry.folder, [same("__antelope_instances records each created instance", registry.value, ["a", "b"])]);
     await instances(session, engine);
@@ -148,7 +148,7 @@ return out;`,
     context,
     engine,
     "read the rows left after destroyInstance",
-    `SELECT JSON_OBJECT('instances', (SELECT JSON_ARRAYAGG(i) FROM (SELECT DISTINCT _instance AS i FROM \`${TABLE}\`) d), 'table', (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'verify' AND TABLE_NAME = '${TABLE}'))`,
+    `SELECT JSON_OBJECT('instances', ${orderedArray("JSON_QUOTE(i)", "i", `(SELECT DISTINCT _instance AS i FROM \`${TABLE}\`) d`)}, 'table', (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'verify' AND TABLE_NAME = '${TABLE}'))`,
   );
   context.expect(rows.folder, [same("destroyInstance deletes the instance's rows and keeps the table", rows.value, { instances: ["a"], table: 1 })]);
 }
