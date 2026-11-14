@@ -14,16 +14,23 @@ interface Rewrite {
 }
 
 /**
- * Writes a container as the elements of an array that `JSON_NORMALIZE` keeps as written but for its
- * numbers. Each escape of a string is first spelled as the two characters it is, `\"` as `\\\"` and
- * `\u00e9` as `\\u00e9`, since MariaDB 12.3 rewrites escapes, so a string's backslashes then come in
- * pairs but for the one before an escaped `"`. Each run of {@link STRUCTURE} outside strings then
- * becomes a string of its characters after `\r`, between commas, which no string of the container
+ * Each escape of a string spelled as the two characters it is, `\"` as `\\\"` and `\u00e9` as
+ * `\\u00e9`, since MariaDB 12.3 rewrites escapes, so a string's backslashes then come in pairs but for
+ * the one before an escaped `"`.
+ */
+const SPELLED_ESCAPES: Rewrite = {
+  pattern: String.raw`(\\)(["\\])|\\(.)`,
+  into: String.raw`\\\\\1\2\3`,
+};
+
+/**
+ * Writes a container, its escapes spelled by {@link SPELLED_ESCAPES}, as the elements of an array that
+ * `JSON_NORMALIZE` keeps as written but for its numbers. Each run of {@link STRUCTURE} outside
+ * strings becomes a string of its characters after `\r`, between commas, which no string of the container
  * starts with: group 1 crosses whole strings and every other character up to the run, and `\G`
  * starts each match where the last one ended.
  */
 const ENCODE: readonly Rewrite[] = [
-  { pattern: String.raw`(\\)(["\\])|\\(.)`, into: String.raw`\\\\\1\2\3` },
   {
     pattern: String.raw`\G((?:[^"${STRUCTURE}]++|${STRING})*+)([${STRUCTURE}]++)`,
     into: String.raw`\1,"\\r\2",`,
@@ -89,10 +96,13 @@ export function IsContainer(value: Sql): Sql {
  * without a `{` or an escape holds neither, so its own `JSON_NORMALIZE` text is the same, sooner.
  * MariaDB answers NULL for text longer than `max_allowed_packet`, and for a regular expression past
  * its match limit, so a container whose array could be longer, or whose text holds more than
- * {@link MOST_ESCAPES} backslashes, keeps its compact text as written.
+ * {@link MOST_ESCAPES} backslashes, keeps its compact text as written. Text without a backslash
+ * holds no escape to spell.
  */
 export function NormalizedContainer(value: Sql): Sql {
-  const encoded = Rewritten(sql`JSON_COMPACT(${value})`, ENCODE);
+  const compact = sql`JSON_COMPACT(${value})`;
+  const spelled = sql`IF(INSTR(${value}, CHAR(92)) = 0, ${compact}, ${Rewritten(compact, [SPELLED_ESCAPES])})`;
+  const encoded = Rewritten(spelled, ENCODE);
   const array = sql`CONCAT('[', TRIM(BOTH ',' FROM ${encoded}), ']')`;
   const plain = sql`INSTR(${value}, '{') = 0 AND INSTR(${value}, CHAR(92)) = 0`;
   const escapes = sql`LENGTH(REGEXP_REPLACE(CAST(CONVERT(${value} USING utf8mb4) AS BINARY), ${lit(String.raw`[^\\]++`)}, ''))`;
