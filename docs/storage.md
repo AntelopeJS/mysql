@@ -64,7 +64,7 @@ The set of accepted tokens is closed and case-insensitive. `"date"` and `"Date"`
 
 A field name longer than 64 characters gets a shortened column name, as table names do. A column name is therefore not always the field name verbatim.
 
-**A number in a JSON column is the exact double you wrote**, in an array, in `_extra` or in a value the server computes, and a negative zero stays negative. MySQL 8.4's JSON parser reads some doubles of 17 significant digits as a neighbour, and JSON text spells -0 as `0`, so a number never reaches the server as JSON text. Each one is bound as a `DOUBLE`, and an array a query computes, such as a `map` result, is assembled without printing its elements. A list or document that holds only strings, booleans, nulls and integers up to 2^53 is still bound as one JSON text, so a long list of keys stays one argument.
+**A number in a JSON column is the exact double you wrote**, in an array, in `_extra` or in a value the server computes, and a negative zero stays negative. The JSON parser of `mysql:8.4` reads some doubles of 17 significant digits as a neighbour, and JSON text spells -0 as `0`, so a number never reaches the server as JSON text. Each one is bound as a `DOUBLE`, and an array a query computes, such as a `map` result, is assembled without printing its elements. A list or document that holds only strings, booleans, nulls and integers up to 2^53 is still bound as one JSON text, so a long list of keys stays one argument.
 
 ## Indexes
 
