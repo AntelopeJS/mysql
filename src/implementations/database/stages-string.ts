@@ -1,6 +1,6 @@
 import { type Sql, sql } from "../../statement";
 import { TextParam } from "./sql";
-import { AsFloat, Text } from "./readings";
+import { AsFloat } from "./readings";
 import { ArrayOf, BOOL, TEXT } from "./types";
 import { IsString } from "./guards";
 import { OptionsOf } from "./utils";
@@ -12,6 +12,7 @@ import {
   Lift,
   LiftRaw,
   RequireOperand,
+  TextOf,
   type StageHandler,
   type StageMap,
 } from "./stage";
@@ -33,16 +34,13 @@ const CASE_FUNCTIONS = {
 
 function CaseStage(convert: (text: Sql) => Sql): StageHandler {
   return Lift((value, _args, _stage, context) => ({
-    sql: convert(Text(context.dialect, value).sql),
+    sql: convert(TextOf(value, context).sql),
     type: TEXT,
   }));
 }
 
 const LengthStage = Lift((value, _args, _stage, context) =>
-  AsFloat(
-    context.dialect,
-    sql`CHAR_LENGTH(${Text(context.dialect, value).sql})`,
-  ),
+  AsFloat(context.dialect, sql`CHAR_LENGTH(${TextOf(value, context).sql})`),
 );
 
 const ConcatStage = Lift((value, args, stage, context) => {
@@ -50,8 +48,8 @@ const ConcatStage = Lift((value, args, stage, context) => {
   const other = RequireOperand(args[FIRST_OPERAND], stage, FIRST_OPERAND);
   return {
     sql: dialect.sql.scalar.concat([
-      Text(dialect, value).sql,
-      Text(dialect, other).sql,
+      TextOf(value, context).sql,
+      TextOf(other, context).sql,
     ]),
     type: TEXT,
   };
@@ -69,8 +67,8 @@ const MatchStage = LiftRaw((value, stage, context) => {
       );
   return {
     sql: dialect.sql.scalar.regex.matches(
-      Text(dialect, value).sql,
-      Text(dialect, pattern).sql,
+      TextOf(value, context).sql,
+      TextOf(pattern, context).sql,
     ),
     type: BOOL,
   };
@@ -89,7 +87,7 @@ const SplitStage = LiftRaw((value, stage, context) => {
   const options: SplitOptions = OptionsOf(stage) ?? {};
   return {
     sql: dialect.sql.json.split(
-      Text(dialect, value).sql,
+      TextOf(value, context).sql,
       options.separator ?? DEFAULT_SEPARATOR,
       PieceLimit(options.maxSplits),
       context.nextAlias(),
@@ -101,7 +99,7 @@ const SplitStage = LiftRaw((value, stage, context) => {
 /**
  * String stages.
  *
- * Every operand is read through `Text`, which for a JSON source is the projection guarded on the
+ * Every operand is read through `TextOf`, which for a JSON source is the projection guarded on the
  * value being a JSON string, so a stored number yields NULL rather than its decimal spelling,
  * which keeps a heterogeneous overflow key from comparing equal across types. A timestamp is its
  * ISO 8601 rendering in UTC.

@@ -5,6 +5,7 @@ import { ident, sql } from "../../statement";
 import type { Compiled } from "./sql";
 import { IsJsonBacked, TEXT } from "./types";
 import { DecodeValue } from "./value";
+import { Text } from "./readings";
 import type { DecodingContext } from "./context";
 import { JsonRowSource, type RowSource } from "./row-source";
 import { IsString } from "./guards";
@@ -165,19 +166,37 @@ export function FieldOf(
     stage,
     FIRST_OPERAND,
   );
-  return source.dynamicField(KeyText(key, context), def, nextAlias);
+  return {
+    ...source.dynamicField(KeyText(key, context), def, nextAlias),
+    computed: true,
+  };
 }
 
 /**
  * A computed key's text. The text read of a JSON value spells the value twice, to test its kind and
- * to take its text, so a key read through a computed key is held once in a one-row table: a chain
- * of them then grows the statement linearly. A key read by a static path, such as a row's member,
- * is read in place, which keeps the common one-level read as it was.
+ * to take its text, so a key with no static path, or read through a computed key, is held once in
+ * a one-row table: a chain of them then grows the statement linearly. A key read by a static path,
+ * such as a row's member, is read in place, which keeps the common one-level read as it was.
  */
 function KeyText(key: Compiled, context: DecodingContext): Compiled {
-  if (!IsJsonBacked(key.type) || key.path !== undefined) {
+  if (!IsJsonBacked(key.type) || (key.path !== undefined && !key.computed)) {
     return key;
   }
+  return HeldText(key, context);
+}
+
+/**
+ * A value's text, with a value read through a computed key held once in a one-row table, as
+ * {@link KeyText} holds it, so a text read of it does not spell the read twice.
+ */
+export function TextOf(value: Compiled, context: DecodingContext): Compiled {
+  if (!IsJsonBacked(value.type) || !value.computed) {
+    return Text(context.dialect, value);
+  }
+  return HeldText(value, context);
+}
+
+function HeldText(key: Compiled, context: DecodingContext): Compiled {
   const { dialect } = context;
   const alias = context.nextAlias();
   const held = dialect.sql.rows.hold(key.sql, alias);
