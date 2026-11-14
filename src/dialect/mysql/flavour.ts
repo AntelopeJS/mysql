@@ -129,6 +129,8 @@ export interface Flavour {
   readonly returning: boolean;
   /** Whether a derived table can read the columns of the tables joined before it. */
   readonly lateral: boolean;
+  /** Whether a subquery inside a table function's argument can read a column of an outer query. */
+  readonly outerInTableFunction: boolean;
   /**
    * Present where the engine joins on an equality no index serves by block nested loop, evaluating
    * each operand once per pair of rows, where MySQL hash joins it: the keyed join's JSON hash.
@@ -314,6 +316,7 @@ export const MYSQL: Flavour = {
   collect: Collect,
   returning: false,
   lateral: true,
+  outerInTableFunction: false,
   hold: (columns) =>
     sql`(SELECT ${join(
       columns.map((held) => sql`${held.value} AS ${ident(held.name)}`),

@@ -313,6 +313,26 @@ const WALK_ROWS: Record<WalkKind, (source: Sql) => Sql> = {
   members: (source) => sql`JSON_TABLE(${source}, '$.*' ${WALK_COLUMNS})`,
 };
 
+/**
+ * The rows of a walk as one FROM item. Where a subquery inside a table function's argument cannot
+ * read an outer query, the source is held in a derived table first, which can, and walked from
+ * there: the source of a walk over a walk's result reads the outer row inside a subquery.
+ */
+function WalkFrom(
+  flavour: Flavour,
+  kind: WalkKind,
+  source: Sql,
+  alias: string,
+): Sql {
+  if (flavour.outerInTableFunction) {
+    return WALK_ROWS[kind](source);
+  }
+  const held: Held = { name: "source", value: source, kind: "json" };
+  const holder = `${alias}_s`;
+  const rows = WALK_ROWS[kind](HeldRead(flavour, holder, held));
+  return sql`(SELECT ${ORDINAL}, ${VALUE} FROM ${flavour.holdBare(held)} AS ${ident(holder)}, ${rows} AS ${ident(alias)})`;
+}
+
 function WalkRows(
   flavour: Flavour,
   kind: WalkKind,
@@ -320,7 +340,7 @@ function WalkRows(
   alias: string,
 ): Walk {
   const rows = ident(alias);
-  const from = WALK_ROWS[kind](source);
+  const from = WalkFrom(flavour, kind, source, alias);
   return {
     from,
     ordinal: sql`${rows}.${ORDINAL}`,

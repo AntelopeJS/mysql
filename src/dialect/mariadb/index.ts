@@ -342,6 +342,7 @@ const MARIADB: Flavour = {
   },
   returning: true,
   lateral: false,
+  outerInTableFunction: true,
   nestedLoopJoin: { jsonHash: JsonHash },
   hold: Hold,
   holdBare: (held) =>
