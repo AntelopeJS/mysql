@@ -10,6 +10,7 @@ import type { KeyColumn } from "../../implementations/database/paths";
 import type { Ordering } from "../../implementations/database/json";
 import { type Sql, ident, int, join, lit, param, sql } from "../../statement";
 import { type Flavour, type Held, HeldRead, type MemberPath } from "./flavour";
+import { LastMembers, EscapesOrRepeatsKey } from "./sql-last-members";
 import { IsoText, ParseInstant } from "./sql-time";
 
 /** What `JSON_TYPE` answers for each kind; a JSON number has four. */
@@ -351,8 +352,6 @@ function WalkRows(
 
 /**
  * Each side is held once, so a merge chained N deep spells its operands once rather than 2^N times.
- * The keys of both go through one walk, the left's first, and each key is kept once: a left key
- * only where the right lacks it, since MariaDB's `JSON_OBJECTAGG` keeps a key it is given twice.
  * The guard is outside the aggregate, which answers a row over no input, so a side that is not an
  * object yields NULL and not `{}`.
  */
@@ -369,6 +368,20 @@ function ShallowMerge(
   const [leftSide, rightSide] = sides.map((side) =>
     HeldRead(flavour, alias, side),
   );
+  const keyed = KeyedMerge(leftSide, rightSide, alias);
+  const listable = sql`JSON_DEPTH(${leftSide}) < ${int(flavour.maxJsonNesting)} AND JSON_DEPTH(${rightSide}) < ${int(flavour.maxJsonNesting)} AND (${EscapesOrRepeatsKey(flavour, leftSide, `${alias}_a`)} OR ${EscapesOrRepeatsKey(flavour, rightSide, `${alias}_b`)})`;
+  const merged = flavour.memberKeys
+    ? sql`(CASE WHEN ${listable} THEN ${LastMembers(flavour, flavour.memberKeys, leftSide, rightSide, alias)} ELSE ${keyed} END)`
+    : keyed;
+  const bothObjects = sql`${Is(leftSide, ["object"])} AND ${Is(rightSide, ["object"])}`;
+  return sql`(SELECT CASE WHEN ${bothObjects} THEN ${merged} END FROM ${flavour.hold(sides)} AS ${ident(alias)})`;
+}
+
+/**
+ * The keys of both go through one walk, the left's first, and each key is kept once: a left key
+ * only where the right lacks it, since a `JSON_OBJECTAGG` given a key twice may keep both.
+ */
+function KeyedMerge(leftSide: Sql, rightSide: Sql, alias: string): Sql {
   const keys = ident(`${alias}_k`);
   const name = sql`${keys}.${ident("name")}`;
   const path = DynamicPath(name);
@@ -376,9 +389,7 @@ function ShallowMerge(
   const value = sql`IF(${fromRight}, JSON_EXTRACT(${rightSide}, ${path}), JSON_EXTRACT(${leftSide}, ${path}))`;
   const kept = sql`${fromRight} OR NOT JSON_CONTAINS_PATH(${rightSide}, 'one', ${path})`;
   const names = sql`JSON_TABLE(JSON_MERGE_PRESERVE(JSON_KEYS(${leftSide}), JSON_KEYS(${rightSide})), '$[*]' COLUMNS (${ORDINAL} FOR ORDINALITY, ${ident("name")} LONGTEXT PATH '$')) AS ${keys}`;
-  const merged = sql`(SELECT COALESCE(JSON_OBJECTAGG(${name}, ${value}), ${EMPTY_OBJECT}) FROM ${names} WHERE ${kept})`;
-  const bothObjects = sql`${Is(leftSide, ["object"])} AND ${Is(rightSide, ["object"])}`;
-  return sql`(SELECT CASE WHEN ${bothObjects} THEN ${merged} END FROM ${flavour.hold(sides)} AS ${ident(alias)})`;
+  return sql`(SELECT COALESCE(JSON_OBJECTAGG(${name}, ${value}), ${EMPTY_OBJECT}) FROM ${names} WHERE ${kept})`;
 }
 
 /**

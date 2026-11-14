@@ -13,6 +13,7 @@ const INSTANCE = "one";
 interface Doc {
   _id: string;
   o?: Record<string, string>;
+  p?: Record<string, string>;
 }
 
 interface Side {
@@ -82,7 +83,7 @@ const EXPECTED: Readonly<Record<"mysql" | "mariadb", Reads>> = {
   },
   mariadb: {
     member: { plain: "x", escapedFirst: "g", escapedLast: "x" },
-    merged: { plain: "x", escapedFirst: "g", escapedLast: "x" },
+    merged: { plain: "g", escapedFirst: "g", escapedLast: "g" },
     keys: { plain: ["é"], escapedFirst: ["é", "é"], escapedLast: ["é", "é"] },
     values: ["x", "g"],
     indexedG: ["escapedFirst"],
@@ -112,6 +113,40 @@ function Table(table: TableId) {
 
 function Member(row: ValueProxy<Doc>): ValueProxy<string> {
   return row.key("o").key("é");
+}
+
+/** The keys of `{_id}` merged with `{a"b, b}`, then with `{b, c}`, each merge in its own stage. */
+async function KeysAfterMerges(): Promise<string[] | undefined> {
+  const [keys] = await Table("bare")
+    .orderBy("_id")
+    .pluck("_id")
+    .map((row) => row.merge({ 'a"b': "1", b: "2" }))
+    .map((row) => row.merge({ b: "9", c: "3" }).keys())
+    .run();
+  return keys;
+}
+
+/**
+ * The values `o` and `p` hold after an update merges `{k: "1"}` into `o`, stored by raw SQL as
+ * `{"\\u00e9": "g"}`, and merges `o` into `p`, stored as `{"é": "x"}`.
+ */
+async function MergedEscaped(): Promise<(string[] | undefined)[]> {
+  await Table("bare").insert({ _id: "single" }).run();
+  await Run(
+    sql`UPDATE ${ident(PhysicalTable(SCHEMA_ID, "bare"))} SET ${ident("_extra")} = ${param('{"o": {"\\u00e9": "g"}, "p": {"é": "x"}}')} WHERE ${ident("_id")} = 'single'`,
+  );
+  await Table("bare")
+    .get("single")
+    .update((row) => ({
+      o: row.key("o").merge({ k: "1" }),
+      p: row.key("p").merge(row.key("o")),
+    }))
+    .run();
+  const [doc] = await Table("bare")
+    .getAll("single")
+    .map((row) => ({ o: row.key("o").values(), p: row.key("p").values() }))
+    .run();
+  return [doc?.o.sort(), doc?.p];
 }
 
 async function Ids(rows: Promise<Doc[]>): Promise<string[]> {
@@ -250,28 +285,27 @@ describe("an object that names one key twice", function () {
     });
   });
 
-  it("writes back the member a path read takes, as often as the object spells it, where an update merges the object", async () => {
+  it("keeps the left's keys first where a merged object repeats no key", async function () {
+    if (GetDialect().id !== "mariadb") {
+      this.skip();
+    }
+    expect(await KeysAfterMerges()).to.deep.equal(["_id", 'a"b', "b", "c"]);
+  });
+
+  it("writes back the last member, once, where an update merges the object", async () => {
     await Table("bare")
       .update((row) => ({ o: row.key("o").merge({ k: "1" }) }))
       .run();
     const rows = await Table("bare")
       .orderBy("_id")
-      .map((row) => ({ id: row.key("_id"), values: row.key("o").values() }))
+      .map((row) => row.key("o").values())
       .run();
-    expect(
-      Object.fromEntries(rows.map((row) => [row.id, row.values])),
-    ).to.deep.equal(
-      GetDialect().id === "mariadb"
-        ? {
-            escapedFirst: ["g", "g", "1"],
-            escapedLast: ["x", "x", "1"],
-            plain: ["x", "1"],
-          }
-        : {
-            escapedFirst: ["1", "g"],
-            escapedLast: ["1", "g"],
-            plain: ["1", "g"],
-          },
+    expect(rows.map((values) => [...values].sort())).to.deep.equal(
+      IDS.map(() => ["1", "g"]),
     );
+  });
+
+  it("keeps the value of a key spelled escaped where an update merges the object", async () => {
+    expect(await MergedEscaped()).to.deep.equal([["1", "g"], ["g"]]);
   });
 });
