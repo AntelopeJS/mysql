@@ -46,18 +46,17 @@ const MYSQL_PIN = `SELECT ${orderedArray(
 )}`;
 
 /**
- * MariaDB 11.8 has no `variables_by_thread`, so it reads each variable from the statement history: the value the latest successful `SET` of each connection assigned to it, where a bare `SET NAMES <charset>` assigns its charset's default collation and reads as the charset; a connection that assigned none reads as `null`.
+ * MariaDB 11.8 has no `variables_by_thread`, so it reads the statement history: every successful session `SET` of each connection that names a pinned variable, a charset or `NAMES`, in any spelling. Each reads as the values it assigns in the pin's own form, so only statements shaped like the pin read as the pin, and any other such `SET` reads as an empty or a different value; a connection that ran none reads as `null`. `SET GLOBAL` and `SET STATEMENT ... FOR` leave the session as it was and are not read.
  */
 const MARIADB_PIN = String.raw`SELECT JSON_ARRAYAGG(JSON_ARRAY(name, value) ORDER BY name) FROM (
-  SELECT DISTINCT k.name, (
-    SELECT REGEXP_SUBSTR(s.SQL_TEXT, k.assigned) FROM performance_schema.events_statements_history_long s
-    WHERE s.THREAD_ID = t.THREAD_ID AND s.ERRORS = 0 AND s.SQL_TEXT REGEXP CONCAT('^SET .*(', k.assigned, ')')
-    ORDER BY s.EVENT_ID DESC LIMIT 1) AS value
+  SELECT DISTINCT k.name, REGEXP_SUBSTR(s.SQL_TEXT, CONCAT('(?<=', k.prefix, ''')[^'']+')) AS value
   ${POOLED}
-  JOIN (SELECT 'collation_connection' AS name, '(NAMES [^,]*COLLATE|collation_connection\\s*=)\\s*''\\K[^'']+|NAMES (?![^,]*COLLATE)\\K\\w+' AS assigned
-    UNION ALL SELECT 'time_zone', 'time_zone\\s*=\\s*''\\K[^'']+'
-    UNION ALL SELECT 'lc_messages', 'lc_messages\\s*=\\s*''\\K[^'']+'
-    UNION ALL SELECT 'sql_mode', 'sql_mode\\s*=\\s*''\\K[^'']*') k
+  JOIN (SELECT 'collation_connection' AS name, 'SET NAMES utf8mb4 COLLATE ' AS prefix
+    UNION ALL SELECT 'time_zone', ', time_zone = '
+    UNION ALL SELECT 'lc_messages', ', lc_messages = '
+    UNION ALL SELECT 'sql_mode', ', sql_mode = ') k
+  LEFT JOIN performance_schema.events_statements_history_long s ON s.THREAD_ID = t.THREAD_ID AND s.ERRORS = 0
+    AND s.SQL_TEXT REGEXP '(?is)^\\s*(/\\*.*?\\*/\\s*)*SET\\s+(?!GLOBAL\\b|STATEMENT\\b|@@global\\.).*(time_zone|sql_mode|lc_messages|collation|character_set|NAMES)'
   WHERE ${VERIFY_POOL}) pinned`;
 
 /** The database every journey starts from empty: the service's `reset` drops and creates it before each journey. */
