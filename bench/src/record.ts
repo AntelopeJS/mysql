@@ -1,6 +1,22 @@
-import type { CasePlan, EngineId } from "./engine";
+import { PATHS } from "./dataset";
+import type { CasePlan, EngineId, StatementPlan } from "./engine";
+import { ENGINE_TITLES } from "./format";
+import {
+  ArrayOf,
+  IsBoolean,
+  IsNumber,
+  IsString,
+  Member,
+  Optional,
+  Fields,
+} from "./guard";
 import type { QueryForm, QueryKind, FieldKey } from "./queries";
-import type { CaseTimings, SeedOutput } from "./results";
+import {
+  IsCaseTimings,
+  IsSeedOutput,
+  type CaseTimings,
+  type SeedOutput,
+} from "./results";
 
 /** The machine a run measured on. */
 export interface MachineRecord {
@@ -64,50 +80,85 @@ export interface BenchRecord {
   readonly baseRevision: string | undefined;
 }
 
-interface RecordTimes {
-  readonly startedAt: string;
-  readonly finishedAt: string;
-  readonly settings: object;
-  readonly machine: object;
-}
+const IsEngineId = Member(ENGINE_TITLES);
 
-function HasTimes(value: unknown): value is RecordTimes {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    Object.hasOwn(value, "settings") &&
-    Object.hasOwn(value, "machine") &&
-    Object.hasOwn(value, "startedAt") &&
-    Object.hasOwn(value, "finishedAt") &&
-    "settings" in value &&
-    "machine" in value &&
-    "startedAt" in value &&
-    "finishedAt" in value &&
-    typeof value.settings === "object" &&
-    typeof value.machine === "object" &&
-    typeof value.startedAt === "string" &&
-    typeof value.finishedAt === "string"
-  );
-}
+const QUERY_KINDS: Readonly<Record<QueryKind, true>> = {
+  filter: true,
+  orderBy: true,
+  lookup: true,
+};
+
+const QUERY_FORMS: Readonly<Record<QueryForm, true>> = {
+  path: true,
+  keys: true,
+  decorators: true,
+};
+
+const IsEngineRecord = Fields<EngineRecord>({
+  id: IsEngineId,
+  image: IsString,
+  digest: IsString,
+  version: IsString,
+  indexedTableDdl: IsString,
+  seed: IsSeedOutput,
+  plans: ArrayOf(
+    Fields<CasePlan>({
+      id: IsString,
+      statements: ArrayOf(
+        Fields<StatementPlan>({
+          text: IsString,
+          plan: IsString,
+          indexes: ArrayOf(IsString),
+        }),
+      ),
+      serverMs: ArrayOf(IsNumber),
+      rowsExamined: ArrayOf(IsNumber),
+      logged: IsNumber,
+    }),
+  ),
+});
 
 /**
- * Whether a value read back from `out/record.json` is a run's record: the fields the report reads.
- * A record from a run without a base, or from before runs had one, names no base commit.
+ * Whether a value read back from `out/record.json` is a run's record, every nested field included.
+ * A run without a base writes no `baseRevision`.
  */
-export function IsBenchRecord(value: unknown): value is BenchRecord {
-  return (
-    HasTimes(value) &&
-    Object.hasOwn(value, "cases") &&
-    Object.hasOwn(value, "engines") &&
-    Object.hasOwn(value, "rounds") &&
-    "cases" in value &&
-    "engines" in value &&
-    "rounds" in value &&
-    Array.isArray(value.cases) &&
-    Array.isArray(value.engines) &&
-    Array.isArray(value.rounds) &&
-    (!("baseRevision" in value) ||
-      value.baseRevision === undefined ||
-      typeof value.baseRevision === "string")
-  );
-}
+export const IsBenchRecord = Fields<BenchRecord>({
+  startedAt: IsString,
+  finishedAt: IsString,
+  machine: Fields<MachineRecord>({
+    cpu: IsString,
+    cores: IsNumber,
+    memoryGb: IsNumber,
+    kernel: IsString,
+    node: IsString,
+    docker: IsString,
+  }),
+  settings: Fields<BenchSettings>({
+    rows: IsNumber,
+    rounds: IsNumber,
+    runs: IsNumber,
+    budgetMs: IsNumber,
+    captureRuns: IsNumber,
+  }),
+  cases: ArrayOf(
+    Fields<CaseRecord>({
+      id: IsString,
+      kind: Member(QUERY_KINDS),
+      field: Member(PATHS),
+      form: Member(QUERY_FORMS),
+      indexed: IsBoolean,
+    }),
+  ),
+  engines: ArrayOf(IsEngineRecord),
+  rounds: ArrayOf(
+    Fields<RoundRecord>({
+      round: IsNumber,
+      engine: IsEngineId,
+      loadAverage: IsString,
+      containers: ArrayOf(IsString),
+      cases: ArrayOf(IsCaseTimings),
+      base: IsBoolean,
+    }),
+  ),
+  baseRevision: Optional(IsString),
+});

@@ -1,3 +1,12 @@
+import {
+  ArrayOf,
+  IsNumber,
+  IsString,
+  Member,
+  Optional,
+  RecordOf,
+  Fields,
+} from "./guard";
 import type { Backend } from "./settings";
 
 /** What a seeding run wrote: the time each table took to fill, and the rows it then counted. */
@@ -42,60 +51,54 @@ export interface MeasureOutput {
 
 export type RunOutput = SeedOutput | CaptureOutput | MeasureOutput;
 
-const MODES: ReadonlySet<string> = new Set(["seed", "capture", "measure"]);
-const BACKENDS: ReadonlySet<string> = new Set(["mysql", "postgres"]);
+const BACKENDS: Readonly<Record<Backend, true>> = {
+  mysql: true,
+  postgres: true,
+};
+const IsBackend = Member(BACKENDS);
 
-interface RunHeader {
-  readonly mode: string;
-  readonly backend: string;
-}
+/** Whether a value read back from JSON is a seeding run's output, fill times and counts included. */
+export const IsSeedOutput = Fields<SeedOutput>({
+  mode: Member({ seed: true }),
+  backend: IsBackend,
+  rows: IsNumber,
+  fillMs: RecordOf(IsNumber),
+  counts: RecordOf(IsNumber),
+});
 
-function HasHeader(value: unknown): value is RunHeader {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    Object.hasOwn(value, "mode") &&
-    Object.hasOwn(value, "backend") &&
-    "mode" in value &&
-    "backend" in value &&
-    typeof value.mode === "string" &&
-    typeof value.backend === "string" &&
-    MODES.has(value.mode) &&
-    BACKENDS.has(value.backend)
-  );
-}
+const IsCaptureOutput = Fields<CaptureOutput>({
+  mode: Member({ capture: true }),
+  backend: IsBackend,
+  cases: ArrayOf(
+    Fields<CaseCapture>({
+      id: IsString,
+      runs: IsNumber,
+      startedAt: IsNumber,
+      endedAt: IsNumber,
+      error: Optional(IsString),
+    }),
+  ),
+});
 
-interface SeedCounts extends RunHeader {
-  readonly rows: number;
-  readonly fillMs: object;
-  readonly counts: object;
-}
+/** Whether a value read back from JSON is one query's warm runs: its timings and answers. */
+export const IsCaseTimings = Fields<CaseTimings>({
+  id: IsString,
+  timings: ArrayOf(IsNumber),
+  answer: ArrayOf(IsString),
+  expected: ArrayOf(IsString),
+  wrongRuns: IsNumber,
+  error: Optional(IsString),
+});
 
-function HasSeedCounts(value: RunHeader): value is SeedCounts {
-  return (
-    Object.hasOwn(value, "rows") &&
-    Object.hasOwn(value, "fillMs") &&
-    Object.hasOwn(value, "counts") &&
-    "rows" in value &&
-    "fillMs" in value &&
-    "counts" in value &&
-    typeof value.rows === "number" &&
-    typeof value.fillMs === "object" &&
-    typeof value.counts === "object"
-  );
-}
+const IsMeasureOutput = Fields<MeasureOutput>({
+  mode: Member({ measure: true }),
+  backend: IsBackend,
+  cases: ArrayOf(IsCaseTimings),
+});
 
 /** Whether a value read back from a run's output file is that run's output: its mode, backend and results. */
 export function IsRunOutput(value: unknown): value is RunOutput {
-  if (!HasHeader(value)) {
-    return false;
-  }
-  if (value.mode === "seed") {
-    return HasSeedCounts(value);
-  }
   return (
-    Object.hasOwn(value, "cases") &&
-    "cases" in value &&
-    Array.isArray(value.cases)
+    IsSeedOutput(value) || IsCaptureOutput(value) || IsMeasureOutput(value)
   );
 }

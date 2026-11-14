@@ -18,7 +18,9 @@ jobs:
         README.md
         docs
       renovate-sync: false
-      extra-commands: node .agents/skills/formal-change-feed-delivery/check.mjs
+      extra-commands: |
+        node .agents/skills/formal-change-feed-delivery/check.mjs
+        pnpm run test:bench
       test-job: true
       windows: true
       setup-commands: |
