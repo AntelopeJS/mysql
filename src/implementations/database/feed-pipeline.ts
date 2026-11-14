@@ -33,24 +33,25 @@ const MATCHED_KEY = "matched";
 
 const MATCHES_EVERYTHING = sql`TRUE`;
 
+/** Whether a stage decides which rows pass, or what a passing row delivers. */
+type FeedStageRole = "selects" | "projects";
+
 /**
  * The stages a feed accepts before `changes()`, chosen by meaning rather than by what compiles.
  * `get` is the predicate alone here, and a `lookup` resolves as of delivery, not as of the event.
  */
-const FEED_STAGES: readonly string[] = [
-  "filter",
-  "map",
-  "pluck",
-  "without",
-  "key",
-  "default",
-  "get",
-  "getAll",
-  "between",
-  "lookup",
-];
-
-const ACCEPTED = new Set(FEED_STAGES);
+const FEED_STAGES: ReadonlyMap<string, FeedStageRole> = new Map([
+  ["filter", "selects"],
+  ["map", "projects"],
+  ["pluck", "projects"],
+  ["without", "projects"],
+  ["key", "projects"],
+  ["default", "projects"],
+  ["get", "selects"],
+  ["getAll", "selects"],
+  ["between", "selects"],
+  ["lookup", "projects"],
+]);
 
 /**
  * What the stages compile to, one statement per side of an event. Each answers one row whose one
@@ -85,7 +86,7 @@ function RefuseStage(stage: QueryStage): never {
 
 function Accepted(stages: QueryStage[]): QueryStage[] {
   for (const stage of stages) {
-    if (!ACCEPTED.has(stage.stage)) {
+    if (!FEED_STAGES.has(stage.stage)) {
       RefuseStage(stage);
     }
   }
@@ -98,34 +99,39 @@ function Matches(where: readonly Sql[]): Sql {
 }
 
 /**
- * One side's select list: the document it projects beside whether it matched, as the text of one
- * JSON object, so a document nested to the engine's depth limit is still delivered. The `where`
- * list is read as a boolean here and emptied from the relation.
+ * One side's select list: the document `projected` delivers beside whether `matched` passed, as
+ * the text of one JSON object, so a document nested to the engine's depth limit is still delivered.
+ * `matched` is its own statement, since a stage that wraps the filtered side keeps its predicates
+ * inside the wrap and answers no row, rather than a false one, for a side that fails them.
  */
-function Side(folded: Relation): Relation {
-  const { json } = folded.dialect.sql;
-  const document = AsJson(folded.dialect, CurrentValue(folded));
-  const matched = json.of(Matches(folded.where), "bool");
+function Side(projected: Relation, matched: Sql): Relation {
+  const { json } = projected.dialect.sql;
+  const document = AsJson(projected.dialect, CurrentValue(projected));
+  const passed = json.of(sql`COALESCE((${matched}), FALSE)`, "bool");
   return {
-    ...folded,
-    where: [],
+    ...projected,
     projection: {
       sql: json.objectText([
         [DOC_KEY, document.sql],
-        [MATCHED_KEY, matched],
+        [MATCHED_KEY, passed],
       ]),
       type: OPAQUE,
     },
   };
 }
 
-/** One side's select list as `Side` reads it, with `matched` alone as a SQL boolean. */
+/** Whether the side passed the stages' predicates, as a SQL boolean over its one row or none. */
 function Match(folded: Relation): Relation {
   return {
     ...folded,
     where: [],
     projection: { sql: Matches(folded.where), type: BOOL },
   };
+}
+
+/** The stages that build what a side delivers, which no predicate changes. */
+function Projecting(stages: QueryStage[]): QueryStage[] {
+  return stages.filter((stage) => FEED_STAGES.get(stage.stage) === "projects");
 }
 
 /**
@@ -166,7 +172,8 @@ function CompileSide(
  *
  * The documents follow the **operation**, not the membership: an update carries both sides even
  * where one of them no longer matches, which is what lets a consumer see what a row looked like
- * before it left the filter.
+ * before it left the filter. So each document is compiled from the projecting stages alone, over
+ * a relation that keeps its one row whatever a later stage wraps.
  */
 export function CompileFeed(
   stages: QueryStage[],
@@ -182,13 +189,20 @@ export function CompileFeed(
     dialect,
   );
   const accepted = Accepted(stages);
+  const projecting = Projecting(accepted);
   const [before, after] = [CHANGE_LOG.oldImage, CHANGE_LOG.newImage].map(
-    (image) => CompileSide(accepted, origin, context, image),
+    (image) => {
+      const matched = Render(
+        Match(CompileSide(accepted, origin, context, image)),
+      );
+      const projected = CompileSide(projecting, origin, context, image);
+      return { matched, projected };
+    },
   );
   return {
-    old: Render(Side(before)),
-    new: Render(Side(after)),
-    matches: { old: Render(Match(before)), new: Render(Match(after)) },
-    type: CurrentValue(before).type,
+    old: Render(Side(before.projected, before.matched)),
+    new: Render(Side(after.projected, after.matched)),
+    matches: { old: before.matched, new: after.matched },
+    type: CurrentValue(before.projected).type,
   };
 }
