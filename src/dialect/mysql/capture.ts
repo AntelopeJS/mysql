@@ -348,6 +348,9 @@ function Reaped(through: bigint): Sql {
 /** Microseconds in a millisecond, which `INTERVAL` takes the retention in. */
 const MICROSECONDS_PER_MS = 1000;
 
+/** `ER_CUT_VALUE_GROUP_CONCAT`: an aggregate passed `max_allowed_packet` and was cut short. */
+const CUT_AGGREGATE = 1260;
+
 export function CaptureOf(flavour: Flavour, syntax: SqlSyntax): CaptureSyntax {
   const image: ImageSyntax = {
     json: syntax.json,
@@ -366,6 +369,7 @@ export function CaptureOf(flavour: Flavour, syntax: SqlSyntax): CaptureSyntax {
     triggerRefusal: TriggerRefusal,
     tooDeep: (error) =>
       "errno" in error && error.errno === flavour.tooDeepErrno,
+    cutAggregate: (error) => "errno" in error && error.errno === CUT_AGGREGATE,
     warnings: flavour.warnsTooDeep
       ? {
           list: sql`SHOW WARNINGS`,

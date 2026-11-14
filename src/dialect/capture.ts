@@ -85,6 +85,16 @@ export interface CaptureSyntax {
   /** Whether a statement failed because a JSON document it built nests deeper than the engine allows. */
   tooDeep(error: Error): boolean;
   /**
+   * Whether the engine cut an aggregate of the statement short at `max_allowed_packet`, which it
+   * lists among {@link CaptureSyntax.warnings} `list` rather than failing the statement.
+   */
+  cutAggregate(error: Error): boolean;
+  /**
+   * The statement listing the warnings of the session's last statement, on an engine that answers
+   * SQL NULL for a JSON document nested deeper than it allows rather than failing; `undefined`
+   * where such a statement fails. A warning it lists counts as {@link CaptureSyntax.tooDeep} by its
+   * `Code` as an `errno`.
+   /**
    * On an engine that answers SQL NULL for a JSON document nested deeper than it allows rather than
    * failing, the statements that `list` the session's warnings and `clear` them; `undefined` where
    * such a statement fails. A warning `list` answers counts as {@link CaptureSyntax.tooDeep} by its
