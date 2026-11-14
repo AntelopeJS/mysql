@@ -26,8 +26,8 @@ function Readings() {
  * `"0"` in the undeclared field is another value, which no group may merge with the number 0.
  */
 const ROWS: Reading[] = [
-  { _id: "positive", n: 0, loose: 0 },
   { _id: "negative", n: -0, loose: -0 },
+  { _id: "positive", n: 0, loose: 0 },
   { _id: "one", n: 1, loose: 1 },
   { _id: "text", n: 2, loose: "0" },
 ];
@@ -50,6 +50,14 @@ describe("a group key of 0 and -0", function () {
 
   after(async () => {
     await schema.destroyInstance(INSTANCE).run();
+  });
+
+  it("hands the mapper 0 as the key of an undeclared field's zeros, -0 stored first", async () => {
+    const groups = await Readings()
+      .group("loose", (rows, key) => ({ key, size: rows.count() }))
+      .run();
+    const zeros = groups.find((group) => group.size === 2);
+    expect(Object.is(zeros?.key, 0), String(zeros?.key)).to.equal(true);
   });
 
   for (const key of ["n", "loose", "byN"] as const) {
