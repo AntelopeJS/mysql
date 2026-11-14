@@ -27,6 +27,8 @@ const NUMBERS = [
   "9007199254740992e0",
   "1",
   "1.0",
+  "0.1",
+  "0.10000000000000001",
 ] as const;
 
 const SIGNED_MIN = -(2n ** 63n);
@@ -34,23 +36,31 @@ const UNSIGNED_MAX = 2n ** 64n - 1n;
 
 /**
  * The value MySQL compares a number by: an integer literal from -2^63 to 2^64 - 1 exactly, and any
- * other number as the double it parses to, by the digits of its shortest decimal. Each number of
- * {@link NUMBERS} is integral and below 10^21, which JavaScript writes without an exponent.
+ * other number as the double it parses to, an integral one by the digits of its shortest decimal.
+ * Each integral number of {@link NUMBERS} is below 10^21, which JavaScript writes without an exponent.
  */
-function MysqlValue(text: string): bigint {
+function MysqlValue(text: string): bigint | number {
   if (/^-?[0-9]+$/.test(text)) {
     const exact = BigInt(text);
     if (exact >= SIGNED_MIN && exact <= UNSIGNED_MAX) {
       return exact;
     }
   }
-  return BigInt(Number(text).toString());
+  const double = Number(text);
+  return Number.isInteger(double) ? BigInt(double.toString()) : double;
+}
+
+/** Whether MySQL finds two numbers equal: neither below the other. */
+function Same(left: string, right: string): boolean {
+  const [l, r] = [MysqlValue(left), MysqlValue(right)];
+  return !(l < r) && !(l > r);
 }
 
 /** What `lt`, `eq`, `gt`, `le` and `ge` answer for two numbers, as MySQL compares them. */
 function Order(left: string, right: string): string {
   const [l, r] = [MysqlValue(left), MysqlValue(right)];
-  return JSON.stringify([l < r, l === r, l > r, l <= r, l >= r]);
+  const same = Same(left, right);
+  return JSON.stringify([l < r, same, l > r, l < r || same, l > r || same]);
 }
 
 interface Pair {
@@ -71,7 +81,7 @@ const schema = new Schema<{ pairs: Pair; singles: Single }>(SCHEMA_ID, {
 
 /** Each ordered pair of numbers MySQL finds equal, as `left right` texts. */
 const EQUAL = NUMBERS.flatMap((left) =>
-  NUMBERS.filter((right) => MysqlValue(left) === MysqlValue(right)).map(
+  NUMBERS.filter((right) => Same(left, right)).map(
     (right) => `${left} ${right}`,
   ),
 ).sort();

@@ -120,14 +120,18 @@ function KindTagged(value: Sql): Sql {
   return sql`COALESCE(${RankedText(value)}, ${Tagged(RANKS.null)})`;
 }
 
+/** 2^53, the least magnitude of two numbers one double holds and equality tells apart. */
+const SAFE_BOUND = sql`9007199254740992e0`;
+
 /**
- * The exact value of a number whose dedup key is an integer's digits, and 0 for any other value: two
- * numbers one double holds and equality tells apart, as `9007199254740993` and `9007199254740992e0`,
- * are both such integers, which MySQL orders by their exact values.
+ * The exact value of a number from 2^53 in magnitude whose dedup key is an integer's digits, and 0
+ * for any other value: two numbers one double holds and equality tells apart, as
+ * `9007199254740993` and `9007199254740992e0`, are both such integers, which MySQL orders by their
+ * exact values.
  */
 function ExactInteger(flavour: Flavour, value: Sql): Sql {
   const key = flavour.canonicalNumber(value);
-  return sql`(CASE WHEN ${key} REGEXP '^-?[0-9]{1,20}$' THEN CAST(${key} AS DECIMAL(65, 0)) ELSE 0 END)`;
+  return sql`(CASE WHEN NOT ${Is(value, ["number"])} THEN 0 WHEN ABS(CAST(${value} AS DOUBLE)) < ${SAFE_BOUND} THEN 0 WHEN ${key} REGEXP '^-?[0-9]{1,20}$' THEN CAST(${key} AS DECIMAL(65, 0)) ELSE 0 END)`;
 }
 
 /**

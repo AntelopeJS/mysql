@@ -3,15 +3,17 @@ import { type Sql, ident, int, sql } from "../../statement";
 import { BINARY_COLLATION, Json } from "./json-text";
 
 /**
- * Equality as JSON: two numbers where they share a {@link NumberKey}, as MySQL's JSON `=` finds
- * them, and any other pair where `JSON_EQUALS` holds, an object whatever its key order. `JSON_EQUALS`
- * itself compares an integer with a double by the double's exact value, so it finds
- * `18446744073709549568e0` equal to `18446744073709549568`, which MySQL does not. `JSON_EQUALS` is
+ * Equality as JSON: two numbers where they share a {@link NumberKey}, as MySQL's JSON `=` finds them,
+ * and any other pair where `JSON_EQUALS` holds, an object whatever its key order. `JSON_EQUALS`
+ * compares numbers by their exact decimal values, so it finds `0.1` unequal to
+ * `0.10000000000000001` and `18446744073709549568e0` equal to `18446744073709549568`, which MySQL,
+ * reading each as a double or an integer, does not. Two numbers whose texts are {@link Short} hold at
+ * most 15 significant digits, which tell doubles apart, so `JSON_EQUALS` answers for them. `JSON_EQUALS` is
  * compared with 1 rather than read as a truth, which MariaDB 11.8 and 12.3 take to hold where it is
  * SQL NULL, in a `WHERE` and a `CASE` alike.
  */
 export function JsonEquals(left: Sql, right: Sql): Sql {
-  return sql`(CASE WHEN ${IsNumber(left)} AND ${IsNumber(right)} THEN ${NumberKey(left)} = ${NumberKey(right)} ELSE JSON_EQUALS(${left}, ${right}) = 1 END)`;
+  return sql`(CASE WHEN ${IsNumber(left)} AND ${IsNumber(right)} AND NOT (${Short(left)} AND ${Short(right)}) THEN ${NumberKey(left)} = ${NumberKey(right)} ELSE JSON_EQUALS(${left}, ${right}) = 1 END)`;
 }
 
 /**
@@ -74,6 +76,14 @@ export function CanonicalNumber(value: Sql): Sql {
 
 function IsNumber(value: Sql): Sql {
   return sql`JSON_TYPE(${value}) IN ('INTEGER', 'DOUBLE')`;
+}
+
+/** The most characters of a number's text that hold at most 15 significant digits. */
+const SHORT_TEXT = 15;
+
+/** Whether a value's text is {@link SHORT_TEXT} characters or fewer. */
+function Short(value: Sql): Sql {
+  return sql`CHAR_LENGTH(${value}) <= ${int(SHORT_TEXT)}`;
 }
 
 /**
