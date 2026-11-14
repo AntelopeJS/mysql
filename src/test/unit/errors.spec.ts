@@ -5,6 +5,7 @@ import { DIALECTS } from "../../dialect";
 import { DuplicateKeyFailure } from "../../implementations/database/duplicate-key";
 import { ExecuteAtomicWrite } from "../../implementations/database/writes-atomic";
 import { PlanOf } from "./pipeline-fixture";
+import { BinlogFormatRefusal } from "../../warnings";
 import type { TableOrigin } from "../../implementations/database/relation";
 
 function classify(error: Error) {
@@ -125,6 +126,17 @@ describe("A failed write", () => {
 });
 
 describe("An atomic mutation's outcome", () => {
+  /** Fails where the refusal drops the server's errno, which reads as a lost connection and answers "unknown". */
+  it("rethrows the statement-format binary log's refusal, which did not apply", async () => {
+    const refusal = new BinlogFormatRefusal(
+      ServerError(1665, "Cannot execute statement"),
+    );
+    const outcome = await ExecuteAtomicWrite(DIALECTS.mysql, () =>
+      Promise.reject(refusal),
+    ).then(String, (err: unknown) => err);
+    expect(outcome).to.equal(refusal);
+  });
+
   it("is applied for a matched row and not applied for none", async () => {
     expect(
       await ExecuteAtomicWrite(DIALECTS.mysql, () => Promise.resolve(1)),

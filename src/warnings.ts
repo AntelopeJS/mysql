@@ -22,7 +22,22 @@ class AggregateTooLarge extends Error {
   }
 }
 
-const STATEMENT_BINLOG_REFUSAL = `The server refused the write (errno 1665): its binary log records statements (binlog_format = STATEMENT), and InnoDB logs a write at READ COMMITTED, the isolation this module writes at, only as rows. Set binlog_format to ROW or MIXED on the server, the defaults of MySQL and MariaDB (SET GLOBAL binlog_format = 'ROW', and in its configuration file to keep it across a restart); a connection keeps the format it opened with, so restart the application after. See https://dev.mysql.com/doc/refman/8.4/en/binary-log-setting.html`;
+/**
+ * A write the server refused because its binary log records statements. It keeps the server's
+ * errno and SQL state, so it still reads as that refusal and never as a lost connection.
+ */
+export class BinlogFormatRefusal extends Error {
+  readonly errno = 1665;
+  readonly sqlState = "HY000";
+  readonly code = "ER_BINLOG_STMT_MODE_AND_ROW_ENGINE";
+
+  constructor(cause: Error) {
+    super(
+      `The server refused the write (errno 1665): its binary log records statements (binlog_format = STATEMENT), and InnoDB logs a write at READ COMMITTED or READ UNCOMMITTED, as this one ran, only as rows. Set binlog_format to ROW or MIXED on the server, the defaults of MySQL and MariaDB (SET GLOBAL binlog_format = 'ROW', and in its configuration file to keep it across a restart); a connection keeps the format it opened with, so restart the application after. See https://dev.mysql.com/doc/refman/8.4/en/binary-log-setting.html`,
+      { cause },
+    );
+  }
+}
 
 /** A row of the engine's warnings listing, read only through the two columns it names. */
 interface ListedWarning extends RowDataPacket {
@@ -65,7 +80,7 @@ export async function CutBehind(
 ): Promise<Error> {
   const { kind } = errors.classify(failure);
   if (kind === "binlogFormat") {
-    return new Error(STATEMENT_BINLOG_REFUSAL, { cause: failure });
+    return new BinlogFormatRefusal(failure);
   }
   if (!capture.warnings || kind !== "server") {
     return failure;
