@@ -1,7 +1,7 @@
 import { has, type Journey } from "@antelopejs/tooling-configs/verify";
 
 import { pick, text } from "./json.ts";
-import { answered, close, logs, open, ownedConfig, part, same, sees, seed, server, sql, type Engine } from "./session.ts";
+import { answered, close, logs, open, orderedArray, ownedConfig, part, same, sees, seed, server, sql, type Engine } from "./session.ts";
 
 const BARE = `{ items: { fields: { price: "number", sku: "string" }, indexes: {} } }`;
 const UNIQUE = `{ items: { fields: { price: "number", sku: "string" }, indexes: { price: { unique: true } } } }`;
@@ -44,7 +44,7 @@ return {
     ]);
     context.expect(writes.folder, [has("the index phase warns that it could not build the index", await logs(refused), /could not build unique index 'price': Duplicate entry '7'/u)]);
     await close(refused);
-    const stored = await sql(context, engine, "read the rows the refused writes left", `SELECT JSON_ARRAYAGG(JSON_ARRAY(_id, price)) FROM (SELECT _id, price FROM \`${TABLE}\` ORDER BY _id) r`);
+    const stored = await sql(context, engine, "read the rows the refused writes left", `SELECT ${orderedArray("JSON_ARRAY(_id, price)", "_id", `\`${TABLE}\``)}`);
     context.expect(stored.folder, [same("no refused write stored a row, and the delete removed b", stored.value, [["a", 7], ["c", 8]])]);
 
     const rebuilt = await open(context, ownedConfig(server(context, engine)));
@@ -62,7 +62,7 @@ return { insert: await attempt(items.insert({ _id: "e", price: 9 }).run()), dupl
       sees("a duplicate throws DuplicateKeyError from the built index", part(after, "duplicate"), "DuplicateKeyError"),
     ]);
     await close(rebuilt);
-    const index = await sql(context, engine, "read the price index", `SELECT JSON_ARRAYAGG(NON_UNIQUE) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = 'verify' AND TABLE_NAME = '${TABLE}' AND INDEX_NAME = 'price'`);
+    const index = await sql(context, engine, "read the price index", `SELECT ${orderedArray("NON_UNIQUE", "SEQ_IN_INDEX", `information_schema.STATISTICS WHERE TABLE_SCHEMA = 'verify' AND TABLE_NAME = '${TABLE}' AND INDEX_NAME = 'price'`)}`);
     context.expect(index.folder, [same("the unique price index exists", index.value, [0, 0])]);
   },
 });

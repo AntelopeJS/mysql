@@ -1,7 +1,7 @@
 import { has, type Journey, type JourneyContext } from "@antelopejs/tooling-configs/verify";
 
 import { pick, text } from "./json.ts";
-import { answered, close, logs, open, ownedConfig, same, sees, seed, server, sql, DATABASE, type Answer, type Engine, type Session } from "./session.ts";
+import { answered, close, logs, open, orderedArray, ownedConfig, same, sees, seed, server, sql, DATABASE, type Answer, type Engine, type Session } from "./session.ts";
 
 const DEFINITION = (indexes: string): string => `{ items: { fields: { price: "number", sku: "string" }, indexes: ${indexes} } }`;
 const BARE = DEFINITION("{}");
@@ -43,10 +43,10 @@ async function loggedWithin(session: Session, pattern: RegExp, attempts: number)
 }
 
 const rows = (engine: Engine, context: JourneyContext, name: string) =>
-  sql(context, engine, name, `SELECT COALESCE(JSON_ARRAYAGG(JSON_ARRAY(_id, price, sku)), JSON_ARRAY()) FROM (SELECT _id, price, sku FROM \`${TABLE}\` ORDER BY _id) r`);
+  sql(context, engine, name, `SELECT COALESCE(${orderedArray("JSON_ARRAY(_id, price, sku)", "_id", `\`${TABLE}\``)}, JSON_ARRAY())`);
 
 const priceIndex = (engine: Engine, context: JourneyContext, name: string) =>
-  sql(context, engine, name, `SELECT COALESCE(JSON_ARRAYAGG(NON_UNIQUE), JSON_ARRAY()) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = '${DATABASE}' AND TABLE_NAME = '${TABLE}' AND INDEX_NAME = 'price'`);
+  sql(context, engine, name, `SELECT COALESCE(${orderedArray("NON_UNIQUE", "SEQ_IN_INDEX", `information_schema.STATISTICS WHERE TABLE_SCHEMA = '${DATABASE}' AND TABLE_NAME = '${TABLE}' AND INDEX_NAME = 'price'`)}, JSON_ARRAY())`);
 
 async function showIndex(engine: Engine, context: JourneyContext, name: string): Promise<void> {
   const shown = await context.native(name, engine.service, [engine.client, "-uroot", "-B", DATABASE, "-e", `SHOW INDEX FROM \`${TABLE}\``]);
@@ -131,7 +131,7 @@ export const lockedUniqueIndex = (engine: Engine): Journey => ({
       await close(app);
       const final = await rows(engine, context, "read the stored rows");
       context.expect(final.folder, [same("exactly one row per key", final.value, [["e", 9, null], ["seed", 1, "renamed"]])]);
-      const counts = await sql(context, engine, "count rows per price", `SELECT COALESCE(JSON_ARRAYAGG(JSON_ARRAY(price, n)), JSON_ARRAY()) FROM (SELECT price, COUNT(*) n FROM \`${TABLE}\` GROUP BY price ORDER BY price) r`);
+      const counts = await sql(context, engine, "count rows per price", `SELECT COALESCE(${orderedArray("JSON_ARRAY(price, n)", "price", `(SELECT price, COUNT(*) n FROM \`${TABLE}\` GROUP BY price) r`)}, JSON_ARRAY())`);
       context.expect(counts.folder, [same("every price is stored once", counts.value, [[1, 1], [9, 1]])]);
     } finally {
       await context.native("release the holding client", engine.service, ["sh", "-c", `touch ${FLAG}`]);

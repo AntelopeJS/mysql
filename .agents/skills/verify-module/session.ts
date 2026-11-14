@@ -94,6 +94,13 @@ interface NativeResult {
   stderr: string;
 }
 
+/**
+ * A subquery reading a JSON array of `element` over the rows of `from`, in `order`, and `NULL` over no row. `GROUP_CONCAT ... ORDER BY` keeps an order that `JSON_ARRAYAGG` over an ordered derived table promises on neither engine, and `JSON_EXTRACT` parses the text on both. A text `element` goes through `JSON_QUOTE`, and a `NULL` element is left out.
+ */
+export function orderedArray(element: string, order: string, from: string): string {
+  return `(SELECT JSON_EXTRACT(CONCAT('[', GROUP_CONCAT(${element} ORDER BY ${order} SEPARATOR ','), ']'), '$') FROM ${from})`;
+}
+
 /** Runs one statement with the engine's client inside its container, as root, and parses the JSON its last line prints; a statement that fails ends the journey, since its read-back would compare nothing. */
 export async function sql(context: JourneyContext, engine: Engine, name: string, statement: string, database = DATABASE): Promise<NativeResult> {
   const result = await context.native(name, engine.service, [...client(engine, database), statement]);

@@ -1,7 +1,7 @@
 import type { Journey, JourneyContext } from "@antelopejs/tooling-configs/verify";
 
 import { pick } from "./json.ts";
-import { answered, client, close, open, ownedConfig, part, same, sees, seed, server, sql, type Engine } from "./session.ts";
+import { answered, client, close, open, orderedArray, ownedConfig, part, same, sees, seed, server, sql, type Engine } from "./session.ts";
 
 const DOCS = `new Schema("verify-feeds", { docs: { fields: { title: "string", price: "number" }, indexes: {} } })`;
 
@@ -77,8 +77,12 @@ return feeds;`,
       engine,
       "read the change log and the table's triggers",
       `SELECT JSON_OBJECT(
-  'log', (SELECT JSON_ARRAYAGG(t) FROM (SELECT TABLE_NAME AS t FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'verify' AND TABLE_NAME LIKE '\\_\\_antelope\\_change%' ORDER BY TABLE_NAME) l),
-  'triggers', (SELECT JSON_ARRAYAGG(e) FROM (SELECT CONCAT(ACTION_TIMING, ' ', EVENT_MANIPULATION, ' ', IF(TRIGGER_NAME REGEXP '^ajs_chg_[0-9a-f]{16}_[iud]$', 'ajs_chg_<signature>', TRIGGER_NAME)) AS e FROM information_schema.TRIGGERS WHERE EVENT_OBJECT_SCHEMA = 'verify' AND EVENT_OBJECT_TABLE = '${TABLE}' ORDER BY EVENT_MANIPULATION) g))`,
+  'log', ${orderedArray("JSON_QUOTE(TABLE_NAME)", "CAST(TABLE_NAME AS BINARY)", "information_schema.TABLES WHERE TABLE_SCHEMA = 'verify' AND TABLE_NAME LIKE '\\_\\_antelope\\_change%'")},
+  'triggers', ${orderedArray(
+    "JSON_QUOTE(CONCAT(ACTION_TIMING, ' ', EVENT_MANIPULATION, ' ', IF(TRIGGER_NAME REGEXP '^ajs_chg_[0-9a-f]{16}_[iud]$', 'ajs_chg_<signature>', TRIGGER_NAME)))",
+    "FIELD(EVENT_MANIPULATION, 'INSERT', 'UPDATE', 'DELETE')",
+    `information_schema.TRIGGERS WHERE EVENT_OBJECT_SCHEMA = 'verify' AND EVENT_OBJECT_TABLE = '${TABLE}'`,
+  )})`,
     );
     context.expect(log.folder, [
       same("registration created the change log, its clock and its reaped high-waters", pick(log.value, "log"), ["__antelope_change_clock", "__antelope_change_reaped", "__antelope_changes"]),

@@ -1,7 +1,7 @@
 import { has, type Journey } from "@antelopejs/tooling-configs/verify";
 
 import { parseJson, pick } from "./json.ts";
-import { answered, close, open, path, same, sees, server, sql, urlOf, type Engine, type ModuleConfig } from "./session.ts";
+import { answered, close, open, orderedArray, path, same, sees, server, sql, urlOf, type Engine, type ModuleConfig } from "./session.ts";
 
 /** A server nothing answers on, so a refusal that regressed past validation can never reach a developer's local database. */
 const DEAD = "mysql://root@127.0.0.1:1/verify";
@@ -48,14 +48,16 @@ const notes = schema.instance().table("notes");
 await notes.insert({ _id: "n1", title: "stored" }).run();
 return (await notes.get("n1").run()).title;`;
 
-const PIN = `SELECT JSON_ARRAYAGG(JSON_ARRAY(name, value)) FROM (
-  SELECT DISTINCT v.VARIABLE_NAME AS name, v.VARIABLE_VALUE AS value
+const PIN = `SELECT ${orderedArray(
+  "JSON_ARRAY(name, value)",
+  "name",
+  `(SELECT DISTINCT v.VARIABLE_NAME AS name, v.VARIABLE_VALUE AS value
   FROM performance_schema.session_connect_attrs a
   JOIN performance_schema.threads t ON t.PROCESSLIST_ID = a.PROCESSLIST_ID
   JOIN performance_schema.variables_by_thread v ON v.THREAD_ID = t.THREAD_ID
   WHERE a.ATTR_NAME = 'program_name' AND a.ATTR_VALUE = 'verify-pool'
-    AND v.VARIABLE_NAME IN ('collation_connection', 'time_zone', 'lc_messages', 'sql_mode')
-  ORDER BY name) pinned`;
+    AND v.VARIABLE_NAME IN ('collation_connection', 'time_zone', 'lc_messages', 'sql_mode')) pinned`,
+)}`;
 
 export const configOptions = (engine: Engine): Journey => ({
   title: engine.performanceSchema
@@ -79,7 +81,7 @@ export const configOptions = (engine: Engine): Journey => ({
       context,
       engine,
       "read the prefixed table",
-      `SELECT JSON_ARRAYAGG(TABLE_NAME) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'verify' AND TABLE_NAME LIKE '%verify-config%'`,
+      `SELECT ${orderedArray("JSON_QUOTE(TABLE_NAME)", "CAST(TABLE_NAME AS BINARY)", "information_schema.TABLES WHERE TABLE_SCHEMA = 'verify' AND TABLE_NAME LIKE '%verify-config%'")}`,
     );
     context.expect(stored.folder, [same("the table is stored as <schemaPrefix><schemaId>__<tableId> in the url's database, and only there", stored.value, ["app_verify-config__notes"])]);
     const dialect = await sql(

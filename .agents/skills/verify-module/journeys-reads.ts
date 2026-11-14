@@ -1,7 +1,7 @@
 import type { Journey } from "@antelopejs/tooling-configs/verify";
 
 import { pick } from "./json.ts";
-import { answered, close, open, ownedConfig, part, same, sees, server, sql, type Engine } from "./session.ts";
+import { answered, close, open, orderedArray, ownedConfig, part, same, sees, server, sql, type Engine } from "./session.ts";
 
 const CATALOG = `{ products: { fields: { name: "string", price: "number", category: "string", tags: "string[]" }, indexes: { price: {}, category: {} } }, categories: { fields: { label: "string" }, indexes: {} } }`;
 
@@ -9,9 +9,9 @@ const PRODUCTS = "`verify-reads__products`";
 
 const COMPARED = ["cheap", "byPriceDesc", "between", "getAll", "count", "groups", "streamed"];
 
-/** A JSON array of `value` over the rows `where` keeps, in `order`: GROUP_CONCAT keeps an order that JSON_ARRAYAGG does not promise, and JSON_EXTRACT parses the text on both engines. */
+/** A JSON array of `value` over the products `where` keeps, in `order`. */
 function ordered(value: string, order: string, where = "TRUE"): string {
-  return `(SELECT JSON_EXTRACT(CONCAT('[', GROUP_CONCAT(${value} ORDER BY ${order} SEPARATOR ','), ']'), '$') FROM ${PRODUCTS} WHERE ${where})`;
+  return orderedArray(value, order, `${PRODUCTS} WHERE ${where}`);
 }
 
 export const readQueries = (engine: Engine): Journey => ({
@@ -59,7 +59,7 @@ return out;`,
   'between', ${ordered("JSON_QUOTE(_id)", "price", "price >= 10 AND price < 60")},
   'getAll', ${ordered("JSON_QUOTE(_id)", "price", "category = 'c1'")},
   'count', (SELECT COUNT(*) FROM ${PRODUCTS} WHERE JSON_CONTAINS(tags, '"home"')),
-  'groups', (SELECT JSON_EXTRACT(CONCAT('[', GROUP_CONCAT(JSON_ARRAY(category, n) ORDER BY category SEPARATOR ','), ']'), '$') FROM (SELECT category, COUNT(*) AS n FROM ${PRODUCTS} GROUP BY category) g),
+  'groups', ${orderedArray("JSON_ARRAY(category, n)", "category", `(SELECT category, COUNT(*) AS n FROM ${PRODUCTS} GROUP BY category) g`)},
   'streamed', ${ordered("JSON_QUOTE(_id)", "_id")})`,
     );
     context.expect(result.folder, [

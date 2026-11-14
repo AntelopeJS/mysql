@@ -2,7 +2,7 @@ import { has, type Journey } from "@antelopejs/tooling-configs/verify";
 
 import { CLIENT, externalConfig, SALES, seedClient } from "./client.ts";
 import { pick, text } from "./json.ts";
-import { answered, close, logs, open, part, same, sees, sql, type Engine } from "./session.ts";
+import { answered, close, logs, open, orderedArray, part, same, sees, sql, type Engine } from "./session.ts";
 
 const ATTEMPT = `const attempt = async (label, work) => { try { await work(); out[label] = { ok: true }; } catch (error) { out[label] = { name: error.name, kind: error.kind ?? null, message: String(error.message) }; } };`;
 
@@ -72,7 +72,7 @@ return out;`,
   'inserted', (SELECT JSON_OBJECT('name', name, 'status', status, 'score', score) FROM accounts WHERE id = 31),
   'updated', (SELECT JSON_OBJECT('status', status, 'score', score) FROM accounts WHERE id = 2),
   'rows', (SELECT COUNT(*) FROM accounts),
-  'audit', (SELECT JSON_ARRAYAGG(note) FROM audit),
+  'audit', ${orderedArray("JSON_QUOTE(note)", "id", "audit")},
   'installed', (SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_NAME LIKE '\\_\\_antelope%'),
   'triggers', (SELECT COUNT(*) FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = '${CLIENT}'))`,
       CLIENT,
