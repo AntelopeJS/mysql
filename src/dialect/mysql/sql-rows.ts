@@ -73,6 +73,13 @@ export function RowsOf(flavour: Flavour): RowSyntax {
         value: HeldRead(flavour, alias, held),
       };
     },
+    holdBare: (value, alias) => {
+      const held: Held = { name: "value", value, kind: "json" };
+      return {
+        from: flavour.holdBare(held),
+        value: HeldRead(flavour, alias, held),
+      };
+    },
   };
   const nestedLoop = flavour.nestedLoopJoin;
   return nestedLoop

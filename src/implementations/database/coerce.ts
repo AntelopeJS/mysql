@@ -1,5 +1,5 @@
 import type { Dialect } from "../../dialect";
-import { type Sql, join, sql } from "../../statement";
+import { type Sql, ident, join, sql } from "../../statement";
 import type { Compiled, NativeOperand } from "./sql";
 import { type Ordering, PathReference } from "./json";
 import {
@@ -254,6 +254,12 @@ function TextsOf(
   return path && [dialect.sql.json.memberText(path.document, ...path.path)];
 }
 
+/** A JSON value's default, with the value held at `alias` so the statement evaluates it once. */
+function HeldDefault(dialect: Dialect, pair: CompiledPair, alias: string) {
+  const held = dialect.sql.rows.holdBare(pair.left.sql, alias);
+  return sql`COALESCE((SELECT ${dialect.sql.json.present(held.value)} FROM ${held.from} AS ${ident(alias)}), ${pair.right.sql})`;
+}
+
 /** The texts of a JSON value or its default, where both have texts. */
 function DefaultedTexts(
   dialect: Dialect,
@@ -284,11 +290,16 @@ function DefaultType(value: SqlType, def: SqlType): SqlType {
  * Wherever the value is present the result is the value, so a key column holding the value holds
  * the result on those rows and is NULL on the others. The result keeps that key column, marked
  * `set`, and the read it falls back from, through which a later cast finds the key column.
+ *
+ * Given `nextAlias`, a JSON-backed value that is not a member read is held once in a one-row table:
+ * the absence test reads it through `NULLIF`, which evaluates its operand twice, so a chain of
+ * defaults each over the one before would otherwise evaluate the first value twice per link.
  */
 export function WithDefault(
   dialect: Dialect,
   value: Compiled,
   def?: Compiled,
+  nextAlias?: () => string,
 ): Compiled {
   if (!def) {
     return value;
@@ -301,7 +312,10 @@ export function WithDefault(
     type,
   };
   return {
-    sql: sql`COALESCE(${Absent(dialect, pair)}, ${pair.right.sql})`,
+    sql:
+      nextAlias && IsJsonBacked(type) && !left.path
+        ? HeldDefault(dialect, pair, nextAlias())
+        : sql`COALESCE(${Absent(dialect, pair)}, ${pair.right.sql})`,
     type: pair.type,
     key: left.key && { ...left.key, rows: "set" },
     defaulted: left.path ?? left.defaulted,

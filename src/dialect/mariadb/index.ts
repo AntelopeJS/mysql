@@ -515,6 +515,8 @@ const MARIADB: Flavour = {
   lateral: false,
   nestedLoopJoin: { jsonHash: JsonHash },
   hold: Hold,
+  holdBare: (held) =>
+    sql`JSON_TABLE(${held.value}, '$' COLUMNS (${ident(held.name)} JSON PATH '$'))`,
   tabled: Json,
   instant: Instant,
   instantText: (date) =>
