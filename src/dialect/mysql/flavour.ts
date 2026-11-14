@@ -81,6 +81,12 @@ export interface Flavour {
   json(text: Sql): Sql;
   /** Absent where the engine stores every key decoded, so a path finds a key however it was written. */
   readonly escapedKeys?: EscapedKeys;
+  /**
+   * Present where the engine stores an object as written, one key named twice included: the key
+   * of each of its members in order, as a JSON array, for an object whose `JSON_DEPTH` is below
+   * {@link Flavour.maxJsonNesting}. A deeper one may nest too deep once listed.
+   */
+  readonly memberKeys?: (object: Sql) => Sql;
   /** The JSON syntax's `present`, which depends on how the engine compares a JSON string. */
   present(value: Sql): Sql;
   /** The JSON syntax's `absent`, which depends on how the engine compares a JSON string. */

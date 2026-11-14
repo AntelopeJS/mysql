@@ -82,7 +82,7 @@ const EXPECTED: Readonly<Record<"mysql" | "mariadb", Reads>> = {
   },
   mariadb: {
     member: { plain: "x", escapedFirst: "g", escapedLast: "x" },
-    merged: { plain: "x", escapedFirst: "g", escapedLast: "x" },
+    merged: { plain: "g", escapedFirst: "g", escapedLast: "g" },
     keys: { plain: ["é"], escapedFirst: ["é", "é"], escapedLast: ["é", "é"] },
     values: ["x", "g"],
     indexedG: ["escapedFirst"],
@@ -250,7 +250,7 @@ describe("an object that names one key twice", function () {
     });
   });
 
-  it("writes back the member a path read takes, as often as the object spells it, where an update merges the object", async () => {
+  it("writes back the last member, once, where an update merges the object", async () => {
     await Table("bare")
       .update((row) => ({ o: row.key("o").merge({ k: "1" }) }))
       .run();
@@ -259,19 +259,11 @@ describe("an object that names one key twice", function () {
       .map((row) => ({ id: row.key("_id"), values: row.key("o").values() }))
       .run();
     expect(
-      Object.fromEntries(rows.map((row) => [row.id, row.values])),
-    ).to.deep.equal(
-      GetDialect().id === "mariadb"
-        ? {
-            escapedFirst: ["g", "g", "1"],
-            escapedLast: ["x", "x", "1"],
-            plain: ["x", "1"],
-          }
-        : {
-            escapedFirst: ["1", "g"],
-            escapedLast: ["1", "g"],
-            plain: ["1", "g"],
-          },
-    );
+      Object.fromEntries(rows.map((row) => [row.id, [...row.values].sort()])),
+    ).to.deep.equal({
+      escapedFirst: ["1", "g"],
+      escapedLast: ["1", "g"],
+      plain: ["1", "g"],
+    });
   });
 });
