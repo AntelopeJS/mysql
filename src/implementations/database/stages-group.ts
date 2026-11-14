@@ -263,6 +263,10 @@ function Folded(
  * column outside an aggregate, both engines run the aggregate around that subselect in the group's
  * select rather than in the query nested in the mapper, which then answers more than one row, or
  * the wrong one.
+ *
+ * The group's own term is read through `MIN`, which the group's select aggregates: MySQL 9.7 reads
+ * a bare term that is not a column, over a group that aggregates in a temporary table, as the term
+ * of one group for every group.
  */
 function GroupRowsAgain(grouped: Relation, context: DecodingContext): Relation {
   const terms = grouped.groupBy.map((term) => term.sql);
@@ -277,7 +281,7 @@ function GroupRowsAgain(grouped: Relation, context: DecodingContext): Relation {
     type: grouped.groupBy[index].type,
   }));
   const matches = columns.map(
-    (column, index) => sql`(${column} <=> ${terms[index]})`,
+    (column, index) => sql`(${column} <=> MIN(${terms[index]}))`,
   );
   rows.having = [sql`(MAX(${join(matches, sql` AND `)}) = 1)`];
   return rows;
