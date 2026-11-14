@@ -6,6 +6,7 @@ import { GetDialect, Read } from "../connection";
 import { ident, param, sql } from "../statement";
 import { WaitForIndexes } from "../implementations/database/schema";
 import { PhysicalTable, Run } from "./tables";
+import { HandedOver, InBatchesOfOne } from "./batches";
 import type { Nest } from "./watch";
 
 const SCHEMA_ID = "repeated_member";
@@ -211,7 +212,7 @@ interface DeepRow {
 
 /** How many objects a value nests. */
 function Levels(value: Nest | undefined): number {
-  return JSON.stringify(value).split('{"n":').length - 1;
+  return (JSON.stringify(value) ?? "").split('{"n":').length - 1;
 }
 
 /** Stores `rows` in `deep`. */
@@ -259,7 +260,12 @@ async function MergedDeep(
       .orderBy("_id")
       .map((row) => row.merge({ k: "1" })),
   );
-  return merged.map(({ tree, ...rest }) => ({ ...rest, tree: Levels(tree) }));
+  return merged.map(WithLevels);
+}
+
+/** A merged row of `deep` with `tree` as the number of objects it nests. */
+function WithLevels({ tree, ...rest }: Deep) {
+  return { ...rest, tree: Levels(tree) };
 }
 
 /** What `pending` answers, or `too deep` where it fails as nested too deep. */
@@ -504,6 +510,41 @@ describe("a merge operand that spells a key escaped and nests deep", function ()
     expect(await Answer(MergedDeep(rows, CURSOR))).to.deep.equal(
       refuses ? "too deep" : KeptLast(rows),
     );
+  });
+
+  describe("through a cursor of batches of one", function () {
+    InBatchesOfOne();
+
+    /**
+     * MariaDB 11.8 answers `{}` with warning 4040 for the merge it refuses, so a cursor that lists
+     * the warnings only at its end hands `{}` over in that row's place before it fails.
+     */
+    it("hands over only merges it read whole before it fails such a merge as nested too deep on MariaDB 11.8", async () => {
+      const rows = Renamed(
+        [DEEP_ROWS[0], DEEP_ROWS[2], DEEP_TWICE_ROWS[0]],
+        "batched",
+      );
+      await StoreDeep(rows);
+      const { rows: handed, failure } = await HandedOver(
+        schema
+          .instance(DEEP_INSTANCE)
+          .table("deep")
+          .getAll(rows.map(({ _id }) => _id))
+          .orderBy("_id")
+          .map((row) => row.merge({ k: "1" })),
+      );
+      const ending = await Answer(
+        failure === undefined
+          ? Promise.resolve(handed.length === rows.length ? "whole" : "short")
+          : Promise.reject(failure),
+      );
+      expect(handed.map(WithLevels)).to.deep.equal(
+        KeptLast(rows).slice(0, handed.length),
+      );
+      expect(ending).to.equal(
+        (await ListsShallowOnly()) ? "too deep" : "whole",
+      );
+    });
   });
 
   it("updates a row from such a merge, or fails as nested too deep on MariaDB 11.8 and changes no row", async () => {

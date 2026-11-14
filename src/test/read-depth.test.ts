@@ -7,6 +7,7 @@ import { param, sql } from "../statement";
 import { AcquireConnection, GetDialect, Read } from "../connection";
 import { GetOptions } from "../config";
 import { Reconnect } from "./tables";
+import { HandedOver, InBatchesOfOne } from "./batches";
 import type { Nest, Row } from "./watch";
 
 function Nested(levels: number): Nest {
@@ -55,6 +56,20 @@ async function Answer(read: Promise<Row[]>): Promise<Answered> {
   );
 }
 
+/**
+ * How a cursor ended: `whole`, `short` where it ended without a failure before its last row, `too
+ * deep` for the engine's too-deep error, or another error's text.
+ */
+function Ending(failure: unknown, isWhole: boolean): string {
+  if (failure === undefined) {
+    return isWhole ? "whole" : "short";
+  }
+  if (!(failure instanceof Error)) {
+    return "a failure that is no Error";
+  }
+  return GetDialect().capture.tooDeep(failure) ? "too deep" : failure.message;
+}
+
 async function Iterated<T>(query: Stream<T>): Promise<T[]> {
   const read: T[] = [];
   for await (const value of query) {
@@ -68,6 +83,10 @@ const depth = new Schema<{ rows: Row }>("read-depth", {
 });
 
 const cursorDepth = new Schema<{ rows: Row }>("read-depth-cursor", {
+  rows: { fields: { label: "string", tree: "object" }, indexes: {} },
+});
+
+const batchedDepth = new Schema<{ rows: Row }>("read-depth-batched", {
   rows: { fields: { label: "string", tree: "object" }, indexes: {} },
 });
 
@@ -183,5 +202,49 @@ describe("a cursor that builds a document deeper than the server builds", functi
     } finally {
       await Reconnect(restore);
     }
+  });
+});
+
+describe("a cursor of batches of one over rows around a document deeper than the server builds", function () {
+  this.timeout(30_000);
+
+  InBatchesOfOne();
+
+  let inColumn = 0;
+
+  before(async () => {
+    inColumn = await DeepestInColumn();
+    await batchedDepth
+      .instance()
+      .table("rows")
+      .insert([
+        { _id: "a", tree: Nested(1) },
+        { _id: "deepest", tree: Nested(inColumn) },
+        { _id: "z", tree: Nested(1) },
+      ])
+      .run();
+  });
+
+  /**
+   * MariaDB 11.8 answers SQL NULL with warning 4040 for the deepest row, so a cursor that lists the
+   * warnings only at its end hands `null` over in that row's place before it fails.
+   */
+  it("hands over only rows it read whole before it fails with the engine's too-deep error", async () => {
+    const merged = [
+      { _id: "a", label: "merged", tree: Nested(1) },
+      { _id: "deepest", label: "merged", tree: Nested(inColumn) },
+      { _id: "z", label: "merged", tree: Nested(1) },
+    ];
+    const { rows, failure } = await HandedOver(
+      batchedDepth
+        .instance()
+        .table("rows")
+        .orderBy("_id")
+        .map((row) => row.merge({ label: "merged" })),
+    );
+    expect(rows).to.deep.equal(merged.slice(0, rows.length));
+    expect(Ending(failure, rows.length === merged.length)).to.equal(
+      (await Nests(inColumn + 1)) ? "whole" : "too deep",
+    );
   });
 });

@@ -32,6 +32,7 @@ import {
 } from "../../implementations/database/utils";
 import type { JsonSyntax } from "../sql-types";
 import type { SqlSyntax } from "../types";
+import { CheckFailed, CheckedRows } from "./checked-rows";
 import type { Flavour } from "./flavour";
 
 const COMMA = sql`, `;
@@ -374,6 +375,9 @@ export function CaptureOf(flavour: Flavour, syntax: SqlSyntax): CaptureSyntax {
       ? {
           list: sql`SHOW WARNINGS`,
           clear: sql`SELECT 1 FROM (SELECT 1) AS ${ident("cleared")}`,
+          count: sql`SELECT @@warning_count AS ${ident("warnings")}`,
+          checked: CheckedRows,
+          checkFailed: CheckFailed,
         }
       : undefined,
     lockTable: (table) => sql`LOCK TABLES ${ident(table)} WRITE`,

@@ -13,7 +13,7 @@ import {
   OutOfSortMemory,
   type SortBufferLadder,
 } from "../../sort-buffer";
-import { CutBehind, WarnedFailure } from "../../warnings";
+import { CheckedBehind, CutBehind, WarnedFailure } from "../../warnings";
 import { Bind, type Sql } from "../../statement";
 import { IsDocument } from "./guards";
 
@@ -31,6 +31,9 @@ export interface RowSource {
   close(): Promise<void>;
 }
 
+/** The warnings a statement's first run tolerates. */
+const NONE_TOLERATED = 0;
+
 const STREAM_EVENTS = ["readable", "end", "close", "error"] as const;
 
 /** Resolves on the next event that can change what {@link Take} sees: data, the end, or a failure. */
@@ -46,6 +49,33 @@ function Arrival(stream: Readable): Promise<void> {
       stream.on(event, settle);
     }
   });
+}
+
+/**
+ * One run of the cursor's statement: its stream, the failure it reported, whether it handed over a
+ * row, and whether its end or failure was looked into.
+ */
+interface Attempt {
+  readonly stream: Readable;
+  failure?: Error;
+  isRead: boolean;
+  isSettled: boolean;
+}
+
+function Attempted(
+  driver: CallbackPoolConnection,
+  statement: Sql,
+  batchSize: number,
+): Attempt {
+  const bound = Bind(statement);
+  const stream = driver
+    .execute(bound.sql, [...bound.args])
+    .stream({ highWaterMark: batchSize });
+  const attempt: Attempt = { stream, isRead: false, isSettled: false };
+  stream.on("error", (err: Error) => {
+    attempt.failure ??= err;
+  });
+  return attempt;
 }
 
 /** Puts back the session's sort buffer where a retry grew it, answering whether that held. */
@@ -69,77 +99,111 @@ async function Restored(ladder: SortBufferLadder | undefined) {
  * `next` waiting on it: the driver reports that loss on the connection, not on the statement it
  * streams, so the stream would otherwise wait for rows that never come.
  *
+ * On MariaDB a statement that calls a JSON function or an aggregate streams as the dialect's
+ * `warnings.checked` writes it, so it fails before its first row where computing its rows raised a
+ * warning, and no row read wrong is handed over. A statement that failed there for warnings no read
+ * fails on, such as a sort past `max_sort_length`, runs once more, tolerating as many. A failure
+ * after a row, or of a statement that streams as it is, is never run again for its warnings.
+ *
+ * A statement that fails with `Out of sort memory` before its first row runs again on the same
+ * connection up a {@link SortBufferLadder}: the server sorts before it sends a row, so no row is read
+ * twice.
+ *
  * Two costs the caller must know. The open statement holds a shared metadata lock on every table it
  * reads until the server has sent its last row, so a DDL statement on those tables waits that long:
  * until the cursor is read to its end or closed, unless the rest of the result fits in the socket
  * buffers between the server and the client. And the connection is out of the pool until the cursor
  * is read to its end or closed, which is what `maxOpenCursors` bounds.
  *
- * A statement that fails with `Out of sort memory` before its first row runs again on the same
- * connection up a {@link SortBufferLadder}: the server sorts before it sends a row, so no row is read
- * twice.
- *
  * `close` after a `next` read the result's end and found the statement whole hands the connection
  * back to the pool, with the session's sort buffer put back. Any other `close` destroys the
- * connection instead of draining it or clearing what the statement left listed on it: the server aborts the statement, and the pool opens a
- * replacement on demand.
+ * connection instead of draining it or clearing what the statement left listed on it: the server
+ * aborts the statement, and the pool opens a replacement on demand.
  */
 export async function OpenRowStream(
   statement: Sql,
   batchSize: number,
 ): Promise<RowSource> {
   const connection = await AcquireUncapped();
-  const driver: unknown = connection.connection;
-  if (!(driver instanceof CallbackPoolConnection)) {
+  const pooled: unknown = connection.connection;
+  if (!(pooled instanceof CallbackPoolConnection)) {
     await ReleaseCapped(connection);
     throw new Error(NOT_A_POOL_CONNECTION);
   }
-  const bound = Bind(statement);
-  let failure: Error | undefined;
-  let isClosed = false;
-  let isSettled = false;
-  let isClean = false;
-  let isRetryable = true;
+  const driver = pooled;
+  const dialect = GetDialect();
+  const checked = (tolerated: number) =>
+    dialect.capture.warnings?.checked(statement, tolerated) ?? statement;
+  const first = checked(0);
+  const isChecked = first !== statement;
+  let attempt = Attempted(driver, first, batchSize);
+  let tolerated: number | undefined;
   let ladder: SortBufferLadder | undefined;
-  const Execute = () => {
-    const opened = driver
-      .execute(bound.sql, [...bound.args])
-      .stream({ highWaterMark: batchSize });
-    opened.on("error", (err: Error) => {
-      failure ??= err;
-    });
-    return opened;
-  };
-  let stream = Execute();
+  let isLadderSpent = false;
+  let isClosed = false;
+  let isClean = false;
   const lost = (err: Error) => {
-    failure ??= err;
-    stream.destroy(err);
+    attempt.failure ??= err;
+    attempt.stream.destroy(err);
   };
   driver.on("error", lost);
+
+  async function Settle(): Promise<void> {
+    attempt.isSettled = true;
+    if (!attempt.failure) {
+      attempt.failure = await WarnedFailure(connection, dialect);
+      isClean = !attempt.failure;
+      return;
+    }
+    const behind =
+      isChecked && !attempt.isRead
+        ? await CheckedBehind(connection, dialect, attempt.failure)
+        : await CutBehind(connection, dialect, attempt.failure);
+    if (behind instanceof Error) {
+      attempt.failure = behind;
+    } else if (behind <= (tolerated ?? NONE_TOLERATED)) {
+      return;
+    } else if (tolerated === undefined) {
+      tolerated = behind;
+      attempt = Attempted(driver, checked(behind), batchSize);
+    } else {
+      attempt.failure = new Error(
+        `MariaDB raised ${behind} warnings computing the cursor's rows on a second run where the first raised ${tolerated}, none of them one a read fails on; re-run the query`,
+      );
+    }
+  }
 
   async function Take(count: number): Promise<Row[]> {
     const rows: Row[] = [];
     while (rows.length < count) {
+      const { stream } = attempt;
       const row: unknown = stream.read();
+      attempt.failure ??= stream.errored ?? undefined;
       if (IsDocument(row)) {
-        isRetryable = false;
+        attempt.isRead = true;
         rows.push(ParseRow(Object.entries(row)));
-      } else if (isRetryable && OutOfSortMemory(failure)) {
+      } else if (
+        !attempt.isRead &&
+        !isLadderSpent &&
+        OutOfSortMemory(attempt.failure)
+      ) {
         ladder ??= await ClimbSortBuffer(connection);
         if (await ladder.grow()) {
-          failure = undefined;
-          stream = Execute();
+          attempt = Attempted(
+            driver,
+            checked(tolerated ?? NONE_TOLERATED),
+            batchSize,
+          );
         } else {
-          isRetryable = false;
+          isLadderSpent = true;
         }
-      } else if ((failure || stream.readableEnded) && !isSettled) {
-        isSettled = true;
-        failure = failure
-          ? await CutBehind(connection, GetDialect(), failure)
-          : await WarnedFailure(connection, GetDialect());
-        isClean = !failure;
-      } else if (failure) {
-        throw failure;
+      } else if (
+        (attempt.failure || stream.readableEnded) &&
+        !attempt.isSettled
+      ) {
+        await Settle();
+      } else if (attempt.failure) {
+        throw attempt.failure;
       } else if (stream.readableEnded || stream.destroyed) {
         break;
       } else {
@@ -157,11 +221,11 @@ export async function OpenRowStream(
       }
       isClosed = true;
       driver.off("error", lost);
-      if (isClean && !failure && (await Restored(ladder))) {
+      if (isClean && !attempt.failure && (await Restored(ladder))) {
         await ReleaseCapped(connection);
       } else {
         connection.destroy();
-        stream.destroy();
+        attempt.stream.destroy();
       }
     },
   };

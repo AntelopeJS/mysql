@@ -1,6 +1,8 @@
 import { expect } from "chai";
 import { Schema } from "@antelopejs/interface-database/schema";
 
+import { HandedOver } from "./batches";
+
 const SCHEMA_ID = "long_text_order";
 const INSTANCE = "one";
 
@@ -19,8 +21,13 @@ const TEXT_FIELDS = Array.from(
 
 type Texts = { _id: string } & Record<string, string>;
 
-const schema = new Schema<{ entries: Entry; texts: Texts }>(SCHEMA_ID, {
+const schema = new Schema<{
+  entries: Entry;
+  longer: Entry;
+  texts: Texts;
+}>(SCHEMA_ID, {
   entries: { fields: { name: "string" }, indexes: {} },
+  longer: { fields: { name: "string" }, indexes: {} },
   texts: {
     fields: Object.fromEntries(
       TEXT_FIELDS.map((field) => [field, "string" as const]),
@@ -157,4 +164,36 @@ describe("a slice of rows sorted by a long text", function () {
     "keeps the rows its whole names sort to descending",
     KeepsTheSlicedNamesDescending,
   );
+});
+
+/** More bytes than the `max_sort_length` of a MariaDB session, past which its sort warns. */
+const PAST_SORT_LENGTH = "x".repeat(17_000);
+
+/** Names that differ in their first character, so a sort of their leading bytes orders them. */
+const LONGER = ["c", "a", "b"].map((first) => ({
+  _id: first,
+  name: `${first}${PAST_SORT_LENGTH}`,
+}));
+
+describe("a cursor over rows sorted by texts longer than the sort reads", function () {
+  before(async () => {
+    await schema.createInstance(INSTANCE).run();
+    await schema.instance(INSTANCE).table("longer").insert(LONGER).run();
+  });
+
+  after(Unseed);
+
+  /**
+   * MariaDB warns that it sorted by the leading bytes only, which no read fails on, so a cursor
+   * that fails wherever its statement warned refuses rows a plain read answers.
+   */
+  it("answers every row in order where its statement calls a JSON function", async () => {
+    const { rows, failure } = await HandedOver(
+      schema.instance(INSTANCE).table("longer").orderBy("name").pluck("_id"),
+    );
+    expect({ rows, failure }).to.deep.equal({
+      rows: [{ _id: "a" }, { _id: "b" }, { _id: "c" }],
+      failure: undefined,
+    });
+  });
 });
