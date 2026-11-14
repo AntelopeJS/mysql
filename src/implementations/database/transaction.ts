@@ -65,10 +65,15 @@ async function Abandon(connection: PoolConnection): Promise<void> {
   }
 }
 
-async function Attempt<T>(unit: TransactionUnit<T>): Promise<T> {
+async function Attempt<T>(
+  unit: TransactionUnit<T>,
+  isolation: string | undefined,
+): Promise<T> {
   const connection = await AcquireConnection();
   try {
-    await connection.query(READ_COMMITTED);
+    if (isolation) {
+      await connection.query(isolation);
+    }
     await connection.beginTransaction();
     const result = await unit(connection);
     await connection.commit();
@@ -96,7 +101,7 @@ export async function InTransaction<T>(
   attempt = 1,
 ): Promise<T> {
   try {
-    return await Attempt(unit);
+    return await Attempt(unit, READ_COMMITTED);
   } catch (err) {
     if (err instanceof Error && attempt < Allowed(err, retries)) {
       await Pause(attempt);
@@ -104,4 +109,13 @@ export async function InTransaction<T>(
     }
     throw err;
   }
+}
+
+/**
+ * Runs a unit once, in one transaction at the session's own isolation, on a connection of its own:
+ * as its statement would run alone, with no retry, except that a failure the unit raises after
+ * the statement wrote rolls back what it wrote, on a table whose engine rolls back.
+ */
+export function Atomically<T>(unit: TransactionUnit<T>): Promise<T> {
+  return Attempt(unit, undefined);
 }
