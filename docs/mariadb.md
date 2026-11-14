@@ -62,7 +62,9 @@ MariaDB stores a document as it was written and matches a path's key to the key 
 | A projection read again by key, member present |           471 ms |     534 ms |           427 ms |     510 ms |
 | A projection read again by key, member absent  |           482 ms |     555 ms |           439 ms |     523 ms |
 
-A `filter`, a join's condition or a `not()` that compares a JSON read with a string, where no index serves it, first tests the read's `JSON_VALUE` text, which reads less of the document than `JSON_EXTRACT`, and reads the value's kind only on the rows that text matches. `JSON_VALUE` decodes every key, where the read above takes first the key spelled as the path spells it. In an object that names one key twice, once escaped, as in `{"\u0061": "x", "a": "g"}` or `{"caf\u00e9": "x", "café": "g"}`, `JSON_VALUE` reads `x` where the value read is `g`: `filter` drops such a row where the key equals `"g"`, and `not()` keeps it. MySQL stores each key once, decoded, so it reads `g` both ways.
+A `filter`, a join's condition or a `not()` that compares a JSON read with a string, where no index serves it, first tests the read's `JSON_VALUE` text, which reads less of the document than `JSON_EXTRACT`, and reads the value's kind only on the rows that text matches. `JSON_VALUE` decodes every key, where the read above takes first the key spelled as the path spells it, so the two can read different members of an object that names one key twice.
+
+An object that names one key twice reads its last member on MySQL, and on MariaDB a member that depends on the read. [Repeated keys on MariaDB](./mariadb-repeated-keys.md) lists what each read takes.
 
 ### Nested queries that read their outer row
 
