@@ -248,6 +248,23 @@ describe("reading across external relations", function () {
     );
   });
 
+  it("adds up a group's distinct decimals exactly, as the server's SUM(DISTINCT) does", async () => {
+    const groups = await Accounts().group("status", (rows, status) => ({
+      status,
+      total: rows.distinct("revenue").sum(),
+    }));
+    const expected = await Native(
+      sql`SELECT status, SUM(DISTINCT revenue) AS total FROM sales.accounts GROUP BY status`,
+    );
+    expect(
+      Object.fromEntries(groups.map((group) => [group.status, group.total])),
+    ).to.deep.equal(
+      Object.fromEntries(
+        expected.map((row) => [String(row.status), Number(row.total ?? 0)]),
+      ),
+    );
+  });
+
   it("reads an undeclared key, such as the _internal data-api plucks, as absent", async () => {
     const row = await Accounts().get("1").pluck("_internal", "name").run();
     expect(row).to.deep.equal({ name: "Acct 1" });

@@ -190,6 +190,11 @@ export interface JsonSyntax {
   order(value: Sql): readonly Sql[];
   /** Whether two JSON values are equal as JSON, or both SQL NULL. */
   same(left: Sql, right: Sql): Sql;
+  /**
+   * A JSON value with a negative zero read as 0, which {@link JsonSyntax.same} finds equal to it,
+   * so a dedup that compares text keeps one of the two. SQL NULL stays SQL NULL.
+   */
+  unsignedZero(value: Sql): Sql;
   /** A scalar of `kind` as a JSON value. */
   of(value: Sql, kind: ScalarKind): Sql;
   /** JSON text, parsed. */
