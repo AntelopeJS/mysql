@@ -1,4 +1,4 @@
-import { UnsignedZeros } from "../mysql";
+import { RespelledNumbers } from "../mysql";
 import { type Sql, int, sql } from "../../statement";
 import { Json } from "./json-text";
 
@@ -57,6 +57,6 @@ export function CanonicalNumber(value: Sql): Sql {
   const exponent = sql`CAST(SUBSTRING(REGEXP_SUBSTR(${text}, '[eE][+-]?[0-9]+$'), 2) AS DECIMAL(65, 0))`;
   const finite = sql`(ABS(${double}) < ${GREATEST_DOUBLE} OR ${exponent} <= ${int(GREATEST_EXPONENT)})`;
   return Json(
-    sql`(CASE WHEN NOT ${number} THEN ${UnsignedZeros(value, "\\")} WHEN ${text} REGEXP '^-?[0-9]+$' THEN REGEXP_REPLACE(${text}, '^-0$', '0') WHEN ${integral} THEN CAST(${double} AS SIGNED) WHEN ${finite} THEN ${double} ELSE ${text} END)`,
+    sql`(CASE WHEN NOT ${number} THEN ${RespelledNumbers(value, "\\")} WHEN ${text} REGEXP '^-?[0-9]+$' THEN REGEXP_REPLACE(${text}, '^-0$', '0') WHEN ${integral} THEN CAST(${double} AS SIGNED) WHEN ${finite} THEN ${double} ELSE ${text} END)`,
   );
 }

@@ -5,16 +5,21 @@ import { sql } from "../statement";
 import { NativeWrite, RegisterSales, type SalesTables } from "./sales";
 
 /**
- * Spellings of 0, 1 and the greatest double another writer stores in a JSON column: MySQL parses
- * text into integers and doubles and keeps an SQL decimal as a decimal, MariaDB keeps each one's
- * text.
+ * Spellings of 0, 1, the greatest double and a 1 nested in an array or an object another writer
+ * stores in a JSON column: MySQL parses text into integers and doubles and keeps an SQL decimal as
+ * a decimal, MariaDB keeps each one's text.
  */
 const SPELLINGS = sql`INSERT INTO sales.w_accounts (code, raw) VALUES
   ('jn1', '0'), ('jn2', '0.0'), ('jn3', '-0.0'), ('jn4', '1'), ('jn5', '1.0'),
   ('jn6', JSON_EXTRACT(JSON_ARRAY(0.0), '$[0]')), ('jn7', JSON_EXTRACT(JSON_ARRAY(1.0), '$[0]')),
-  ('jn8', '1.7976931348623157e308'), ('jn9', '17976931348623157e292')`;
+  ('jn8', '1.7976931348623157e308'), ('jn9', '17976931348623157e292'),
+  ('jn10', '[1]'), ('jn11', '[1.0]'), ('jn12', '{"a": 1}'), ('jn13', '{"a": 1.0}'),
+  ('jn14', '["1.0"]'), ('jn15', '["1"]'), ('jn16', '[1.05]'), ('jn17', '[1.5]')`;
 
-const EXPECTED = [[0, 1, Number.MAX_VALUE], 3];
+const EXPECTED = [
+  [["1.0"], ["1"], [1.05], [1.5], [1], { a: 1 }, 0, 1, Number.MAX_VALUE],
+  9,
+];
 
 const CODES = "^jn";
 

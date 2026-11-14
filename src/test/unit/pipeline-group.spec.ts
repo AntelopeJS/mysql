@@ -103,7 +103,7 @@ describe("a group's sub-stream", () => {
       Root().group("name", (stream) => ({ ages: stream.distinct("age") })),
     ).sql;
     expect(sql).to.include(
-      "JSON_OBJECTAGG(COALESCE((CASE WHEN CHAR_LENGTH(CAST(CAST((`t0`.`age` + 0e0) AS JSON) AS CHAR)) <= 32768 THEN REGEXP_REPLACE(CAST(CAST((`t0`.`age` + 0e0) AS JSON) AS CHAR), ",
+      "JSON_OBJECTAGG(COALESCE((CASE WHEN CHAR_LENGTH(CAST(CAST((`t0`.`age` + 0e0) AS JSON) AS CHAR)) <= 32768 THEN REGEXP_REPLACE(REGEXP_REPLACE(CAST(CAST((`t0`.`age` + 0e0) AS JSON) AS CHAR), ",
     );
     expect(sql).to.include(
       "'$1$2') ELSE CAST(CAST((`t0`.`age` + 0e0) AS JSON) AS CHAR) END), ''), CAST((`t0`.`age` + 0e0) AS JSON))",
