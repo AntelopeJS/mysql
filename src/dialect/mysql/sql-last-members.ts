@@ -27,10 +27,11 @@ export function EscapesOrRepeatsKey(
 }
 
 /**
- * The shallow merge of two objects from the members of both in order, the left's first, each kept
- * only where no later member has its decoded key, so the last member of a key named twice wins as
- * when MySQL stores the object. Only the keys are listed together; each value is read by its place
- * in its own side, so a value nests no deeper than the side that holds it.
+ * The shallow merge of two objects from the members of both in order, the left's first. Each
+ * decoded key stays where it first appears and takes the value of its last member, so the last
+ * member of a key named twice wins as when MySQL stores the object, and the keys keep the order a
+ * merge of objects naming each key once has. Only the keys are listed together; each value is read
+ * by its place in its own side, so a value nests no deeper than the side that holds it.
  */
 export function LastMembers(
   flavour: Flavour,
@@ -40,16 +41,19 @@ export function LastMembers(
   alias: string,
 ): Sql {
   const names = sql`JSON_TABLE(JSON_MERGE_PRESERVE(${memberKeys(leftSide)}, ${memberKeys(rightSide)}), '$[*]' ${NAME_COLUMNS})`;
-  const [key, later, left, right] = ["k", "n", "l", "r"].map((suffix) =>
+  const [key, other, left, right] = ["k", "n", "l", "r"].map((suffix) =>
     ident(`${alias}_${suffix}`),
   );
   const ordinal = sql`${key}.${ORDINAL}`;
   const name = sql`${key}.${NAME}`;
-  const superseded = sql`EXISTS (SELECT 1 FROM ${names} AS ${later} WHERE ${later}.${NAME} COLLATE ${ident(flavour.binaryCollation)} = ${name} AND ${later}.${ORDINAL} > ${ordinal})`;
+  const sameName = sql`${other}.${NAME} COLLATE ${ident(flavour.binaryCollation)} = ${name}`;
+  const repeated = sql`EXISTS (SELECT 1 FROM ${names} AS ${other} WHERE ${sameName} AND ${other}.${ORDINAL} < ${ordinal})`;
+  const last = sql`(SELECT MAX(${other}.${ORDINAL}) FROM ${names} AS ${other} WHERE ${sameName})`;
   const leftCount = sql`JSON_LENGTH(${leftSide})`;
-  const values = sql`LEFT JOIN ${MemberValues(leftSide)} AS ${left} ON ${left}.${ORDINAL} = ${ordinal} LEFT JOIN ${MemberValues(rightSide)} AS ${right} ON ${right}.${ORDINAL} = ${ordinal} - ${leftCount}`;
+  const valueAt = (side: Sql, held: Sql, place: Sql) =>
+    sql`(SELECT ${held}.${VALUE} FROM ${MemberValues(side)} AS ${held} WHERE ${held}.${ORDINAL} = ${place})`;
   const value = flavour.tabled(
-    sql`IF(${ordinal} > ${leftCount}, ${right}.${VALUE}, ${left}.${VALUE})`,
+    sql`IF(${last} > ${leftCount}, ${valueAt(rightSide, right, sql`${last} - ${leftCount}`)}, ${valueAt(leftSide, left, last)})`,
   );
-  return sql`(SELECT COALESCE(JSON_OBJECTAGG(${name}, ${value}), JSON_OBJECT()) FROM ${names} AS ${key} ${values} WHERE NOT ${superseded})`;
+  return sql`(SELECT COALESCE(JSON_OBJECTAGG(${name}, ${value}), JSON_OBJECT()) FROM ${names} AS ${key} WHERE NOT ${repeated})`;
 }
