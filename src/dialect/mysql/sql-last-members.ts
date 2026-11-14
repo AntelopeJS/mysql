@@ -11,14 +11,19 @@ function MemberValues(object: Sql): Sql {
 }
 
 /**
- * Whether an object names one decoded key twice: it has more members than distinct decoded keys
- * among the spellings `JSON_KEYS` lists, which never warns, so an object that repeats no key is
- * merged without listing its members.
+ * Whether an object spells a key escaped, which `JSON_KEYS` lists as written and a path read may
+ * miss, or names one decoded key twice: more members than distinct decoded keys among the
+ * spellings `JSON_KEYS` lists, which never warns. An object that does neither is merged without
+ * listing its members.
  */
-export function RepeatsKey(flavour: Flavour, object: Sql, alias: string): Sql {
+export function EscapesOrRepeatsKey(
+  flavour: Flavour,
+  object: Sql,
+  alias: string,
+): Sql {
   const keys = ident(alias);
   const decoded = sql`${keys}.${NAME} COLLATE ${ident(flavour.binaryCollation)}`;
-  return sql`(JSON_LENGTH(${object}) > (SELECT COUNT(DISTINCT ${decoded}) FROM JSON_TABLE(JSON_KEYS(${object}), '$[*]' ${NAME_COLUMNS}) AS ${keys}))`;
+  return sql`(INSTR(JSON_KEYS(${object}), CHAR(92)) > 0 OR JSON_LENGTH(${object}) > (SELECT COUNT(DISTINCT ${decoded}) FROM JSON_TABLE(JSON_KEYS(${object}), '$[*]' ${NAME_COLUMNS}) AS ${keys}))`;
 }
 
 /**

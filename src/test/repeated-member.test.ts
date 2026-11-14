@@ -125,6 +125,23 @@ async function KeysAfterMerges(): Promise<string[] | undefined> {
   return keys;
 }
 
+/** The values of `{"\\u00e9": "g"}`, stored by raw SQL, after an update merges `{k: "1"}` into it. */
+async function MergedEscaped(): Promise<string[] | undefined> {
+  await Table("bare").insert({ _id: "single" }).run();
+  await Run(
+    sql`UPDATE ${ident(PhysicalTable(SCHEMA_ID, "bare"))} SET ${ident("_extra")} = ${param('{"o": {"\\u00e9": "g"}}')} WHERE ${ident("_id")} = 'single'`,
+  );
+  await Table("bare")
+    .get("single")
+    .update((row) => ({ o: row.key("o").merge({ k: "1" }) }))
+    .run();
+  const [values] = await Table("bare")
+    .getAll("single")
+    .map((row) => row.key("o").values())
+    .run();
+  return values;
+}
+
 async function Ids(rows: Promise<Doc[]>): Promise<string[]> {
   return (await rows).map((row) => row._id).sort();
 }
@@ -274,14 +291,14 @@ describe("an object that names one key twice", function () {
       .run();
     const rows = await Table("bare")
       .orderBy("_id")
-      .map((row) => ({ id: row.key("_id"), values: row.key("o").values() }))
+      .map((row) => row.key("o").values())
       .run();
-    expect(
-      Object.fromEntries(rows.map((row) => [row.id, [...row.values].sort()])),
-    ).to.deep.equal({
-      escapedFirst: ["1", "g"],
-      escapedLast: ["1", "g"],
-      plain: ["1", "g"],
-    });
+    expect(rows.map((values) => [...values].sort())).to.deep.equal(
+      IDS.map(() => ["1", "g"]),
+    );
+  });
+
+  it("keeps the value of a key spelled escaped where an update merges the object", async () => {
+    expect((await MergedEscaped())?.sort()).to.deep.equal(["1", "g"]);
   });
 });
