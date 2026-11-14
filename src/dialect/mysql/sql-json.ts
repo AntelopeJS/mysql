@@ -18,16 +18,7 @@ import {
 } from "./flavour";
 import { LastMembers, EscapesOrRepeatsKey } from "./sql-last-members";
 import { IsoText, ParseInstant } from "./sql-time";
-
-/** What `JSON_TYPE` answers for each kind; a JSON number has four. */
-const TYPE_NAMES: Record<JsonKind, readonly string[]> = {
-  object: ["OBJECT"],
-  array: ["ARRAY"],
-  string: ["STRING"],
-  number: ["INTEGER", "UNSIGNED INTEGER", "DOUBLE", "DECIMAL"],
-  boolean: ["BOOLEAN"],
-  null: ["NULL"],
-};
+import { Is, Unquoted } from "./sql-json-kinds";
 
 const COMMA = sql`, `;
 const EMPTY_OBJECT = sql`JSON_OBJECT()`;
@@ -68,25 +59,6 @@ function HasKey(flavour: Flavour): JsonSyntax["hasKey"] {
     const member: MemberPath = { document, holder: [], key };
     return flavour.escapedKeys?.has(member, found) ?? found(document);
   };
-}
-
-/**
- * A type name as `JSON_TYPE` answers it. The server gives the text its JSON functions answer the
- * `utf8mb4_bin` collation, and a literal would otherwise take the session's, which cannot be
- * compared with it.
- */
-function TypeLiteral(name: string): Sql {
-  return sql`${lit(name)} COLLATE utf8mb4_bin`;
-}
-
-function Is(value: Sql, kinds: readonly JsonKind[]): Sql {
-  const names = kinds.flatMap((kind) => TYPE_NAMES[kind]).map(TypeLiteral);
-  return sql`(JSON_TYPE(${value}) IN (${join(names, COMMA)}))`;
-}
-
-/** Text out of JSON, in the session collation every other text carries. */
-function Unquoted(value: Sql): Sql {
-  return sql`CAST(JSON_UNQUOTE(${value}) AS CHAR)`;
 }
 
 function Reads(flavour: Flavour): Record<ScalarKind, (value: Sql) => Sql> {
@@ -148,9 +120,28 @@ function KindTagged(value: Sql): Sql {
   return sql`COALESCE(${RankedText(value)}, ${Tagged(RANKS.null)})`;
 }
 
+/** 2^53, the least magnitude of two numbers one double holds and equality tells apart. */
+const SAFE_BOUND = sql`9007199254740992e0`;
+
+/** 2^64, the double every integer from just below it up to 2^64 - 1 is held by. */
+const UNSIGNED_BOUND = sql`18446744073709551616e0`;
+
+/**
+ * The exact value of a number from 2^53 to 2^64 in magnitude: an integer's digits where its dedup
+ * key is them, and otherwise the shortest decimal of its double, as MySQL compares an integer with a
+ * double; 0 for any other value. Two numbers one double holds and equality tells apart, as
+ * `9007199254740993` and `9007199254740992e0`, or `18446744073709551615` and `1.8446744073709552e19`,
+ * are ordered by these values.
+ */
+function ExactInteger(flavour: Flavour, value: Sql): Sql {
+  const key = flavour.canonicalNumber(value);
+  const double = sql`CAST(${value} AS DOUBLE)`;
+  return sql`(CASE WHEN NOT ${Is(value, ["number"])} THEN 0 WHEN ABS(${double}) < ${SAFE_BOUND} OR ABS(${double}) > ${UNSIGNED_BOUND} THEN 0 WHEN ${key} REGEXP '^-?[0-9]{1,20}$' THEN CAST(${key} AS DECIMAL(65, 0)) ELSE CAST(${double} AS DECIMAL(65, 0)) END)`;
+}
+
 /**
  * Where the server compares JSON as text, equality is the flavour's and an ordering compares the
- * kind's tag and then the number, which is the order MySQL sorts JSON values in.
+ * kind's tag, then the number, then the exact integer, which is the order MySQL sorts JSON values in.
  */
 function Comparison(flavour: Flavour): JsonSyntax["compare"] {
   const { jsonEquals } = flavour;
@@ -166,7 +157,7 @@ function Comparison(flavour: Flavour): JsonSyntax["compare"] {
     }
     const inclusive = operator === "<=" || operator === ">=";
     const ranked = (value: Sql) =>
-      sql`(${KindTagged(value)}, ${RankedNumber(value, jsonTrue)})`;
+      sql`(${KindTagged(value)}, ${RankedNumber(value, jsonTrue)}, ${ExactInteger(flavour, value)})`;
     return sql`(CASE WHEN ${equal} THEN ${inclusive ? sql`TRUE` : sql`FALSE`} ELSE ${ranked(left)} ${ORDERINGS[operator]} ${ranked(right)} END)`;
   };
 }
