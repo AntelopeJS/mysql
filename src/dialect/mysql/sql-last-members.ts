@@ -1,4 +1,4 @@
-import { type Sql, ident, sql } from "../../statement";
+import { type Sql, ident, int, sql } from "../../statement";
 import type { Flavour } from "./flavour";
 
 const ORDINAL = ident("ord");
@@ -27,6 +27,27 @@ export function EscapesOrRepeatsKey(
 }
 
 /**
+ * Whether `JSON_KEYS` lists every member of an object: it lists each spelling once, in the order
+ * written, so it lists them all where no spelling repeats.
+ */
+function SpellsEachKeyOnce(object: Sql): Sql {
+  return sql`(JSON_LENGTH(JSON_KEYS(${object})) = JSON_LENGTH(${object}))`;
+}
+
+/**
+ * Whether the members of an object can be listed: those of an object that spells each key once
+ * come from `JSON_KEYS`, which nests no deeper at any depth, and the others from
+ * {@link Flavour.memberKeys}, only up to its depth.
+ */
+export function Listable(flavour: Flavour, object: Sql): Sql {
+  return sql`(${SpellsEachKeyOnce(object)} OR JSON_DEPTH(${object}) <= ${int(flavour.maxJsonNesting)})`;
+}
+
+function MemberKeys(memberKeys: (object: Sql) => Sql, object: Sql): Sql {
+  return sql`IF(${SpellsEachKeyOnce(object)}, JSON_KEYS(${object}), ${memberKeys(object)})`;
+}
+
+/**
  * The shallow merge of two objects from the members of both in order, the left's first. Each
  * decoded key stays where it first appears and takes the value of its last member, so the last
  * member of a key named twice wins as when MySQL stores the object, and the keys keep the order a
@@ -40,7 +61,7 @@ export function LastMembers(
   rightSide: Sql,
   alias: string,
 ): Sql {
-  const names = sql`JSON_TABLE(JSON_MERGE_PRESERVE(${memberKeys(leftSide)}, ${memberKeys(rightSide)}), '$[*]' ${NAME_COLUMNS})`;
+  const names = sql`JSON_TABLE(JSON_MERGE_PRESERVE(${MemberKeys(memberKeys, leftSide)}, ${MemberKeys(memberKeys, rightSide)}), '$[*]' ${NAME_COLUMNS})`;
   const [key, other, left, right] = ["k", "n", "l", "r"].map((suffix) =>
     ident(`${alias}_${suffix}`),
   );

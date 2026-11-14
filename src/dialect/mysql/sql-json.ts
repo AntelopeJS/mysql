@@ -10,7 +10,7 @@ import type { KeyColumn } from "../../implementations/database/paths";
 import type { Ordering } from "../../implementations/database/json";
 import { type Sql, ident, int, join, lit, param, sql } from "../../statement";
 import { type Flavour, type Held, HeldRead, type MemberPath } from "./flavour";
-import { LastMembers, EscapesOrRepeatsKey } from "./sql-last-members";
+import { LastMembers, EscapesOrRepeatsKey, Listable } from "./sql-last-members";
 import { IsoText, ParseInstant } from "./sql-time";
 
 /** What `JSON_TYPE` answers for each kind; a JSON number has four. */
@@ -369,7 +369,7 @@ function ShallowMerge(
     HeldRead(flavour, alias, side),
   );
   const keyed = KeyedMerge(leftSide, rightSide, alias);
-  const listable = sql`JSON_DEPTH(${leftSide}) < ${int(flavour.maxJsonNesting)} AND JSON_DEPTH(${rightSide}) < ${int(flavour.maxJsonNesting)} AND (${EscapesOrRepeatsKey(flavour, leftSide, `${alias}_a`)} OR ${EscapesOrRepeatsKey(flavour, rightSide, `${alias}_b`)})`;
+  const listable = sql`${Listable(flavour, leftSide)} AND ${Listable(flavour, rightSide)} AND (${EscapesOrRepeatsKey(flavour, leftSide, `${alias}_a`)} OR ${EscapesOrRepeatsKey(flavour, rightSide, `${alias}_b`)})`;
   const merged = flavour.memberKeys
     ? sql`(CASE WHEN ${listable} THEN ${LastMembers(flavour, flavour.memberKeys, leftSide, rightSide, alias)} ELSE ${keyed} END)`
     : keyed;
