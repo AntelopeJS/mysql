@@ -1,9 +1,12 @@
 import { expect } from "chai";
+import { setTimeout as delay } from "node:timers/promises";
 import type { Stream } from "@antelopejs/interface-database";
 import { Schema } from "@antelopejs/interface-database/schema";
 
 import { param, sql } from "../statement";
 import { AcquireConnection, GetDialect, Read } from "../connection";
+import { GetOptions } from "../config";
+import { Reconnect } from "./tables";
 import type { Nest, Row } from "./watch";
 
 function Nested(levels: number): Nest {
@@ -90,6 +93,9 @@ const DEEP = sql`SELECT JSON_VALID(${param("[".repeat(100) + "]".repeat(100))}) 
 
 const TABLELESS = sql`SELECT 1 AS one`;
 
+/** Long enough for a result of one row to end after the row was read. */
+const END_ARRIVES_MS = 300;
+
 function Ones(rows: readonly ReadonlyMap<string, unknown>[]): number[] {
   return rows.map((row) => Number(row.get("one")));
 }
@@ -155,6 +161,27 @@ describe("a cursor that builds a document deeper than the server builds", functi
     for (let read = 0; read < 20; read += 1) {
       await Iterated(Merged()).catch(() => undefined);
       expect(Ones(await Read(TABLELESS))).to.deep.equal([1]);
+    }
+  });
+
+  /**
+   * Fails where `close` pools the connection once its result ended, though no `next` read the end
+   * and listed the warning: a batch of one hands the row over in full, and the end arrives while
+   * the caller waits.
+   */
+  it("leaves its connection answering a table-less read when closed after its last row", async () => {
+    const restore = GetOptions();
+    await Reconnect({ ...restore, cursorBatchSize: 1 });
+    try {
+      for (let read = 0; read < 5; read += 1) {
+        const cursor = Merged()[Symbol.asyncIterator]();
+        await cursor.next().catch(() => undefined);
+        await delay(END_ARRIVES_MS);
+        await cursor.return?.();
+        expect(Ones(await Read(TABLELESS))).to.deep.equal([1]);
+      }
+    } finally {
+      await Reconnect(restore);
     }
   });
 });
