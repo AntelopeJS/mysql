@@ -45,7 +45,7 @@ const MASKED_JSON: JsonSyntax = {
   key: (_read, value) => Marked(value),
   compare: (left, right) => Marked(left, right),
   same: (left, right) => Marked(left, right),
-  unsignedZero: (value) => Marked(value),
+  canonicalNumber: (value) => Marked(value),
   order: (value) => [Marked(value)],
   ranks: { null: 0, number: 1, string: 2, object: 3, array: 4, boolean: 5 },
   tagged: (_rank, text) => Marked(...Present(text)),

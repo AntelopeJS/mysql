@@ -217,16 +217,19 @@ const DistinctStage: PipelineStage = (relation, stage, context) => {
 
 /**
  * The value a dedup compares, which `eq` finds equal exactly where the dedup keeps one of them: a
- * number or a JSON value, a declared list or object included, with a negative zero read as 0. A
- * declared number's `+ 0e0` turns -0 into 0, as IEEE 754 adds. A value of any other type cannot hold
- * a negative zero.
+ * declared number with a negative zero read as 0, or a JSON value, a declared list or object
+ * included, with each number in one spelling. A declared number's `+ 0e0` turns -0 into 0, as IEEE
+ * 754 adds. A value of any other type cannot be a number spelled two ways.
  */
 export function Deduplicable(dialect: Dialect, value: Compiled): Compiled {
   if (value.type.kind === "float") {
     return { sql: sql`(${value.sql} + 0e0)`, type: value.type };
   }
   if (IsJsonBacked(value.type)) {
-    return { sql: dialect.sql.json.unsignedZero(value.sql), type: value.type };
+    return {
+      sql: dialect.sql.json.canonicalNumber(value.sql),
+      type: value.type,
+    };
   }
   return value;
 }

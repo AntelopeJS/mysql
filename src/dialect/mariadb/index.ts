@@ -4,7 +4,7 @@ import { Bind, type Sql, ident, int, join, lit, sql } from "../../statement";
 import { CATALOG } from "./catalog";
 import { ESCAPED_KEYS } from "./escaped-keys";
 import { BINARY_COLLATION, Json } from "./json-text";
-import { JsonEquals, JsonHash, JsonNumber, UnsignedZero } from "./numbers";
+import { CanonicalNumber, JsonEquals, JsonHash, JsonNumber } from "./numbers";
 import { MAX_KEY_CHARS } from "../../implementations/database/utils";
 
 /**
@@ -308,7 +308,7 @@ const MARIADB: Flavour = {
   value: (document, path) => sql`JSON_VALUE(${document}, ${path})`,
   valueIsRead: false,
   number: JsonNumber,
-  unsignedZero: UnsignedZero,
+  canonicalNumber: CanonicalNumber,
   keepsInText: (value) => !Object.is(value, -0),
   boolean: (truth) =>
     sql`(CASE ${truth} WHEN TRUE THEN ${Json(lit("true"))} WHEN FALSE THEN ${Json(lit("false"))} END)`,

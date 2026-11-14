@@ -1,5 +1,5 @@
 import { UnsignedZeros } from "../mysql";
-import { type Sql, sql } from "../../statement";
+import { type Sql, int, sql } from "../../statement";
 import { Json } from "./json-text";
 
 /**
@@ -29,10 +29,34 @@ export function JsonNumber(value: Sql): Sql {
   );
 }
 
+/** 2^63, the first magnitude a `SIGNED` cannot hold. */
+const SIGNED_BOUND = sql`9223372036854775808e0`;
+
+/** The greatest double, which MariaDB's cast answers for a number beyond it. */
+const GREATEST_DOUBLE = sql`1.7976931348623157e308`;
+
+/** The greatest double's decimal exponent. */
+const GREATEST_EXPONENT = 308;
+
 /**
- * The JSON syntax's `unsignedZero` on MariaDB, which stores JSON as text and dedups by it: the
- * value's text with each zero spelled `0`, a nested one included.
+ * The JSON syntax's `canonicalNumber` on MariaDB, which stores JSON as text and dedups by it. A
+ * container's text has each zero spelled `0`, a nested one included. A number's text is as written,
+ * `-0`, `0.0` and `1.0` included, and `JSON_TYPE` calls `15e-1` an integer, so the text decides. An
+ * integer literal keeps its digits, which a double would round past 2^53, with `-0` read as `0`. Any
+ * other number is read as a double, as MySQL parses it: an integer one as its digits, the rest as
+ * the shortest text MariaDB writes for it. The cast caps a number beyond the doubles at the greatest
+ * one, so a number that casts to it with an exponent past 308 keeps its text; so does a spelling of
+ * the greatest double itself with such an exponent, as `0.17976931348623157e309`. The exponent is
+ * read as a decimal, which caps one past a `SIGNED` above 308.
  */
-export function UnsignedZero(value: Sql): Sql {
-  return Json(UnsignedZeros(value, "\\"));
+export function CanonicalNumber(value: Sql): Sql {
+  const number = sql`JSON_TYPE(${value}) IN ('INTEGER', 'DOUBLE')`;
+  const text = sql`JSON_COMPACT(${value})`;
+  const double = sql`CAST(JSON_VALUE(${value}, '$') AS DOUBLE)`;
+  const integral = sql`${double} = FLOOR(${double}) AND ABS(${double}) < ${SIGNED_BOUND}`;
+  const exponent = sql`CAST(SUBSTRING(REGEXP_SUBSTR(${text}, '[eE][+-]?[0-9]+$'), 2) AS DECIMAL(65, 0))`;
+  const finite = sql`(ABS(${double}) < ${GREATEST_DOUBLE} OR ${exponent} <= ${int(GREATEST_EXPONENT)})`;
+  return Json(
+    sql`(CASE WHEN NOT ${number} THEN ${UnsignedZeros(value, "\\")} WHEN ${text} REGEXP '^-?[0-9]+$' THEN REGEXP_REPLACE(${text}, '^-0$', '0') WHEN ${integral} THEN CAST(${double} AS SIGNED) WHEN ${finite} THEN ${double} ELSE ${text} END)`,
+  );
 }
