@@ -86,11 +86,13 @@ const SHORT_TEXT = 15;
 const LEAST_NORMAL = sql`2.2250738585072014e-308`;
 
 /**
- * Whether a number's text is {@link SHORT_TEXT} characters or fewer and it is a normal double or
- * a zero spelled without a nonzero digit, as `1e-400` is not.
+ * Whether a number's text is {@link SHORT_TEXT} characters or fewer, spelled without an exponent,
+ * and it is a normal double or a zero. `JSON_EQUALS` finds `1e309` equal to `1E309`, which keep
+ * their texts as {@link NumberKey}s, and finds `1` unequal to `1e0` where MariaDB 11.8 and 12.3 read
+ * one side from a join buffer.
  */
 function Short(value: Sql): Sql {
-  return sql`(CHAR_LENGTH(${value}) <= ${int(SHORT_TEXT)} AND (ABS(CAST(JSON_VALUE(${value}, '$') AS DOUBLE)) >= ${LEAST_NORMAL} OR ${value} NOT REGEXP '[1-9]'))`;
+  return sql`(CHAR_LENGTH(${value}) <= ${int(SHORT_TEXT)} AND ${value} NOT REGEXP '[eE]' AND (ABS(CAST(JSON_VALUE(${value}, '$') AS DOUBLE)) >= ${LEAST_NORMAL} OR ${value} NOT REGEXP '[1-9]'))`;
 }
 
 /**
