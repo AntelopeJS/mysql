@@ -1,7 +1,8 @@
 import assert from "node:assert";
 import type { QueryStage } from "@antelopejs/interface-database/common";
 
-import { ArrayOf } from "./types";
+import type { Dialect } from "../../dialect";
+import { ArrayOf, IsOpaque } from "./types";
 import { Collected } from "./json";
 import { AsJson } from "./readings";
 import type { Compiled } from "./sql";
@@ -221,6 +222,17 @@ function GroupName(stage: QueryStage): string {
   return name;
 }
 
+/**
+ * A part of the group key as the `GROUP BY` compares it: an opaque JSON value with a negative zero
+ * read as 0, which MariaDB's JSON text otherwise keeps in a group of its own. A declared number
+ * already groups -0 with 0 on both engines, so its column stays bare for an index to serve.
+ */
+function GroupTerm(dialect: Dialect, value: Compiled): Compiled {
+  return IsOpaque(value.type)
+    ? { sql: dialect.sql.json.unsignedZero(value.sql), type: value.type }
+    : value;
+}
+
 /** One part is the value itself; a compound index is a document of its parts, by field name. */
 function GroupValue(
   members: readonly IndexedMember[],
@@ -253,7 +265,10 @@ function GroupValue(
 const GroupStage: PipelineStage = (relation, stage, context) => {
   const prepared = Prepare(relation, GROUP_BLOCKERS, context);
   AbsorbOrder(prepared);
-  const members = IndexColumns(prepared, GroupName(stage));
+  const members = IndexColumns(prepared, GroupName(stage)).map((member) => ({
+    ...member,
+    value: GroupTerm(context.dialect, member.value),
+  }));
   const value = GroupValue(members, context);
   prepared.groupBy.push(...members.map((member) => member.value));
   const mapped = DecodeFunction(RecordedLambda(stage, FIRST_OPERAND), context, [
