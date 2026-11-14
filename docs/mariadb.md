@@ -4,7 +4,7 @@ description: Reference for running the MySQL module on MariaDB 11.8 LTS and 12.3
 mode: reference
 ---
 
-The module runs on MariaDB 11.8 LTS and MariaDB 12.3 LTS as well as on MySQL 8.4 and 9.7. `pnpm test` runs the owned, external and decorators suites on all four servers, and CI does the same. This page lists every behaviour that differs between the two engines. Anything it does not name behaves as the rest of the documentation describes.
+The module runs on MariaDB 11.8 LTS and MariaDB 12.3 LTS as well as on the `mysql:8.4` and `mysql:9.7` images. `pnpm test` runs the owned, external and decorators suites on all four servers, and CI does the same. This page lists every behaviour that differs between the two engines. Anything it does not name behaves as the rest of the documentation describes.
 
 ## Detection
 
@@ -23,7 +23,7 @@ The two dialects share one implementation in `src/dialect/mysql/`. `src/dialect/
 | A document nests at most 100 levels                             | MariaDB 11.8 refuses a document of 32 nested containers. 12.3 has no such limit                    | A write of a deeper document fails on 11.8 with `CONSTRAINT `table.column` failed` (errno 4025). A change feed logs a value whose `JSON_DEPTH` passes 28 as its JSON text, as it does past 98 on MySQL. On 11.8, a feed that reaches a document of 32 nested containers delivers the events before it, then ends with the error MySQL's feed ends with at 100 levels. Such a document is the row around a declared field 31 levels deep, or a `pluck` or `without` that keeps that field. 11.8 answers it as SQL NULL with warning 4040 where MySQL fails the statement, and a read or a feed fails with the warning as that error. 12.3 builds these documents and delivers them |
 | `GROUP_CONCAT` has no bearing on JSON aggregates                | The pin sets `group_concat_max_len` to its largest value                                           | MariaDB builds `JSON_ARRAYAGG` and `JSON_OBJECTAGG` on group concatenation, which would otherwise cut an aggregate at 1 MB                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
-MySQL 8.4 reads some doubles of 17 significant digits back from JSON text as a neighbouring double, so the module binds such numbers as `DOUBLE` there. MariaDB keeps the text it is given, so the module sends every JSON constant as text, a negative zero spelled `-0`. A field declared `number` is a `DOUBLE` column, and MariaDB stores a negative zero there as `0`. A `-0` inside a document, an array or an undeclared field keeps its sign.
+The `mysql:8.4` image reads some doubles of 17 significant digits back from JSON text as a neighbouring double, so the module binds such numbers as `DOUBLE` there. MariaDB keeps the text it is given, so the module sends every JSON constant as text, a negative zero spelled `-0`. A field declared `number` is a `DOUBLE` column, and MariaDB stores a negative zero there as `0`. A `-0` inside a document, an array or an undeclared field keeps its sign.
 
 ## Indexes
 
