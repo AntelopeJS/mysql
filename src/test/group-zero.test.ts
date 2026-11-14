@@ -145,6 +145,21 @@ describe("a group key of 0 and -0", function () {
     });
   }
 
+  for (const key of ["n", "byN", "byNK"] as const) {
+    it(`keeps each value once in the distinct of the zeros' group by ${key}`, async () => {
+      const groups = await Readings()
+        .group(key, (rows) => ({
+          size: rows.count(),
+          ks: rows.distinct("k"),
+          labels: rows.distinct("label"),
+        }))
+        .run();
+      const zeros = groups.find((group) => group.size === 2);
+      expect(zeros?.ks).to.deep.equal([5]);
+      expect(zeros?.labels).to.deep.equal(["a"]);
+    });
+  }
+
   it("puts [0] and [-0] in one group, and {a: 0} and {a: -0} in another", async () => {
     expect(await GroupSizes(NESTED_KEY)).to.deep.equal([2, 2]);
   });
