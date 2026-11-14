@@ -10,10 +10,9 @@ import {
 import {
   CLIENT_DATABASE,
   CLIENT_USER,
+  ClientAccount,
   Fixture,
   READER_PASSWORD,
-  ReaderGrants,
-  WriterGrants,
 } from "../test-external/fixture";
 import { DetectDialect } from "../dialect";
 
@@ -142,14 +141,12 @@ async function SuiteDatabase(url: string): Promise<string> {
  * given: the database the external suite reads is one the adapter did not create.
  */
 async function ClientDatabase(url: string): Promise<string> {
+  const engine = await EngineOf(url);
   await Run(url, [
     `DROP DATABASE IF EXISTS ${CLIENT_DATABASE}`,
-    `DROP USER IF EXISTS '${CLIENT_USER}'@'%'`,
     `CREATE DATABASE ${CLIENT_DATABASE}`,
-    `CREATE USER '${CLIENT_USER}'@'%' IDENTIFIED BY '${READER_PASSWORD}'`,
-    ...Fixture(await EngineOf(url)),
-    ...ReaderGrants(CLIENT_USER),
-    ...WriterGrants(CLIENT_USER),
+    ...Fixture(engine),
+    ...ClientAccount(engine),
   ]);
   return WithDatabase(url, CLIENT_DATABASE, CLIENT_USER);
 }

@@ -65,12 +65,14 @@ export interface RelationRow {
   readonly schema: string;
   readonly name: string;
   readonly kind: ExternalRelationKind;
+  /** The account may SELECT every column, however the privilege reached it. */
   readonly readable: boolean;
-  /** SELECT is granted on some of its columns, which does not make it readable. */
+  /** The account may SELECT some of its columns, which does not make it readable. */
   readonly someColumns: boolean;
+  /** The account may INSERT into every column; false on a relation it cannot read. */
   readonly insert: boolean;
+  /** The account may UPDATE every column; false on a relation it cannot read. */
   readonly update: boolean;
-  readonly delete: boolean;
   /** The engine's own row estimate, absent for a relation that keeps none. */
   readonly statistics: number | null;
   readonly comment: string | null;
@@ -108,6 +110,17 @@ export interface ExternalCatalogSyntax {
   /** Foreign keys out of and into a relation. */
   references(schema: string, table: string): Sql;
   parseReferences(rows: readonly Row[]): ReferenceRow[];
+  /**
+   * A statement that reads every column of a relation, which the catalog only prepares: the server
+   * refuses it when the account may not SELECT some column, including one the catalog's columns
+   * omit because the account holds no privilege on it at all.
+   */
+  selection(schema: string, table: string): Sql;
+  /**
+   * A statement that deletes every row of a relation, which the catalog only prepares: the server
+   * refuses it when the account may not delete from the relation, which no column privilege tells.
+   */
+  deletion(schema: string, table: string): Sql;
   info(): Sql;
   parseInfo(row: Row): Omit<CatalogInfo, "engine">;
   /** The optimizer's row estimate for reading a relation whole. */

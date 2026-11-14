@@ -33,14 +33,14 @@ The module quotes names with backticks as they are, and never prefixes or shorte
 
 ## What registration does
 
-Registration reads `information_schema` once per declared table, and does nothing else. It runs no DDL, creates no bookkeeping table, installs no trigger, and keeps no change log. A failure here fails the schema's registration, so every query on the schema fails with the same message from startup. These declarations fail:
+Registration reads `information_schema` once per declared table and prepares a `SELECT *` of it without running it. It does nothing else. It runs no DDL, creates no bookkeeping table, installs no trigger, and keeps no change log. A failure here fails the schema's registration, so every query on the schema fails with the same message from startup. These declarations fail:
 
 - A declared table that does not exist, or that the account cannot see.
 - A table the account may read only some columns of.
 - A declared field whose column does not exist.
 - A declared type that the column cannot be read as, such as `number` over a `VARCHAR`, and a column of a type no field type reads, such as `BLOB` or `GEOMETRY`.
 
-Registration reads privileges from `information_schema`, granted globally, on the database or on the table. A privilege granted only through a role is not seen.
+Registration reads privileges as the server works them out for the session. That covers grants made globally, on the database, on the table or on columns, both to the account and to the roles enabled for the session. A role a role holds counts too. A role counts only while it is enabled, so make it a default role of the account (`SET DEFAULT ROLE`). A table is readable when the server would prepare `SELECT *` on it.
 
 Registration accepts some pairings with a warning, because reading them loses something:
 

@@ -126,16 +126,6 @@ describe("the catalog of an external instance", function () {
     );
   });
 
-  it("reports what the connected account may write", async () => {
-    const listed = await ListRelations([SALES]);
-    expect(Named(listed, "w_accounts").writes).to.deep.equal({
-      insert: true,
-      update: true,
-      delete: true,
-    });
-    expect(Named(listed, "accounts").writes.insert).to.equal(false);
-  });
-
   it("describes foreign keys both ways, enum labels and comments", async () => {
     const [accounts, contacts] = await DescribeRelations([
       "sales.accounts",
@@ -185,6 +175,41 @@ describe("the catalog of an external instance", function () {
     expect(Object.keys(GetSchema(SALES))).to.have.members(
       Object.keys(generated),
     );
+  });
+});
+
+describe("the privileges the catalog reports", function () {
+  this.timeout(120_000);
+
+  it("keeps apart relations whose names differ only by case", async () => {
+    const listed = await ListRelations([SALES]);
+    expect(Named(listed, "countries")).to.not.have.property("unmappable");
+    expect(Named(listed, "COUNTRIES").unmappable).to.match(/cannot SELECT/);
+  });
+
+  it("counts a SELECT the account holds only through a role of a role", async () => {
+    expect(
+      Named(await ListRelations([SALES]), "accounts"),
+    ).to.not.have.property("unmappable");
+  });
+
+  it("reports what the connected account may write, through the role it holds", async () => {
+    const listed = await ListRelations([SALES]);
+    expect(Named(listed, "w_accounts").writes).to.deep.equal({
+      insert: true,
+      update: true,
+      delete: true,
+    });
+    expect(Named(listed, "people").writes).to.deep.equal({
+      insert: false,
+      update: false,
+      delete: false,
+    });
+    expect(Named(listed, "accounts").writes).to.deep.equal({
+      insert: false,
+      update: false,
+      delete: false,
+    });
   });
 });
 
