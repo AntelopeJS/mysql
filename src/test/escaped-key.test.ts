@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { Schema } from "@antelopejs/interface-database/schema";
-import type { ValueProxy } from "@antelopejs/interface-database";
+import { ValueProxy } from "@antelopejs/interface-database";
 
 import { GetDialect } from "../connection";
 import { ident, param, sql } from "../statement";
@@ -13,6 +13,8 @@ const INSTANCE = "one";
 const CONTROL_KEY = `a${String.fromCharCode(11)}b`;
 /** Keys a `default()` separates, so each read reads the one before it rather than one path. */
 const CHAIN_KEYS = Array.from({ length: 8 }, (_, depth) => `k${depth}é`);
+/** Top-level keys each naming the next, so each read's key is the read before it. */
+const HOPS = Array.from({ length: 9 }, (_, depth) => `p${depth}é`);
 const HEX = 16;
 const HEX_DIGITS = 4;
 
@@ -31,6 +33,9 @@ interface Nested {
 
 interface Doc {
   _id: string;
+  café?: string;
+  pick?: "code";
+  start?: string;
   chain?: Nested;
   été?: Labels;
   code?: string;
@@ -66,10 +71,14 @@ const CHAIN = CHAIN_KEYS.reduceRight(
   '"v"',
 );
 
+const HOPPED = HOPS.slice(0, -1)
+  .map((key, depth) => `"${Spelled(key, "é")}": "${HOPS[depth + 1]}"`)
+  .join(", ");
+
 const ESCAPED = param(
   JSON.stringify({ lang: "café" }).replace(
     "{",
-    `{"${Spelled("été", "é")}": {"${Spelled("CAFÉ", "É")}": "x", "${Spelled("café", "é")}": "h", "a\\/b": "j", "${Spelled("<b>", "<")}": "k", "${Spelled("fr", "r")}": "p", "en": "i"}, "${Spelled("code", "o")}": "z", "chain": ${CHAIN}, `,
+    `{"${Spelled("été", "é")}": {"${Spelled("CAFÉ", "É")}": "x", "${Spelled("café", "é")}": "h", "a\\/b": "j", "${Spelled("<b>", "<")}": "k", "${Spelled("fr", "r")}": "p", "en": "i"}, "${Spelled("code", "o")}": "z", "chain": ${CHAIN}, "${Spelled("café", "é")}": "t", "pick": "code", "start": "${HOPS[0]}", ${HOPPED}, `,
   ),
 );
 
@@ -92,6 +101,47 @@ async function Ids(
 ): Promise<string[]> {
   const rows = await Table(table).filter(condition).run();
   return rows.map((row) => row._id).sort();
+}
+
+/** Reads, on each table, members under keys the statement computes, and filters by one. */
+async function ExpectComputedKeys(): Promise<void> {
+  for (const table of TABLES) {
+    const rows = await Table(table)
+      .map((row) => ({
+        id: row.key("_id"),
+        computed: row.key(row.key("lang").cast<"café">()),
+        held: Labels(row).key(row.key("lang")),
+        plain: row.key(row.key("pick").cast<"code">()),
+        hopped: HOPS.slice(0, -1).reduce(
+          (key) => row.key(key.cast<keyof Doc>()).cast<string>(),
+          row.key("start").default("").cast<string>(),
+        ),
+      }))
+      .run();
+    expect(
+      Object.fromEntries(rows.map(({ id, ...read }) => [id, read])),
+      table,
+    ).to.deep.equal({
+      escaped: {
+        computed: "t",
+        held: "h",
+        plain: GetDialect().id === "mariadb" ? null : "z",
+        hopped: HOPS.at(-1),
+      },
+      plain: { computed: null, held: "a", plain: null, hopped: null },
+    });
+    const projected = await Table(table)
+      .map((row) => Labels(row))
+      .map((labels) => labels.key(ValueProxy.constant<"café">("café")))
+      .run();
+    expect(projected, table).to.have.members(["a", "h"]);
+    expect(
+      await Ids(table, (row) =>
+        row.key(row.key("lang").cast<"café">()).eq("t"),
+      ),
+      table,
+    ).to.deep.equal(["escaped"]);
+  }
 }
 
 describe("a member whose key is stored escaped", function () {
@@ -139,6 +189,11 @@ describe("a member whose key is stored escaped", function () {
       });
     }
   });
+
+  it(
+    "reads a key the statement computes as the key it spells, a plain ASCII key excepted",
+    ExpectComputedKeys,
+  );
 
   it("filters as the key it spells", async () => {
     for (const table of TABLES) {

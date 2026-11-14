@@ -71,6 +71,20 @@ function IsPlain({ holder, key }: MemberPath): boolean {
   return [...holder, key].every((one) => PLAIN_KEY.test(one));
 }
 
+/** Whether a key the statement computes holds a character {@link PLAIN_KEY} leaves out. */
+function NotPlain(key: Sql): Sql {
+  return sql`(${key} NOT REGEXP ${lit(PLAIN_KEY.source)})`;
+}
+
+/** A computed key as a `JSON_SEARCH` pattern matching the key alone, escaped as {@link SEARCH_SPECIAL} says. */
+function SearchPattern(key: Sql): Sql {
+  return Array.from("\\%_").reduce(
+    (pattern, special) =>
+      sql`REPLACE(${pattern}, ${lit(special)}, ${lit(`\\${special}`)})`,
+    key,
+  );
+}
+
 /**
  * A path the decoding functions read as the keys themselves. Each member is JSON text, so a control
  * character is an escape there: a raw one makes `JSON_EXISTS` and `JSON_QUERY` answer NULL.
@@ -80,26 +94,22 @@ function DecodedPath(keys: readonly string[]): Sql {
 }
 
 /**
- * Whether the document holds the member under a spelling of its path other than the path's own.
+ * Whether the document holds the member at the decoding `path` under another spelling of it.
  * `JSON_EXISTS` decodes a key and `JSON_EXTRACT` does not. A document without a backslash spells
  * every key as it reads; a byte search tells, where a `LIKE` or a search in the text's collation
  * costs more than the read.
  */
-function HeldEscaped({ document, holder, key }: MemberPath): Sql {
-  return sql`(LOCATE(${BACKSLASH}, CAST(${document} AS BINARY)) > 0 AND JSON_EXISTS(${document}, ${DecodedPath([...holder, key])}))`;
+function HeldEscaped(document: Sql, path: Sql): Sql {
+  return sql`(LOCATE(${BACKSLASH}, CAST(${document} AS BINARY)) > 0 AND JSON_EXISTS(${document}, ${path}))`;
 }
 
 /**
- * The member by its key as the holder spells it. `JSON_SEARCH` finds the key's position among the
- * holder's keys, which it decodes, and `$.*` lists the holder's members in that same order. It
- * matches in the session's binary collation; in a case-insensitive one it would match `FR` for `fr`.
+ * The member of an object by its key as the object spells it. `JSON_SEARCH` finds the key's position
+ * among the object's keys, which it decodes, and `$.*` lists the object's members in that same
+ * order. It matches in the session's binary collation; in a case-insensitive one it would match `FR`
+ * for `fr`.
  */
-function SpelledMember({ document, holder, key }: MemberPath): Sql {
-  const object =
-    holder.length === 0
-      ? document
-      : sql`JSON_QUERY(${document}, ${DecodedPath(holder)})`;
-  const pattern = lit(key.replace(SEARCH_SPECIAL, "\\$&"));
+function SpelledMember(object: Sql, pattern: Sql): Sql {
   const position = sql`JSON_UNQUOTE(JSON_SEARCH(JSON_KEYS(${object}), 'one', ${pattern}))`;
   return sql`JSON_EXTRACT(JSON_EXTRACT(${object}, '$.*'), ${position})`;
 }
@@ -109,45 +119,77 @@ const COLUMN_REFERENCE = /^(?:`(?:[^`]|``)+`\.)?`(?:[^`]|``)+`$/;
 
 const HELD_DOCUMENT = ident("__escaped_key");
 const HELD_COLUMN = ident("d");
-
-/** Whether the document is a column, which a generated column reads and which is cheap to repeat. */
-function IsColumn({ document }: MemberPath): boolean {
-  return COLUMN_REFERENCE.test(Bind(document).sql);
-}
+const HELD_KEY = ident("__computed_key");
+const KEY_COLUMN = ident("k");
 
 /**
- * `read` of the member over its document parsed once. A read of a read, which a `default()` between
- * two keys makes, then spells each document once rather than once per use. The document's text
- * keeps the spelling of its keys, and its column answers in `utf8mb4_bin`.
+ * `read` of the document: in place where it is a column, which a generated column reads and which is
+ * cheap to repeat, and otherwise over the document parsed once, as `wrap` takes the read. A read of a
+ * read, which a `default()` between two keys makes, then spells each document once rather than once
+ * per use. The document's text keeps the spelling of its keys, and its column answers in
+ * `utf8mb4_bin`.
  */
-function OnHeld(member: MemberPath, read: (member: MemberPath) => Sql): Sql {
-  const document = sql`${HELD_DOCUMENT}.${HELD_COLUMN}`;
-  const held = sql`JSON_TABLE(${member.document}, '$' COLUMNS (${HELD_COLUMN} JSON PATH '$')) AS ${HELD_DOCUMENT}`;
-  return sql`(SELECT ${read({ ...member, document })} FROM ${held})`;
+function OnDocument(
+  document: Sql,
+  read: (held: Sql) => Sql,
+  wrap: (held: Sql) => Sql = (held) => held,
+): Sql {
+  if (COLUMN_REFERENCE.test(Bind(document).sql)) {
+    return read(document);
+  }
+  const held = sql`JSON_TABLE(${document}, '$' COLUMNS (${HELD_COLUMN} JSON PATH '$')) AS ${HELD_DOCUMENT}`;
+  return wrap(
+    sql`(SELECT ${read(sql`${HELD_DOCUMENT}.${HELD_COLUMN}`)} FROM ${held})`,
+  );
 }
 
 /**
  * MariaDB matches a path's key to a document's as each is spelled, so `$."café"` misses a key
  * stored as `"caf\u00e9"`. A read that misses looks for such a spelling only where the document
- * holds one, and only for a path with a key a writer escapes: one of plain keys reads as it is
- * spelled, so `"f\u0072"` is not read as `fr`.
+ * holds one, and only for a key a writer escapes: a plain key reads as it is spelled, so `"f\u0072"`
+ * is not read as `fr`.
+ *
+ * A computed key is held once in a one-row table, so its text appears once however often the read
+ * uses it, and a key computed by a read of a computed key grows the statement no faster than before.
  */
 const ESCAPED_KEYS: EscapedKeys = {
   member: (member, read) => {
     if (IsPlain(member)) {
       return read(member.document);
     }
-    const spelled = (held: MemberPath) =>
-      sql`COALESCE(${read(held.document)}, IF(${HeldEscaped(held)}, ${SpelledMember(held)}, NULL))`;
-    return IsColumn(member) ? spelled(member) : Json(OnHeld(member, spelled));
+    const { holder, key } = member;
+    const path = DecodedPath([...holder, key]);
+    const pattern = lit(key.replace(SEARCH_SPECIAL, "\\$&"));
+    const spelled = (held: Sql) => {
+      const object =
+        holder.length === 0
+          ? held
+          : sql`JSON_QUERY(${held}, ${DecodedPath(holder)})`;
+      return sql`COALESCE(${read(held)}, IF(${HeldEscaped(held, path)}, ${SpelledMember(object, pattern)}, NULL))`;
+    };
+    return OnDocument(member.document, spelled, Json);
   },
   has: (member, found) => {
     if (IsPlain(member)) {
       return found(member.document);
     }
-    const spelled = (held: MemberPath) =>
-      sql`(${found(held.document)} OR ${HeldEscaped(held)})`;
-    return IsColumn(member) ? spelled(member) : OnHeld(member, spelled);
+    const path = DecodedPath([...member.holder, member.key]);
+    return OnDocument(
+      member.document,
+      (held) => sql`(${found(held)} OR ${HeldEscaped(held, path)})`,
+    );
+  },
+  computed: (document, key, path) => {
+    const name = sql`${HELD_KEY}.${KEY_COLUMN}`;
+    const spelled = OnDocument(
+      document,
+      (held) =>
+        sql`IF(${HeldEscaped(held, path(name))}, ${SpelledMember(held, SearchPattern(name))}, NULL)`,
+      Json,
+    );
+    const read = sql`COALESCE(JSON_EXTRACT(${document}, ${path(name)}), IF(${NotPlain(name)}, ${spelled}, NULL))`;
+    const held = sql`JSON_TABLE(JSON_QUOTE(${key}), '$' COLUMNS (${KEY_COLUMN} LONGTEXT COLLATE ${ident(BINARY_COLLATION)} PATH '$')) AS ${HELD_KEY}`;
+    return sql`(SELECT ${read} FROM ${held})`;
   },
 };
 
