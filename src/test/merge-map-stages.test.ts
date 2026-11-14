@@ -22,7 +22,7 @@ const Sorted = (lists: readonly (readonly unknown[])[]) =>
 /**
  * An engine that cannot resolve a walk of a merged object, or of the row a merge reads, fails with
  * an unknown table or column, as MySQL 8.4 and 9.7 did before walks held their source and as MySQL
- * 8.4 did while the hold read a bare outer column; one that walks the wrong row answers its members.
+ * 8.4 did while a hold read a bare outer column; one that walks the wrong row answers its members.
  */
 describe("a map stage that walks a merged object", function () {
   this.timeout(60_000);
@@ -95,11 +95,33 @@ describe("a map stage that walks a merged object", function () {
     );
   });
 
+  it("merges the keys of a merge over the merge of the stage before into it", async () => {
+    const rows = await Plucked()
+      .map((row) => row.merge({ m: "x" }))
+      .map((row) => row.merge({ k: row.merge({ o: "y" }).keys() }))
+      .run();
+    expect(Sorted(rows.map((row) => row.k))).to.deep.equal([
+      ["_id", "m", "n", "o"],
+      ["_id", "m", "n", "o"],
+    ]);
+  });
+
+  it("lists the keys of the merge of the stage before merged with its own merge", async () => {
+    const keys = await Plucked()
+      .map((row) => row.merge({ m: "x" }))
+      .map((row) => row.merge(row.merge({ c: 1 })).keys())
+      .run();
+    expect(Sorted(keys)).to.deep.equal([
+      ["_id", "c", "m", "n"],
+      ["_id", "c", "m", "n"],
+    ]);
+  });
+
   it("filters on the keys of a merged row", async () => {
-    const ids = await Rows()
+    const count = await Rows()
       .filter((row) => row.merge({ m: "x" }).keys().count().gt(2))
       .count()
       .run();
-    expect(ids).to.equal(2);
+    expect(count).to.equal(2);
   });
 });

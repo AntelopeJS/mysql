@@ -9,7 +9,13 @@ import type {
 import type { KeyColumn } from "../../implementations/database/paths";
 import type { Ordering } from "../../implementations/database/json";
 import { type Sql, ident, int, join, lit, param, sql } from "../../statement";
-import { type Flavour, type Held, HeldRead, type MemberPath } from "./flavour";
+import {
+  type Flavour,
+  type Held,
+  HeldRead,
+  Holdable,
+  type MemberPath,
+} from "./flavour";
 import { LastMembers, EscapesOrRepeatsKey, Listable } from "./sql-last-members";
 import { IsoText, ParseInstant } from "./sql-time";
 
@@ -316,10 +322,7 @@ const WALK_ROWS: Record<WalkKind, (source: Sql) => Sql> = {
 /**
  * The rows of a walk as one FROM item. Where a subquery inside a table function's argument cannot
  * read an outer query, the source is held in a derived table first, which can, and walked from
- * there: the source of a walk over a walk's result reads the outer row inside a subquery. The
- * holder casts the source, so it never holds a bare outer column: MySQL 8.4 cannot resolve the
- * holder's column inside `JSON_TABLE` where a derived table around the walk also selects that same
- * outer column bare, as a merge of a row with an object built from its `keys()` does.
+ * there: the source of a walk over a walk's result reads the outer row inside a subquery.
  */
 function WalkFrom(
   flavour: Flavour,
@@ -332,7 +335,7 @@ function WalkFrom(
   }
   const held: Held = {
     name: "source",
-    value: sql`CAST(${source} AS JSON)`,
+    value: Holdable(flavour, source),
     kind: "json",
   };
   const holder = `${alias}_s`;
@@ -369,8 +372,8 @@ function ShallowMerge(
   alias: string,
 ): Sql {
   const sides: readonly Held[] = [
-    { name: "l", value: left, kind: "jsonText" },
-    { name: "r", value: right, kind: "jsonText" },
+    { name: "l", value: Holdable(flavour, left), kind: "jsonText" },
+    { name: "r", value: Holdable(flavour, right), kind: "jsonText" },
   ];
   const [leftSide, rightSide] = sides.map((side) =>
     HeldRead(flavour, alias, side),
