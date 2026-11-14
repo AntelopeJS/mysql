@@ -343,8 +343,8 @@ function ShallowMerge(
   alias: string,
 ): Sql {
   const sides: readonly Held[] = [
-    { name: "l", value: left, kind: "json" },
-    { name: "r", value: right, kind: "json" },
+    { name: "l", value: left, kind: "jsonText" },
+    { name: "r", value: right, kind: "jsonText" },
   ];
   const [leftSide, rightSide] = sides.map((side) =>
     HeldRead(flavour, alias, side),

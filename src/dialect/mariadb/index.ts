@@ -227,22 +227,32 @@ function Instant(text: Sql): Sql {
   return sql`(CASE WHEN ${text} REGEXP ${ZONE_OFFSET} THEN ${shifted} ELSE CAST(REPLACE(${text}, 'Z', '') AS DATETIME(6)) END)`;
 }
 
+const HELD_TEXT = sql`LONGTEXT COLLATE utf8mb4_nopad_bin`;
+
+/** How each kind of held value goes into the array, and the column type that reads it back. */
+const HOLDINGS: Record<
+  Held["kind"],
+  { readonly value: (value: Sql) => Sql; readonly type: Sql }
+> = {
+  json: { value: (value) => value, type: sql`JSON` },
+  jsonText: { value: (value) => sql`CAST(${value} AS CHAR)`, type: HELD_TEXT },
+  text: { value: (value) => value, type: HELD_TEXT },
+};
+
 /**
  * The values go into one JSON array, which `JSON_TABLE` reads back as the table's one row: MariaDB
- * reads an outer column inside `JSON_TABLE` but not inside a derived table.
+ * reads an outer column inside `JSON_TABLE` but not inside a derived table. The array nests a
+ * `json` value one level deeper, and holds a `jsonText` value as a string.
  */
 function Hold(columns: readonly Held[]): Sql {
   const values = join(
-    columns.map((held) => held.value),
+    columns.map((held) => HOLDINGS[held.kind].value(held.value)),
     sql`, `,
   );
-  const definitions = columns.map((held, position) => {
-    const type =
-      held.kind === "json"
-        ? sql`JSON`
-        : sql`LONGTEXT COLLATE utf8mb4_nopad_bin`;
-    return sql`${ident(held.name)} ${type} PATH ${lit(`$[${position}]`)}`;
-  });
+  const definitions = columns.map(
+    (held, position) =>
+      sql`${ident(held.name)} ${HOLDINGS[held.kind].type} PATH ${lit(`$[${position}]`)}`,
+  );
   return sql`JSON_TABLE(JSON_ARRAY(${values}), '$' COLUMNS (${join(definitions, sql`, `)}))`;
 }
 

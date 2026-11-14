@@ -6,7 +6,11 @@ import type { JsonSyntax, KeyedJoinSyntax } from "../sql-types";
 export interface Held {
   readonly name: string;
   readonly value: Sql;
-  readonly kind: "json" | "text";
+  /**
+   * `json` reads back a JSON value and `text` reads back text. `jsonText` reads back a JSON value
+   * that the hold carries as its JSON text, so it adds no level of nesting around it.
+   */
+  readonly kind: "json" | "jsonText" | "text";
 }
 
 /** A member of a JSON document named by the keys of its path. */
@@ -232,7 +236,7 @@ function Collect(
 /** How the row reads back a value {@link Flavour.hold} holds at `alias`. */
 export function HeldRead(flavour: Flavour, alias: string, held: Held): Sql {
   const column = sql`${ident(alias)}.${ident(held.name)}`;
-  return held.kind === "json" ? flavour.tabled(column) : column;
+  return held.kind === "text" ? column : flavour.tabled(column);
 }
 
 const UTC_DESIGNATOR = /Z$/;

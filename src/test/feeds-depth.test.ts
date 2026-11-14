@@ -97,6 +97,7 @@ const deep = new Schema<{
   mapped: Row;
   hollows: Row;
   plucks: Row;
+  merges: Row;
 }>("feeds-depth", {
   stored: DEPTH_TABLE,
   delivered: DEPTH_TABLE,
@@ -106,6 +107,7 @@ const deep = new Schema<{
   mapped: DEPTH_TABLE,
   hollows: DEPTH_TABLE,
   plucks: DEPTH_TABLE,
+  merges: DEPTH_TABLE,
 });
 
 describe("a watched table holding JSON as deep as the server stores it", function () {
@@ -372,6 +374,33 @@ describe("a change feed whose stages build a document deeper than the server bui
     } finally {
       await plucked.return?.();
       await dropped.return?.();
+    }
+  });
+
+  /**
+   * MariaDB held each operand of a `merge` inside one more array, so a row as deep as a document
+   * holds failed as nested too deep, and the feed ended at a merged document the server builds.
+   */
+  it("delivers a map that merges into a row as deep as a document holds", async () => {
+    const rows = deep.instance().table("merges");
+    const merged = await OpenedOver(
+      rows
+        .map((row) => row.merge({ label: "merged" }))
+        .changes()
+        .cursor(),
+      rows,
+      { _id: "merged" },
+    );
+    try {
+      const tree = Nested(depths.inDocument);
+      await rows.insert({ _id: "deep", label: "before", tree }).run();
+      expect((await DeliveredRow(merged, "deep")).newValue).to.deep.equal({
+        _id: "deep",
+        label: "merged",
+        tree,
+      });
+    } finally {
+      await merged.return?.();
     }
   });
 });
