@@ -226,3 +226,78 @@ describe("a cursor's stream over rows a write changes between its two runs", fun
     expect(handed.filter((nulls) => nulls > 0)).to.deep.equal([]);
   });
 });
+
+const DRAINED = "row_stream_drained";
+
+/** How long an `ALTER` waits for a metadata lock before it fails, well under the test's timeout. */
+const LOCK_WAIT_SECONDS = 3;
+
+/** Whether an `ALTER` of {@link DRAINED} ran on a connection of its own while `source` stayed open. */
+async function Altered(): Promise<string> {
+  const held = await AcquireConnection();
+  const alter = Bind(
+    sql`SET STATEMENT lock_wait_timeout = ${int(LOCK_WAIT_SECONDS)} FOR ALTER TABLE ${ident(DRAINED)} FORCE`,
+  );
+  try {
+    await held.execute(alter.sql, [...alter.args]);
+    return "altered";
+  } catch (err) {
+    return err instanceof Error ? err.message : "no Error";
+  } finally {
+    held.release();
+  }
+}
+
+describe("a checked cursor's stream read to its end and left open", function () {
+  this.timeout(60_000);
+
+  before(async function () {
+    if (!GetDialect().capture.warnings) {
+      this.skip();
+    }
+    await Run(sql`DROP TABLE IF EXISTS ${ident(DRAINED)}`);
+    await Run(
+      sql`CREATE TABLE ${ident(DRAINED)} (seq INT PRIMARY KEY, s VARCHAR(20)) ENGINE = InnoDB`,
+    );
+    await Run(
+      sql`INSERT INTO ${ident(DRAINED)} VALUES (1, '1'), (2, '2x'), (3, '3')`,
+    );
+  });
+
+  after(async () => {
+    await Run(sql`DROP TABLE IF EXISTS ${ident(DRAINED)}`);
+  });
+
+  const STATEMENTS: ReadonlyArray<readonly [string, Sql]> = [
+    [
+      "raised no warning",
+      sql`SELECT t.seq AS seq, JSON_ARRAY(t.seq) AS j FROM ${ident(DRAINED)} AS t WHERE t.seq <> 2`,
+    ],
+    [
+      "raised a harmless warning",
+      sql`SELECT t.seq AS seq, CAST(t.s AS INT) AS c, JSON_ARRAY(t.seq) AS j FROM ${ident(DRAINED)} AS t`,
+    ],
+  ];
+
+  for (const [name, statement] of STATEMENTS) {
+    /**
+     * Fails where the cursor holds its tables' metadata locks after its result has ended, as a
+     * transaction it ends only when it closes does.
+     */
+    it(`lets DDL run where its statement ${name}`, async () => {
+      const source = await OpenRowStream(statement, BATCH);
+      try {
+        const rows = await source.next(BATCH);
+        expect({
+          rows: rows.length > 0,
+          altered: await Altered(),
+        }).to.deep.equal({
+          rows: true,
+          altered: "altered",
+        });
+      } finally {
+        await source.close();
+      }
+    });
+  }
+});

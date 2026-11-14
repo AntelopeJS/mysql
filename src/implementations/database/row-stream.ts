@@ -100,10 +100,20 @@ async function RunAll(
   }
 }
 
-/** Ends the snapshot a checked statement read in, answering whether that held. */
-async function Ended(connection: PoolConnection, isChecked: boolean) {
+/** Starts the snapshot the statement's later runs read in, answering whether that held. */
+async function Snapshotted(connection: PoolConnection) {
   try {
-    await RunAll(connection, isChecked ? [END_SNAPSHOT] : []);
+    await RunAll(connection, SNAPSHOT);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Ends the snapshot the statement's runs read in, answering whether that held. */
+async function Ended(connection: PoolConnection) {
+  try {
+    await RunAll(connection, [END_SNAPSHOT]);
     return true;
   } catch {
     return false;
@@ -136,9 +146,10 @@ async function Restored(ladder: SortBufferLadder | undefined) {
  * warning, and no row read wrong is handed over. A statement that failed there for warnings no read
  * fails on, such as a sort past `max_sort_length`, runs once more, tolerating as many. A failure
  * after a row, or of a statement that streams as it is, is never run again for its warnings.
- * Every run of such a statement reads in one read-only transaction that took its snapshot before
- * the first, so the second reads the rows the first read and raises the warnings it raised; that
- * transaction holds the statement's metadata locks until the cursor closes.
+ * That run, and the one that counts the warnings to tolerate before it, read in one read-only
+ * transaction that took its snapshot after the first run failed, so a write between them cannot
+ * trade a harmless warning for one a read fails on. The transaction ends once the result has ended
+ * whole, and holds the statement's metadata locks until then.
  *
  * A statement that fails with `Out of sort memory` before its first row runs again on the same
  * connection up a {@link SortBufferLadder}: the server sorts before it sends a row, so no row is read
@@ -171,14 +182,9 @@ export async function OpenRowStream(
     dialect.capture.warnings?.checked(statement, tolerated) ?? statement;
   const first = checked(0);
   const isChecked = first !== statement;
-  try {
-    await RunAll(connection, isChecked ? SNAPSHOT : []);
-  } catch (err) {
-    connection.destroy();
-    throw err;
-  }
   let attempt = Attempted(driver, first, batchSize);
   let tolerated: number | undefined;
+  let isSnapshotted = false;
   let ladder: SortBufferLadder | undefined;
   let isLadderSpent = false;
   let isClosed = false;
@@ -193,7 +199,9 @@ export async function OpenRowStream(
     attempt.isSettled = true;
     if (!attempt.failure) {
       attempt.failure = await WarnedFailure(connection, dialect);
-      isClean = !attempt.failure;
+      isClean =
+        !attempt.failure && (!isSnapshotted || (await Ended(connection)));
+      isSnapshotted = false;
       return;
     }
     const behind =
@@ -204,12 +212,15 @@ export async function OpenRowStream(
       attempt.failure = behind;
     } else if (behind <= (tolerated ?? NONE_TOLERATED)) {
       return;
+    } else if (!isSnapshotted) {
+      isSnapshotted = await Snapshotted(connection);
+      attempt = isSnapshotted ? Attempted(driver, first, batchSize) : attempt;
     } else if (tolerated === undefined) {
       tolerated = behind;
       attempt = Attempted(driver, checked(behind), batchSize);
     } else {
       attempt.failure = new Error(
-        `MariaDB raised ${behind} warnings computing the cursor's rows on a second run where the first raised ${tolerated}, none of them one a read fails on; re-run the query`,
+        `MariaDB raised ${behind} warnings computing the cursor's rows where an earlier run in the same snapshot raised ${tolerated}, none of them one a read fails on; re-run the query`,
       );
     }
   }
@@ -262,12 +273,7 @@ export async function OpenRowStream(
       }
       isClosed = true;
       driver.off("error", lost);
-      if (
-        isClean &&
-        !attempt.failure &&
-        (await Ended(connection, isChecked)) &&
-        (await Restored(ladder))
-      ) {
+      if (isClean && !attempt.failure && (await Restored(ladder))) {
         await ReleaseCapped(connection);
       } else {
         Discard(connection);
