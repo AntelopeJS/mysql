@@ -507,15 +507,32 @@ async function WriteOn(
   statement: Sql,
 ): Promise<number> {
   const bound = Bind(Uncapped(statement));
-  const [result] = await connection.execute<ResultSetHeader>(bound.sql, [
-    ...bound.args,
-  ]);
+  let result: ResultSetHeader;
+  try {
+    [result] = await connection.execute<ResultSetHeader>(bound.sql, [
+      ...bound.args,
+    ]);
+  } catch (err) {
+    throw err instanceof Error
+      ? await CutBehind(connection, GetDialect(), err)
+      : err;
+  }
+  const warned =
+    result.warningStatus > 0
+      ? await WarnedFailure(connection, GetDialect())
+      : undefined;
+  if (warned) {
+    throw warned;
+  }
   return result.affectedRows;
 }
 
 /**
  * Runs a statement that writes through the prepared-statement protocol and answers the rows it
  * matched: the pool connects with `FOUND_ROWS`, so a row a write matched and left unchanged counts.
+ * Where the engine answered with a warning for a JSON document nested deeper than it builds, or
+ * for an aggregate it cut short, the write fails as {@link Read} does and clears the warning. The
+ * rows it changed stay changed unless `held` runs it in a transaction that the failure rolls back.
  *
  * On `held` when given, which stays checked out; otherwise on a pooled connection taken for this
  * statement alone.
