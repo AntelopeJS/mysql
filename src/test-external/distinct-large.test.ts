@@ -99,6 +99,16 @@ describe("a dedup of large external JSON documents", function () {
     expect(ms).to.be.below(MS_PER_ROW * DOCUMENTS.length);
   });
 
+  it("keeps one value per document in a group read by a cursor", async () => {
+    const query = Large().group("status", (stream) => stream.distinct("raw"));
+    const groups = [];
+    for await (const group of query) {
+      groups.push(group);
+    }
+    expect(groups).to.have.length(1);
+    expect(Sorted(groups[0])).to.deep.equal(Sorted(EXPECTED));
+  });
+
   it("keeps one value per document in a group in under 0.1 s a row", async () => {
     const [groups, ms] = await Fastest(() =>
       Large()

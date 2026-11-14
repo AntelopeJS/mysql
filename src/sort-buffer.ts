@@ -10,22 +10,26 @@ const GROWTH = 4;
 
 const LIMITS = sql`SELECT @@session.sort_buffer_size AS buffer, @@max_allowed_packet AS packet`;
 
-function OutOfSortMemory(err: unknown): err is Error {
+/** Whether `err` is the server's `Out of sort memory`, which a larger sort buffer can answer. */
+export function OutOfSortMemory(err: unknown): err is Error {
   return (
     err instanceof Error && "errno" in err && err.errno === OUT_OF_SORT_MEMORY
   );
 }
 
 /**
- * The sort buffers a retry tries after `buffer`, each {@link GROWTH} times the last and the final one
- * `packet`: a sorted row carries at most one stored document, which `max_allowed_packet` bounds.
+ * The larger sort buffers a session tries in turn after a read ran out of its own, and how to put
+ * its own back. MySQL sorts a JSON column's whole stored value with each row, a `GROUP BY` that
+ * collects one included, and fails where one row outgrows the buffer: its 256 KiB default holds no
+ * row of a document stored larger than that. Each buffer is {@link GROWTH} times the last, so a read
+ * spends at most that many times the least buffer that holds its largest row, and the last is
+ * `max_allowed_packet`, where the retries stop. A session sets the buffer without any privilege.
  */
-function Ladder(buffer: number, packet: number): number[] {
-  const sizes: number[] = [];
-  for (let size = buffer * GROWTH; size < packet; size *= GROWTH) {
-    sizes.push(size);
-  }
-  return buffer < packet ? [...sizes, packet] : sizes;
+export interface SortBufferLadder {
+  /** Sets the next larger buffer and answers true, or answers false once the last was tried. */
+  grow(): Promise<boolean>;
+  /** Puts back the buffer the session had; a no-op where {@link grow} never set one. */
+  restore(): Promise<void>;
 }
 
 async function SetSortBuffer(connection: PoolConnection, bytes: number) {
@@ -34,15 +38,41 @@ async function SetSortBuffer(connection: PoolConnection, bytes: number) {
   );
 }
 
+/** Reads the session's buffer and the packet limit on `connection`, the first and last rungs. */
+export async function ClimbSortBuffer(
+  connection: PoolConnection,
+): Promise<SortBufferLadder> {
+  const [rows] = await connection.query<RowDataPacket[]>(Bind(LIMITS).sql);
+  const buffered: unknown = rows[0]?.buffer;
+  const packeted: unknown = rows[0]?.packet;
+  const original = Number(buffered);
+  const packet = Number(packeted);
+  let current = original;
+  return {
+    async grow() {
+      if (current >= packet) {
+        return false;
+      }
+      current = Math.min(current * GROWTH, packet);
+      await SetSortBuffer(connection, current);
+      return true;
+    },
+    async restore() {
+      if (current !== original) {
+        await SetSortBuffer(connection, original);
+      }
+    },
+  };
+}
+
 /**
- * Runs `read` on `connection` and, where its sort fails with `Out of sort memory`, runs it again
- * under a sort buffer {@link GROWTH} times larger each time, up to `max_allowed_packet`, then puts
- * the session's buffer back. MySQL sorts a JSON column's whole value with each row, a `GROUP BY`
- * that collects one included, and fails where one row outgrows its 256 KiB default. Only a read that
- * failed spends more sort memory, at most {@link GROWTH} times what its largest row needs; every
- * other statement keeps the server's buffer. A session sets the buffer without any privilege.
+ * Runs `read` on `connection` and, where it fails with `Out of sort memory`, runs it again up the
+ * {@link SortBufferLadder}, then puts the session's buffer back. Every other read keeps the server's
+ * buffer, and each attempt gets the session's whole statement timeout. A restore that fails leaves
+ * the read's own outcome to the caller and destroys the connection, which must not go back to the
+ * pool with the larger buffer.
  */
-export async function GrowingSortBuffer<T>(
+export async function ReadGrowingSortBuffer<T>(
   connection: PoolConnection,
   read: () => Promise<T>,
 ): Promise<T> {
@@ -52,23 +82,19 @@ export async function GrowingSortBuffer<T>(
     if (!OutOfSortMemory(err)) {
       throw err;
     }
-    return await Retried(connection, read, err);
+    return await ReadUpLadder(connection, read, err);
   }
 }
 
-async function Retried<T>(
+async function ReadUpLadder<T>(
   connection: PoolConnection,
   read: () => Promise<T>,
   first: Error,
 ): Promise<T> {
-  const [rows] = await connection.query<RowDataPacket[]>(Bind(LIMITS).sql);
-  const buffered: unknown = rows[0]?.buffer;
-  const packet: unknown = rows[0]?.packet;
-  const buffer = Number(buffered);
-  let failure = first;
+  const ladder = await ClimbSortBuffer(connection);
   try {
-    for (const size of Ladder(buffer, Number(packet))) {
-      await SetSortBuffer(connection, size);
+    let failure = first;
+    while (await ladder.grow()) {
       try {
         return await read();
       } catch (err) {
@@ -80,6 +106,6 @@ async function Retried<T>(
     }
     throw failure;
   } finally {
-    await SetSortBuffer(connection, buffer);
+    await ladder.restore().catch(() => connection.destroy());
   }
 }

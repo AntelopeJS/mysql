@@ -118,6 +118,18 @@ describe("a pooled connection", () => {
   });
 });
 
+describe("a pooled MySQL connection", () => {
+  it("keeps the server's sort buffer", async function () {
+    if (GetDialect().id === "mariadb") {
+      this.skip();
+    }
+    const same = await Value(
+      sql`SELECT @@session.sort_buffer_size = @@global.sort_buffer_size AS value`,
+    );
+    expect(Number(same)).to.equal(1);
+  });
+});
+
 describe("a held connection", () => {
   it("is pinned as a pooled one is, and keeps its pin across checkouts", async () => {
     for (let checkout = 0; checkout < 2; checkout += 1) {
@@ -162,7 +174,10 @@ describe("a held connection", () => {
       held.release();
     }
   });
-  it("answers a sort whose row outgrows its sort buffer, and keeps that buffer after", async () => {
+  it("answers a sort whose row outgrows its sort buffer on MySQL, and keeps that buffer after", async function () {
+    if (GetDialect().id === "mariadb") {
+      this.skip();
+    }
     const held = await AcquireConnection();
     try {
       await Write(
