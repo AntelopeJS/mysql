@@ -5,9 +5,9 @@ import { sql } from "../statement";
 import { NativeWrite, RegisterSales, type SalesTables } from "./sales";
 
 /**
- * Spellings of 0, 1, 1.5, 1e20, 1e35, 2e35 and the greatest double another writer stores in a JSON column: MySQL parses
- * text into integers and doubles and keeps an SQL decimal as a decimal, MariaDB keeps each one's
- * text.
+ * Spellings of 0, 1, 1.5, 1e20, 1e35, 2e35, the greatest double and a 1 nested in an array or an
+ * object another writer stores in a JSON column: MySQL parses text into integers and doubles and
+ * keeps an SQL decimal as a decimal, MariaDB keeps each one's text.
  */
 const SPELLINGS = sql`INSERT INTO sales.w_accounts (code, raw) VALUES
   ('jn1', '0'), ('jn2', '0.0'), ('jn3', '-0.0'), ('jn4', '1'), ('jn5', '1.0'),
@@ -16,9 +16,28 @@ const SPELLINGS = sql`INSERT INTO sales.w_accounts (code, raw) VALUES
   ('jn10', '1e20'), ('jn11', '100000000000000000000'),
   ('jn12', JSON_EXTRACT(JSON_ARRAY(1.5), '$[0]')), ('jn13', JSON_EXTRACT(JSON_ARRAY(1.50), '$[0]')),
   ('jn14', JSON_EXTRACT(JSON_ARRAY(100000000000000000000000000000000000), '$[0]')),
-  ('jn15', JSON_EXTRACT(JSON_ARRAY(200000000000000000000000000000000000), '$[0]'))`;
+  ('jn15', JSON_EXTRACT(JSON_ARRAY(200000000000000000000000000000000000), '$[0]')),
+  ('jn16', '[1]'), ('jn17', '[1.0]'), ('jn18', '{"a": 1}'), ('jn19', '{"a": 1.0}'),
+  ('jn20', '["1.0"]'), ('jn21', '["1"]'), ('jn22', '[1.05]'), ('jn23', '[1.5]')`;
 
-const EXPECTED = [Sorted([0, 1, 1.5, 1e20, 1e35, 2e35, Number.MAX_VALUE]), 7];
+const EXPECTED = [
+  Sorted([
+    0,
+    1,
+    1.5,
+    1e20,
+    1e35,
+    2e35,
+    Number.MAX_VALUE,
+    [1],
+    { a: 1 },
+    ["1.0"],
+    ["1"],
+    [1.05],
+    [1.5],
+  ]),
+  13,
+];
 
 const CODES = "^jn";
 

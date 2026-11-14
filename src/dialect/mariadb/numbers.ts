@@ -1,4 +1,4 @@
-import { UnsignedZeros } from "../mysql";
+import { RespelledNumbers } from "../mysql";
 import { type Sql, int, sql } from "../../statement";
 import { Json } from "./json-text";
 
@@ -65,6 +65,6 @@ export function CanonicalNumber(value: Sql): Sql {
   const finite = sql`(ABS(${double}) < ${GREATEST_DOUBLE} OR ${exponent} <= ${int(GREATEST_EXPONENT)})`;
   const exact = sql`${text} REGEXP '^-?[0-9]{1,20}$' AND CAST(${text} AS DECIMAL(65, 0)) BETWEEN ${SIGNED_MIN} AND ${UNSIGNED_MAX}`;
   return Json(
-    sql`(CASE WHEN NOT ${number} THEN ${UnsignedZeros(value, "\\")} WHEN ${exact} THEN REGEXP_REPLACE(${text}, '^-0$', '0') WHEN ${text} REGEXP '^-?[0-9]{309,}$' THEN ${text} WHEN ${integral} THEN CAST(${double} AS SIGNED) WHEN ${finite} THEN ${double} ELSE ${text} END)`,
+    sql`(CASE WHEN NOT ${number} THEN ${RespelledNumbers(value, "\\")} WHEN ${exact} THEN REGEXP_REPLACE(${text}, '^-0$', '0') WHEN ${text} REGEXP '^-?[0-9]{309,}$' THEN ${text} WHEN ${integral} THEN CAST(${double} AS SIGNED) WHEN ${finite} THEN ${double} ELSE ${text} END)`,
   );
 }
