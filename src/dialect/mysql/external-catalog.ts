@@ -35,7 +35,7 @@ const SYSTEM_SCHEMAS = sql`('mysql', 'information_schema', 'performance_schema',
  * MariaDB's catalog compares them without regard to case, which would merge `t` with `T`.
  */
 function ColumnPrivileges(filter: Sql): Sql {
-  return sql`SELECT BINARY c.TABLE_SCHEMA AS col_schema, BINARY c.TABLE_NAME AS col_table,
+  return sql`SELECT CAST(c.TABLE_SCHEMA AS BINARY) AS col_schema, CAST(c.TABLE_NAME AS BINARY) AS col_table,
       MIN(FIND_IN_SET('select', c.PRIVILEGES) > 0) AS every_select, MAX(FIND_IN_SET('select', c.PRIVILEGES) > 0) AS some_select,
       MIN(FIND_IN_SET('insert', c.PRIVILEGES) > 0) AS every_insert, MIN(FIND_IN_SET('update', c.PRIVILEGES) > 0) AS every_update
     FROM information_schema.COLUMNS c
@@ -49,7 +49,7 @@ function Relations(filter: (table: Sql) => Sql): Sql {
     t.CREATE_OPTIONS AS rel_options, t.TABLE_ROWS AS rel_rows, t.TABLE_COMMENT AS rel_comment,
     p.every_select AS can_select, p.some_select AS some_columns, p.every_insert AS can_insert, p.every_update AS can_update
     FROM information_schema.TABLES t
-    LEFT JOIN (${ColumnPrivileges(filter(sql`c`))}) p ON p.col_schema = BINARY t.TABLE_SCHEMA AND p.col_table = BINARY t.TABLE_NAME
+    LEFT JOIN (${ColumnPrivileges(filter(sql`c`))}) p ON p.col_schema = CAST(t.TABLE_SCHEMA AS BINARY) AND p.col_table = CAST(t.TABLE_NAME AS BINARY)
     WHERE t.TABLE_TYPE IN ('BASE TABLE', 'VIEW') AND t.TABLE_SCHEMA NOT IN ${SYSTEM_SCHEMAS} AND ${filter(sql`t`)}
     ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME`;
 }
