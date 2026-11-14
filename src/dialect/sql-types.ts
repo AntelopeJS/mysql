@@ -213,7 +213,8 @@ export interface JsonSyntax {
    * A JSON value with a number in one spelling per value: `0`, `0.0` and `-0.0` read as `0`, and
    * `1` and `1.0` as `1`, which {@link JsonSyntax.same} finds equal, so a dedup that compares text
    * keeps one of them. A zero nested in an array or an object is read as 0 too where the engine's
-   * dedup compares a container's text. Any other value, SQL NULL included, stays as it is.
+   * dedup compares a container's text, and an engine may spell every number nested in an array in one
+   * form. Any other value, SQL NULL included, stays as it is.
    */
   canonicalNumber(value: Sql): Sql;
   /** A scalar of `kind` as a JSON value. */

@@ -210,10 +210,11 @@ const NEXT_ZERO_FRACTION = String.raw`\G((?:${NO_ZERO_FRACTION})*+)(-?[0-9]++)\.
 /**
  * JSON text with each zero spelled `0` and each integer's fraction of zeros dropped, a nested one
  * included, so a value spells the same text as another with a number spelled `1.0` rather than `1`,
- * or a zero of another sign or type, where `DISTINCT` finds the two equal. SQL NULL stays SQL NULL.
+ * or a zero of another sign or type, where `DISTINCT` finds the two equal. `sigil` is what the
+ * engine's replacement puts before a group's number. SQL NULL stays SQL NULL.
  */
-function RespelledNumbers(text: Sql): Sql {
-  const groups = lit("$1$2");
+export function RespelledNumbers(text: Sql, sigil: "$" | "\\"): Sql {
+  const groups = lit(`${sigil}1${sigil}2`);
   return sql`REGEXP_REPLACE(REGEXP_REPLACE(${text}, ${lit(NEXT_SPELLED_ZERO)}, ${groups}), ${lit(NEXT_ZERO_FRACTION)}, ${groups})`;
 }
 
@@ -229,7 +230,7 @@ const MAX_RESPELLED_CHARS = 32768;
  * spelling, so two such values that differ only in a number's spelling stay apart.
  */
 function DedupKey(text: Sql): Sql {
-  return sql`(CASE WHEN CHAR_LENGTH(${text}) <= ${int(MAX_RESPELLED_CHARS)} THEN ${RespelledNumbers(text)} ELSE ${text} END)`;
+  return sql`(CASE WHEN CHAR_LENGTH(${text}) <= ${int(MAX_RESPELLED_CHARS)} THEN ${RespelledNumbers(text, "$")} ELSE ${text} END)`;
 }
 
 /**

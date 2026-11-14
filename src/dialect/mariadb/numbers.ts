@@ -1,3 +1,4 @@
+import { RespelledNumbers } from "../mysql";
 import { type Sql, int, sql } from "../../statement";
 import { Json } from "./json-text";
 
@@ -47,10 +48,12 @@ const GREATEST_DOUBLE = sql`1.7976931348623157e308`;
 const GREATEST_EXPONENT = 308;
 
 /**
- * The JSON syntax's `canonicalNumber` on MariaDB, which stores JSON as text and dedups by it. A
- * value other than a number is its `JSON_NORMALIZE` text, as {@link JsonEquals} compares it: each
- * nested number in one exact spelling, `1`, `1.0`, `1e0`, `10e-1` and `1.` alike, and each object's
- * keys sorted. A number's text is as written,
+ * The JSON syntax's `canonicalNumber` on MariaDB, which stores JSON as text and dedups by it. An
+ * array whose text holds no object is its `JSON_NORMALIZE` text, as {@link JsonEquals} compares it,
+ * each nested number in one exact spelling: `1`, `1.0`, `1e0`, `10e-1` and `1.` alike. An object is
+ * left out, since 12.3 writes its keys back unescaped and both versions reorder a repeated key's
+ * members. Any other container's text has each zero spelled `0` and each fraction of zeros dropped,
+ * a nested one included. A number's text is as written,
  * `-0`, `0.0` and `1.0` included, and `JSON_TYPE` calls `15e-1` an integer, so the text decides. An
  * integer literal from -2^63 to 2^64 - 1 keeps its digits, which a double would round past 2^53,
  * with `-0` read as `0`; MySQL reads a longer one as a double. Any
@@ -70,8 +73,9 @@ export function CanonicalNumber(value: Sql): Sql {
   const unsigned = sql`${double} = FLOOR(${double}) AND ${double} >= ${SIGNED_BOUND} AND ${double} < ${UNSIGNED_BOUND}`;
   const exponent = sql`CAST(SUBSTRING(REGEXP_SUBSTR(${text}, '[eE][+-]?[0-9]+$'), 2) AS DECIMAL(65, 0))`;
   const finite = sql`(ABS(${double}) < ${GREATEST_DOUBLE} OR ${exponent} <= ${int(GREATEST_EXPONENT)})`;
+  const flat = sql`JSON_TYPE(${value}) = 'ARRAY' AND INSTR(${value}, '{') = 0`;
   const exact = sql`${text} REGEXP '^-?[0-9]{1,20}$' AND CAST(${text} AS DECIMAL(65, 0)) BETWEEN ${SIGNED_MIN} AND ${UNSIGNED_MAX}`;
   return Json(
-    sql`(CASE WHEN NOT ${number} THEN JSON_NORMALIZE(${value}) WHEN ${exact} THEN REGEXP_REPLACE(${text}, '^-0$', '0') WHEN ${text} REGEXP '^-?[0-9]{309,}$' THEN ${text} WHEN ${integral} THEN CAST(${double} AS SIGNED) WHEN ${unsigned} THEN CAST(CAST(${double} AS DECIMAL(20, 0)) AS UNSIGNED) WHEN ${finite} THEN ${double} ELSE ${text} END)`,
+    sql`(CASE WHEN ${flat} THEN JSON_NORMALIZE(${value}) WHEN NOT ${number} THEN ${RespelledNumbers(value, "\\")} WHEN ${exact} THEN REGEXP_REPLACE(${text}, '^-0$', '0') WHEN ${text} REGEXP '^-?[0-9]{309,}$' THEN ${text} WHEN ${integral} THEN CAST(${double} AS SIGNED) WHEN ${unsigned} THEN CAST(CAST(${double} AS DECIMAL(20, 0)) AS UNSIGNED) WHEN ${finite} THEN ${double} ELSE ${text} END)`,
   );
 }
