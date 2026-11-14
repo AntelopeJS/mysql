@@ -15,6 +15,10 @@ const CONTROL_KEY = `a${String.fromCharCode(11)}b`;
 const CHAIN_KEYS = Array.from({ length: 8 }, (_, depth) => `k${depth}é`);
 /** Top-level keys each naming the next, so each read's key is the read before it. */
 const HOPS = Array.from({ length: 9 }, (_, depth) => `p${depth}é`);
+/** How deep a document is read through one computed key per level, past where a statement spelling each level twice fits in a packet. */
+const NEST_DEPTH = 14;
+/** A computed key whose only character beyond a plain key is a final line feed, stored as `\u000a`, which a path does not spell. */
+const LINE_KEY = "nl\n";
 const HEX = 16;
 const HEX_DIGITS = 4;
 
@@ -35,6 +39,9 @@ interface Doc {
   _id: string;
   café?: string;
   pick?: "code";
+  line?: typeof LINE_KEY;
+  nest?: Nested;
+  nestKey?: string;
   start?: string;
   chain?: Nested;
   été?: Labels;
@@ -71,6 +78,11 @@ const CHAIN = CHAIN_KEYS.reduceRight(
   '"v"',
 );
 
+const NEST = Array.from({ length: NEST_DEPTH }).reduce<string>(
+  (inner) => `{"${Spelled("qé", "é")}": ${inner}}`,
+  '"w"',
+);
+
 const HOPPED = HOPS.slice(0, -1)
   .map((key, depth) => `"${Spelled(key, "é")}": "${HOPS[depth + 1]}"`)
   .join(", ");
@@ -78,7 +90,7 @@ const HOPPED = HOPS.slice(0, -1)
 const ESCAPED = param(
   JSON.stringify({ lang: "café" }).replace(
     "{",
-    `{"${Spelled("été", "é")}": {"${Spelled("CAFÉ", "É")}": "x", "${Spelled("café", "é")}": "h", "a\\/b": "j", "${Spelled("<b>", "<")}": "k", "${Spelled("fr", "r")}": "p", "en": "i"}, "${Spelled("code", "o")}": "z", "chain": ${CHAIN}, "${Spelled("café", "é")}": "t", "pick": "code", "start": "${HOPS[0]}", ${HOPPED}, `,
+    `{"${Spelled("été", "é")}": {"${Spelled("CAFÉ", "É")}": "x", "${Spelled("café", "é")}": "h", "a\\/b": "j", "${Spelled("<b>", "<")}": "k", "${Spelled("fr", "r")}": "p", "en": "i"}, "${Spelled("code", "o")}": "z", "chain": ${CHAIN}, "${Spelled("café", "é")}": "t", "pick": "code", "start": "${HOPS[0]}", ${HOPPED}, "line": "nl\\n", "nl\\u000a": "n", "nestKey": "qé", "nest": ${NEST}, `,
   ),
 );
 
@@ -116,6 +128,12 @@ async function ExpectComputedKeys(): Promise<void> {
           (key) => row.key(key.cast<keyof Doc>()).cast<string>(),
           row.key("start").default("").cast<string>(),
         ),
+        line: row.key(row.key("line").cast<keyof Doc>()),
+        nested: Array.from({ length: NEST_DEPTH }).reduce(
+          (value: ValueProxy<Nested | string>) =>
+            value.cast<Nested>().key(row.key("nestKey").cast<string>()),
+          row.key("nest").default({}).cast<Nested | string>(),
+        ),
       }))
       .run();
     expect(
@@ -127,8 +145,17 @@ async function ExpectComputedKeys(): Promise<void> {
         held: "h",
         plain: GetDialect().id === "mariadb" ? null : "z",
         hopped: HOPS.at(-1),
+        line: "n",
+        nested: "w",
       },
-      plain: { computed: null, held: "a", plain: null, hopped: null },
+      plain: {
+        computed: null,
+        held: "a",
+        plain: null,
+        hopped: null,
+        line: null,
+        nested: null,
+      },
     });
     const projected = await Table(table)
       .map((row) => Labels(row))

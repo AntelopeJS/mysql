@@ -61,7 +61,8 @@ function Json(text: Sql): Sql {
 const BACKSLASH = lit("\\");
 
 /** Keys of ASCII letters, digits and `_`, which no common JSON writer escapes on its own. */
-const PLAIN_KEY = /^[A-Za-z0-9_]*$/;
+const PLAIN_CHARACTERS = "A-Za-z0-9_";
+const PLAIN_KEY = new RegExp(`^[${PLAIN_CHARACTERS}]*$`);
 
 /** What `JSON_SEARCH` reads as a wildcard or as its escape, each escaped by a backslash. */
 const SEARCH_SPECIAL = /[\\%_]/g;
@@ -71,9 +72,13 @@ function IsPlain({ holder, key }: MemberPath): boolean {
   return [...holder, key].every((one) => PLAIN_KEY.test(one));
 }
 
-/** Whether a key the statement computes holds a character {@link PLAIN_KEY} leaves out. */
+/**
+ * Whether a key the statement computes holds a character {@link PLAIN_KEY} leaves out. The test
+ * looks for one such character rather than anchoring the whole key, since MariaDB's `$` also
+ * matches before a final line feed.
+ */
 function NotPlain(key: Sql): Sql {
-  return sql`(${key} NOT REGEXP ${lit(PLAIN_KEY.source)})`;
+  return sql`(${key} REGEXP ${lit(`[^${PLAIN_CHARACTERS}]`)})`;
 }
 
 /** A computed key as a `JSON_SEARCH` pattern matching the key alone, escaped as {@link SEARCH_SPECIAL} says. */
@@ -151,6 +156,8 @@ function OnDocument(
  *
  * A computed key is held once in a one-row table, so its text appears once however often the read
  * uses it, and a key computed by a read of a computed key grows the statement no faster than before.
+ * A document itself read through a computed key is held beside the key, so a chain of such reads
+ * spells each document once.
  */
 const ESCAPED_KEYS: EscapedKeys = {
   member: (member, read) => {
@@ -181,15 +188,24 @@ const ESCAPED_KEYS: EscapedKeys = {
   },
   computed: (document, key, path) => {
     const name = sql`${HELD_KEY}.${KEY_COLUMN}`;
+    const tables = [
+      sql`JSON_TABLE(JSON_QUOTE(${key}), '$' COLUMNS (${KEY_COLUMN} LONGTEXT COLLATE ${ident(BINARY_COLLATION)} PATH '$')) AS ${HELD_KEY}`,
+    ];
+    const chained = Bind(document).sql.includes(Bind(HELD_KEY).sql);
+    if (chained) {
+      tables.push(
+        sql`JSON_TABLE(${document}, '$' COLUMNS (${HELD_COLUMN} JSON PATH '$')) AS ${HELD_DOCUMENT}`,
+      );
+    }
+    const source = chained ? sql`${HELD_DOCUMENT}.${HELD_COLUMN}` : document;
     const spelled = OnDocument(
-      document,
+      source,
       (held) =>
         sql`IF(${HeldEscaped(held, path(name))}, ${SpelledMember(held, SearchPattern(name))}, NULL)`,
       Json,
     );
-    const read = sql`COALESCE(JSON_EXTRACT(${document}, ${path(name)}), IF(${NotPlain(name)}, ${spelled}, NULL))`;
-    const held = sql`JSON_TABLE(JSON_QUOTE(${key}), '$' COLUMNS (${KEY_COLUMN} LONGTEXT COLLATE ${ident(BINARY_COLLATION)} PATH '$')) AS ${HELD_KEY}`;
-    return sql`(SELECT ${read} FROM ${held})`;
+    const read = sql`COALESCE(JSON_EXTRACT(${source}, ${path(name)}), IF(${NotPlain(name)}, ${spelled}, NULL))`;
+    return sql`(SELECT ${read} FROM ${join(tables, sql`, `)})`;
   },
 };
 
