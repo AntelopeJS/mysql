@@ -1,4 +1,4 @@
-import { type Sql, ident, int, sql } from "../../statement";
+import { type Sql, ident, sql } from "../../statement";
 import type { Flavour } from "./flavour";
 
 const ORDINAL = ident("ord");
@@ -35,14 +35,9 @@ function SpellsEachKeyOnce(object: Sql): Sql {
 }
 
 /**
- * Whether the members of an object can be listed: those of an object that spells each key once
- * come from `JSON_KEYS`, which nests no deeper at any depth, and the others from
- * {@link Flavour.memberKeys}, only up to its depth.
+ * The key of each member of an object in order. An object that spells each key once takes them
+ * from `JSON_KEYS`, which nests no deeper at any depth; any other from {@link Flavour.memberKeys}.
  */
-export function Listable(flavour: Flavour, object: Sql): Sql {
-  return sql`(${SpellsEachKeyOnce(object)} OR JSON_DEPTH(${object}) <= ${int(flavour.maxJsonNesting)})`;
-}
-
 function MemberKeys(memberKeys: (object: Sql) => Sql, object: Sql): Sql {
   return sql`IF(${SpellsEachKeyOnce(object)}, JSON_KEYS(${object}), ${memberKeys(object)})`;
 }

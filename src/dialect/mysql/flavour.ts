@@ -83,8 +83,8 @@ export interface Flavour {
   readonly escapedKeys?: EscapedKeys;
   /**
    * Present where the engine stores an object as written, one key named twice included: the key
-   * of each of its members in order, as a JSON array, for an object whose `JSON_DEPTH` is at most
-   * {@link Flavour.maxJsonNesting}. A deeper one may nest too deep once listed.
+   * of each of its members in order, as a JSON array. Where listing them nests deeper than the
+   * engine builds, it answers SQL NULL with a {@link Flavour.tooDeepErrno} warning.
    */
   readonly memberKeys?: (object: Sql) => Sql;
   /** The JSON syntax's `present`, which depends on how the engine compares a JSON string. */
