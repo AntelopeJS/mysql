@@ -11,6 +11,17 @@ function MemberValues(object: Sql): Sql {
 }
 
 /**
+ * Whether an object names one decoded key twice: it has more members than distinct decoded keys
+ * among the spellings `JSON_KEYS` lists, which never warns, so an object that repeats no key is
+ * merged without listing its members.
+ */
+export function RepeatsKey(flavour: Flavour, object: Sql, alias: string): Sql {
+  const keys = ident(alias);
+  const decoded = sql`${keys}.${NAME} COLLATE ${ident(flavour.binaryCollation)}`;
+  return sql`(JSON_LENGTH(${object}) > (SELECT COUNT(DISTINCT ${decoded}) FROM JSON_TABLE(JSON_KEYS(${object}), '$[*]' ${NAME_COLUMNS}) AS ${keys}))`;
+}
+
+/**
  * The shallow merge of two objects from the members of both in order, the left's first, each kept
  * only where no later member has its decoded key, so the last member of a key named twice wins as
  * when MySQL stores the object. Only the keys are listed together; each value is read by its place

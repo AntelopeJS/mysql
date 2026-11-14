@@ -315,7 +315,7 @@ const MARIADB: Flavour = {
   json: Json,
   escapedKeys: ESCAPED_KEYS,
   memberKeys: (object) =>
-    sql`COALESCE(JSON_EXTRACT(JSON_OBJECT_TO_ARRAY(${object}), '$[*][0]'), JSON_ARRAY())`,
+    sql`(CASE WHEN JSON_LENGTH(${object}) = 0 THEN JSON_ARRAY() ELSE JSON_EXTRACT(JSON_OBJECT_TO_ARRAY(${object}), '$[*][0]') END)`,
   present: Present,
   absent: (value) => sql`(${PresentText(value)} IS NULL)`,
   value: (document, path) => sql`JSON_VALUE(${document}, ${path})`,

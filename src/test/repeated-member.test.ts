@@ -114,6 +114,17 @@ function Member(row: ValueProxy<Doc>): ValueProxy<string> {
   return row.key("o").key("é");
 }
 
+/** The keys of `{_id}` merged with `{a, b}`, then with `{b, c}`, each merge in its own stage. */
+async function KeysAfterMerges(): Promise<string[] | undefined> {
+  const [keys] = await Table("bare")
+    .orderBy("_id")
+    .pluck("_id")
+    .map((row) => row.merge({ a: "1", b: "2" }))
+    .map((row) => row.merge({ b: "9", c: "3" }).keys())
+    .run();
+  return keys;
+}
+
 async function Ids(rows: Promise<Doc[]>): Promise<string[]> {
   return (await rows).map((row) => row._id).sort();
 }
@@ -248,6 +259,13 @@ describe("an object that names one key twice", function () {
       pairs: sameTextOnly ? IDS.length : IDS.length * IDS.length,
       groups: GetDialect().id === "mariadb" ? IDS.length : 1,
     });
+  });
+
+  it("keeps the left's keys first where a merged object repeats no key", async function () {
+    if (GetDialect().id !== "mariadb") {
+      this.skip();
+    }
+    expect(await KeysAfterMerges()).to.deep.equal(["_id", "a", "b", "c"]);
   });
 
   it("writes back the last member, once, where an update merges the object", async () => {
