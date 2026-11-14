@@ -46,6 +46,12 @@ const NUMBERS = [
 /** Spellings of numbers beyond the doubles, which MariaDB stores as written and MySQL refuses. */
 const OVERFLOWS = ["1e309", "1E309", "1e+309", "10e308", "-1e309"] as const;
 
+/** The values {@link OVERFLOWS} spell: four spellings of 10^309 and one of -10^309. */
+const OVERFLOW_VALUES = 2;
+
+/** The ordered pairs of {@link OVERFLOWS} of one value: 4 × 4 and 1 × 1. */
+const OVERFLOW_PAIRS = 17;
+
 const SIGNED_MIN = -(2n ** 63n);
 const UNSIGNED_MAX = 2n ** 64n - 1n;
 
@@ -82,11 +88,14 @@ interface Pair {
   _id: string;
   l?: number;
   r?: number;
+  la?: number[];
+  ra?: number[];
 }
 
 interface Single {
   _id: string;
   n?: number;
+  na?: number[];
 }
 
 const schema = new Schema<{
@@ -138,7 +147,7 @@ describe("eq on JSON numbers another writer spelled", function () {
             (right, r) =>
               [
                 `${l}-${r}`,
-                sql`JSON_OBJECT('l', ${Parsed(left)}, 'r', ${Parsed(right)})`,
+                sql`JSON_OBJECT('l', ${Parsed(left)}, 'r', ${Parsed(right)}, 'la', JSON_ARRAY(${Parsed(left)}), 'ra', JSON_ARRAY(${Parsed(right)}))`,
               ] as const,
           ),
         ),
@@ -149,7 +158,10 @@ describe("eq on JSON numbers another writer spelled", function () {
         "singles",
         NUMBERS.map(
           (number, index) =>
-            [String(index), sql`JSON_OBJECT('n', ${Parsed(number)})`] as const,
+            [
+              String(index),
+              sql`JSON_OBJECT('n', ${Parsed(number)}, 'na', JSON_ARRAY(${Parsed(number)}))`,
+            ] as const,
         ),
       ),
     );
@@ -163,6 +175,31 @@ describe("eq on JSON numbers another writer spelled", function () {
       .map((row) => row.key("_id"))
       .run();
     expect(ids.map((id) => Texts(id.split("-"))).sort()).to.deep.equal(EQUAL);
+  });
+
+  it("answers as MySQL's JSON = between two arrays of one number", async () => {
+    const ids = await schema
+      .instance()
+      .table("pairs")
+      .filter((row) => row.key("la").eq(row.key("ra")))
+      .map((row) => row.key("_id"))
+      .run();
+    expect(ids.map((id) => Texts(id.split("-"))).sort()).to.deep.equal(EQUAL);
+  });
+
+  it("answers as MySQL's JSON = between two arrays of one number in a join that hashes them", async () => {
+    const pairs = await schema
+      .instance()
+      .table("singles")
+      .joinInner(
+        schema.instance().table("singles"),
+        (left, right) => left.key("na").eq(right.key("na")),
+        (left, right) => ({ left: left.key("_id"), right: right.key("_id") }),
+      )
+      .run();
+    expect(
+      pairs.map(({ left, right }) => Texts([left, right])).sort(),
+    ).to.deep.equal(EQUAL);
   });
 
   it("orders two keys of a row as MySQL's JSON orderings do", async () => {
@@ -220,7 +257,10 @@ describe("eq on JSON numbers beyond the doubles", function () {
         "overflows",
         OVERFLOWS.map(
           (number, index) =>
-            [String(index), sql`JSON_OBJECT('n', ${Parsed(number)})`] as const,
+            [
+              String(index),
+              sql`JSON_OBJECT('n', ${Parsed(number)}, 'na', JSON_ARRAY(${Parsed(number)}))`,
+            ] as const,
         ),
       ),
     );
@@ -232,7 +272,7 @@ describe("eq on JSON numbers beyond the doubles", function () {
             (right, r) =>
               [
                 `${l}-${r}`,
-                sql`JSON_OBJECT('l', ${Parsed(left)}, 'r', ${Parsed(right)})`,
+                sql`JSON_OBJECT('l', ${Parsed(left)}, 'r', ${Parsed(right)}, 'la', JSON_ARRAY(${Parsed(left)}), 'ra', JSON_ARRAY(${Parsed(right)}))`,
               ] as const,
           ),
         ),
@@ -259,5 +299,28 @@ describe("eq on JSON numbers beyond the doubles", function () {
     expect(
       joined.map(({ left, right }) => `${left}-${right}`).sort(),
     ).to.deep.equal(equal.sort());
+  });
+
+  it("keeps one value per number eq finds equal, at the top and in an array", async () => {
+    const overflows = () => schema.instance().table("overflows");
+    const pairs = () => schema.instance().table("overflowPairs");
+    const counts = await Promise.all([
+      overflows().distinct("n").count().run(),
+      overflows().distinct("na").count().run(),
+      pairs()
+        .filter((row) => row.key("l").eq(row.key("r")))
+        .count()
+        .run(),
+      pairs()
+        .filter((row) => row.key("la").eq(row.key("ra")))
+        .count()
+        .run(),
+    ]);
+    expect(counts).to.deep.equal([
+      OVERFLOW_VALUES,
+      OVERFLOW_VALUES,
+      OVERFLOW_PAIRS,
+      OVERFLOW_PAIRS,
+    ]);
   });
 });

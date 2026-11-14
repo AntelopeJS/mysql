@@ -1,10 +1,11 @@
-import { type Sql, int, sql } from "../../statement";
-import { Json } from "./json-text";
-import { IsContainer, NormalizedContainer } from "./normalized";
+import { type Sql, ident, int, sql } from "../../statement";
+import { BINARY_COLLATION, Json } from "./json-text";
+import { ContainerKey, IsContainer, ShortNumbered } from "./containers";
 
 /**
  * Equality as JSON: two numbers where they share a {@link NumberKey}, as MySQL's JSON `=` finds them,
- * and any other pair where `JSON_EQUALS` holds, an object whatever its key order. `JSON_EQUALS`
+ * and any other pair where `JSON_EQUALS` holds of their {@link Comparable} texts, an object whatever
+ * its key order. `JSON_EQUALS`
  * compares numbers by their exact decimal values, so it finds `0.1` unequal to
  * `0.10000000000000001` and `18446744073709549568e0` equal to `18446744073709549568`, which MySQL,
  * reading each as a double or an integer, does not. Two {@link Short} numbers hold at most 15
@@ -14,16 +15,29 @@ import { IsContainer, NormalizedContainer } from "./normalized";
  */
 export function JsonEquals(left: Sql, right: Sql): Sql {
   const equals = sql`JSON_EQUALS(${left}, ${right}) = 1`;
-  return sql`(CASE WHEN NOT (${IsNumber(left)} AND ${IsNumber(right)}) THEN ${equals} WHEN ${Short(left)} AND ${Short(right)} THEN ${equals} ELSE ${NumberKey(left)} = ${NumberKey(right)} END)`;
+  const comparable = sql`JSON_EQUALS(${Comparable(left)}, ${Comparable(right)}) = 1`;
+  return sql`(CASE WHEN NOT (${IsNumber(left)} AND ${IsNumber(right)}) THEN ${comparable} WHEN ${Short(left)} AND ${Short(right)} THEN ${equals} ELSE ${NumberKey(left)} = ${NumberKey(right)} END)`;
 }
 
 /**
- * The CRC-32 of a number's {@link NumberKey} and of any other value's normalized text, in one
- * character set whatever the value's, which {@link JsonEquals} finds the same for every pair it
- * holds for: `JSON_EQUALS` holds where two values normalize to the same text.
+ * The CRC-32 of a number's {@link NumberKey} and of any other value's normalized {@link Comparable}
+ * text, in one character set whatever the value's, which {@link JsonEquals} finds the same for every
+ * pair it holds for: `JSON_EQUALS` holds where two values normalize to the same text.
  */
 export function JsonHash(value: Sql): Sql {
-  return sql`CRC32(CONVERT(IF(${IsNumber(value)}, ${NumberKey(value)}, JSON_NORMALIZE(${value})) USING utf8mb4))`;
+  return sql`CRC32(CONVERT(IF(${IsNumber(value)}, ${NumberKey(value)}, ${Normalized(Comparable(value))}) USING utf8mb4))`;
+}
+
+/**
+ * A value as `JSON_EQUALS` compares it as MySQL's JSON `=` does: a container that spells a number of
+ * more than 15 digits or one with an exponent as its {@link ContainerKey}, each nested number as its
+ * {@link NumberKey}, and any other value as it is. `JSON_EQUALS` compares nested numbers by their
+ * exact decimal values, which tell numbers of at most 15 digits and no exponent apart as their
+ * doubles do, and finds `[18446744073709549568e0]` unequal to `[18446744073709550000]`, which MySQL
+ * reads as one double.
+ */
+function Comparable(value: Sql): Sql {
+  return sql`(CASE WHEN ${IsContainer(value)} AND NOT ${ShortNumbered(value)} THEN ${Json(ContainerKey(value, NumberKey))} ELSE ${Json(value)} END)`;
 }
 
 /**
@@ -53,12 +67,22 @@ const GREATEST_EXPONENT = 308;
 
 /**
  * The JSON syntax's `canonicalNumber` on MariaDB, which stores JSON as text and dedups by it. An
- * array or an object is its {@link NormalizedContainer} text, each nested number in the one exact
- * spelling `JSON_NORMALIZE` writes, as {@link JsonEquals} compares it: `1`, `1.0`, `1e0`, `10e-1`
- * and `1.` alike. A number is its {@link NumberKey}, and any other value its text.
+ * array or an object is its {@link ContainerKey} text, each nested number spelled as its
+ * {@link NumberKey}, as {@link JsonEquals} compares it: `1`, `1.0`, `1e0` and `10e-1` alike, and
+ * `0.1` and `0.10000000000000001` alike. A number is its {@link NumberKey}, and any other value its
+ * text.
  */
 export function CanonicalNumber(value: Sql): Sql {
-  return sql`(CASE WHEN ${IsContainer(value)} THEN ${Json(NormalizedContainer(value))} WHEN NOT ${IsNumber(value)} THEN ${Json(value)} ELSE ${NumberKey(value)} END)`;
+  return sql`(CASE WHEN ${IsContainer(value)} THEN ${Json(ContainerKey(value, NumberKey))} WHEN NOT ${IsNumber(value)} THEN ${Json(value)} ELSE ${NumberKey(value)} END)`;
+}
+
+/**
+ * `JSON_NORMALIZE` of a copy of a JSON text: MariaDB 11.8 and 12.3 read past the end of a column's
+ * text that `JSON_NORMALIZE` reads in place, as in a `JSON_TABLE` column, and answer digits it does
+ * not hold.
+ */
+function Normalized(value: Sql): Sql {
+  return sql`JSON_NORMALIZE(CONCAT(${value}, ''))`;
 }
 
 function IsNumber(value: Sql): Sql {
@@ -90,19 +114,23 @@ function Short(value: Sql): Sql {
  * the digits of its shortest decimal, which MySQL compares an integer with, so `1e19` meets
  * `10000000000000000000` and `18446744073709549568e0` meets `18446744073709550000`, and the rest as
  * the shortest text MariaDB writes for it. The cast caps a number beyond the doubles at the greatest
- * one, so a number that casts to it with an exponent past 308 keeps its text, as does an integer
- * literal of 309 digits or more; so does a spelling of the greatest double itself with such an
- * exponent, as `0.17976931348623157e309`. The exponent is read as a decimal, which caps one past a
- * `SIGNED` above 308.
+ * one, so a number that casts to it and whose `JSON_NORMALIZE` text has an exponent past 308, or an
+ * integer literal of 309 digits or more, is that text, as `JSON_EQUALS` compares it, so `1e309`
+ * meets `1E309` and `10e308`; a spelling of the greatest double itself with such an exponent, as
+ * `0.17976931348623157e309`, is that double. The exponent is read as a decimal, which caps one past
+ * a `SIGNED` above 308.
  */
 function NumberKey(value: Sql): Sql {
   const text = sql`JSON_COMPACT(${value})`;
   const double = sql`CAST(JSON_VALUE(${value}, '$') AS DOUBLE)`;
   const integral = sql`${double} = FLOOR(${double}) AND ABS(${double}) < ${UNSIGNED_BOUND}`;
-  const exponent = sql`CAST(SUBSTRING(REGEXP_SUBSTR(${text}, '[eE][+-]?[0-9]+$'), 2) AS DECIMAL(65, 0))`;
+  const normalized = Normalized(value);
+  const exponent = sql`CAST(SUBSTRING_INDEX(CAST(${normalized} AS BINARY), 'E', -1) AS DECIMAL(65, 0))`;
   const finite = sql`(ABS(${double}) < ${GREATEST_DOUBLE} OR ${exponent} <= ${int(GREATEST_EXPONENT)})`;
   const exact = sql`${text} REGEXP '^-?[0-9]{1,20}$' AND CAST(${text} AS DECIMAL(65, 0)) BETWEEN ${SIGNED_MIN} AND ${UNSIGNED_MAX}`;
+  const greatest = sql`${normalized} = ${Normalized(sql`CAST(${double} AS CHAR)`)}`;
+  const beyond = sql`CONVERT(IF(${greatest}, ${double}, ${normalized}) USING utf8mb4) COLLATE ${ident(BINARY_COLLATION)}`;
   return Json(
-    sql`(CASE WHEN ${exact} THEN REGEXP_REPLACE(${text}, '^-0$', '0') WHEN ${text} REGEXP '^-?[0-9]{309,}$' THEN ${text} WHEN ${integral} THEN CAST(${double} AS DECIMAL(20, 0)) WHEN ${finite} THEN ${double} ELSE ${text} END)`,
+    sql`(CASE WHEN ${exact} THEN REGEXP_REPLACE(${text}, '^-0$', '0') WHEN ${text} REGEXP '^-?[0-9]{309,}$' THEN ${beyond} WHEN ${integral} THEN CAST(${double} AS DECIMAL(20, 0)) WHEN ${finite} THEN ${double} ELSE ${beyond} END)`,
   );
 }
