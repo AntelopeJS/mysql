@@ -449,7 +449,7 @@ export function JsonOf(flavour: Flavour): JsonSyntax {
   const parse = (value: Sql) => flavour.json(value);
   const of = (value: Sql, kind: ScalarKind) => writings[kind](value);
   const collect: JsonSyntax["collect"] = (element, ordinal, distinct) =>
-    flavour.collect(element, ordinal, distinct, text);
+    flavour.collect(element, ordinal, distinct);
   return {
     member: Member(flavour),
     memberText: (document, ...keys) =>
@@ -490,6 +490,7 @@ export function JsonOf(flavour: Flavour): JsonSyntax {
     truthy: (value) =>
       sql`(NOT ${flavour.includes(flavour.json(FALSY), value)})`,
     collect,
+    collectsDistinct: flavour.collectsDistinct,
     inPlace: flavour.inPlace,
     length: (container) => sql`JSON_LENGTH(${container})`,
     at: At,

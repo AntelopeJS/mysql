@@ -2,7 +2,8 @@ import assert from "node:assert";
 import type { QueryStage } from "@antelopejs/interface-database/common";
 
 import type { Dialect } from "../../dialect";
-import { ArrayOf, IsOpaque, type SqlType } from "./types";
+import type { Sql } from "../../statement";
+import { ArrayOf, IsOpaque, OPAQUE, type SqlType } from "./types";
 import { Collected } from "./json";
 import { AsJson } from "./readings";
 import type { Compiled } from "./sql";
@@ -28,7 +29,14 @@ import {
   type Relation,
   SetProjection,
 } from "./relation";
-import { AbsorbOrder, type RelationFlag } from "./render";
+import {
+  AbsorbOrder,
+  FromItem,
+  JoinOn,
+  Nested,
+  Numbered,
+  type RelationFlag,
+} from "./render";
 import { Prepare } from "./wrap";
 import { IsString } from "./guards";
 import { OptionsOf } from "./utils";
@@ -139,16 +147,59 @@ function IsTerminal(step: SubStream | Compiled): step is Compiled {
   return "sql" in step;
 }
 
-/** The group's rows as one JSON array, deduplicated where a `distinct` is pending. */
-function CollectedRows(state: SubStream, context: DecodingContext): Compiled {
-  const element = AsJson(
-    context.dialect,
-    Deduped(state, context) ?? state.value,
-  ).sql;
+/**
+ * Joins the group's rows to a number per value of `element`: the distinct values of the rows, each
+ * numbered, where the engine's own comparison decides which values are one. A row whose element is
+ * absent meets the number of the absent element, which no JSON null shares.
+ */
+function ValueNumbers(rows: Relation, element: Sql, context: DecodingContext) {
+  const values = SetProjection(
+    {
+      ...rows,
+      joins: [...rows.joins],
+      where: [...rows.where],
+      groupBy: [],
+      orderBy: [],
+      aggregated: false,
+      distinct: true,
+      locked: false,
+    },
+    { sql: element, type: OPAQUE },
+  );
+  const { relation, rowNumber } = Numbered(Nested(values, context), context);
   return {
-    sql: Collected(context.dialect, undefined, element, state.distinct),
-    type: ArrayOf(state.value.type),
+    join: JoinOn(
+      "LEFT JOIN",
+      FromItem(relation.from, relation.alias),
+      context.dialect.sql.json.same(CurrentValue(relation).sql, element),
+    ),
+    number: rowNumber,
   };
+}
+
+/**
+ * The group's rows as one JSON array, deduplicated where a `distinct` is pending. An engine whose
+ * aggregate takes no dedup collects one element per number of the values of `rows`, and joins the
+ * numbers into `joins` for the group's select to read.
+ */
+function CollectedRows(
+  state: SubStream,
+  rows: Relation,
+  joins: Sql[],
+  context: DecodingContext,
+): Compiled {
+  const dialect = context.dialect;
+  const element = AsJson(dialect, Deduped(state, context) ?? state.value).sql;
+  const type = ArrayOf(state.value.type);
+  if (!state.distinct || dialect.sql.json.collectsDistinct) {
+    return {
+      sql: Collected(dialect, undefined, element, state.distinct),
+      type,
+    };
+  }
+  const numbers = ValueNumbers(rows, element, context);
+  joins.push(numbers.join);
+  return { sql: Collected(dialect, numbers.number, element), type };
 }
 
 function RefuseSubStreamStage(stage: QueryStage): never {
@@ -184,10 +235,12 @@ function StepSubStream(
  * The subquery provider a `group` binds its stream parameter to, over the rows of one group.
  *
  * The seed is read off the relation once, before any of the mapper is decoded, and never mutated,
- * since one mapper binds this provider as many times as it names the parameter.
+ * since one mapper binds this provider as many times as it names the parameter. The joins a
+ * collected dedup needs are pushed to `joins`, and left for the group's select to carry.
  */
 function SubStreamProvider(
   relation: Relation,
+  joins: Sql[],
   context: DecodingContext,
 ): SubqueryProvider {
   const seed: SubStream = {
@@ -200,7 +253,9 @@ function SubStreamProvider(
       (state, stage) => StepSubStream(state, stage, context),
       seed,
     );
-    return IsTerminal(folded) ? folded : CollectedRows(folded, context);
+    return IsTerminal(folded)
+      ? folded
+      : CollectedRows(folded, relation, joins, context);
   };
 }
 
@@ -295,10 +350,12 @@ const GroupStage: PipelineStage = (relation, stage, context) => {
   prepared.groupBy.push(
     ...GroupTerms(context.dialect, columns).map((member) => member.value),
   );
+  const joins: Sql[] = [];
   const mapped = DecodeFunction(RecordedLambda(stage, FIRST_OPERAND), context, [
-    SubStreamProvider(prepared, context),
+    SubStreamProvider(prepared, joins, context),
     value,
   ]);
+  prepared.joins.push(...joins);
   const grouped = SetProjection(
     prepared,
     RequireOperand(mapped, stage, FIRST_OPERAND),

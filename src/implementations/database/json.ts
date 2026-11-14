@@ -292,7 +292,8 @@ export function EqualityKey(
  *
  * Where the order matters it is named by `ordinal`, a distinct positive integer per row, such as a
  * walk's position or a row number, and `distinct` dedups the elements. The two are exclusive:
- * nothing asks for both.
+ * nothing asks for both. Where the dialect's aggregate takes no dedup, a caller passes the number
+ * of each element's value as `ordinal` instead, and one element is kept per number.
  */
 export function Collected(
   dialect: Dialect,

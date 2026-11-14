@@ -328,6 +328,7 @@ const MARIADB: Flavour = {
     sql`(CASE ${truth} WHEN TRUE THEN ${Json(lit("true"))} WHEN FALSE THEN ${Json(lit("false"))} END)`,
   includes: Includes,
   collect: Collect,
+  collectsDistinct: true,
   inPlace: {
     collect: CollectInPlace,
     dedupText: DedupText,

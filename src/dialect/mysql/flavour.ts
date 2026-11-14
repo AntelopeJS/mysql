@@ -1,3 +1,5 @@
+import assert from "node:assert";
+
 import { type Sql, ident, int, join, lit, sql } from "../../statement";
 import type { ExternalCatalogSyntax } from "../external";
 import type { JsonSyntax, KeyedJoinSyntax } from "../sql-types";
@@ -124,12 +126,9 @@ export interface Flavour {
   /** Whether a JSON array holds an element, which a JSON value or a scalar can be. */
   includes(array: Sql, element: Sql): Sql;
   /** The JSON syntax's `collect`, which depends on the order the engine's aggregates keep. */
-  collect(
-    element: Sql,
-    ordinal: Sql | undefined,
-    distinct: boolean,
-    textOf: (value: Sql) => Sql,
-  ): Sql;
+  collect(element: Sql, ordinal: Sql | undefined, distinct: boolean): Sql;
+  /** The JSON syntax's `collectsDistinct`, which depends on what the engine's aggregates take. */
+  readonly collectsDistinct: boolean;
   /** The JSON syntax's `inPlace`, where a derived table reads no outer column. */
   readonly inPlace?: JsonSyntax["inPlace"];
   /** Whether an `INSERT` can answer values of the row it wrote, by a `RETURNING` clause. */
@@ -217,51 +216,35 @@ const NEXT_ZERO_FRACTION = String.raw`\G((?:${NO_ZERO_FRACTION})*+)(-?[0-9]++)\.
 /**
  * JSON text with each zero spelled `0` and each integer's fraction of zeros dropped, a nested one
  * included, so a value spells the same text as another with a number spelled `1.0` rather than `1`,
- * or a zero of another sign or type, where `DISTINCT` finds the two equal. `sigil` is what the
- * engine's replacement puts before a group's number. SQL NULL stays SQL NULL.
+ * or a zero of another sign or type, where `DISTINCT` finds the two equal. The replacement puts a
+ * group's number back as `\1` does, which MariaDB's engine reads. SQL NULL stays SQL NULL.
  */
-export function RespelledNumbers(text: Sql, sigil: "$" | "\\"): Sql {
-  const groups = lit(`${sigil}1${sigil}2`);
+export function RespelledNumbers(text: Sql): Sql {
+  const groups = lit("\\1\\2");
   return sql`REGEXP_REPLACE(REGEXP_REPLACE(${text}, ${lit(NEXT_SPELLED_ZERO)}, ${groups}), ${lit(NEXT_ZERO_FRACTION)}, ${groups})`;
-}
-
-/**
- * The most characters of JSON text whose numbers a dedup key respells. MySQL stops a regular
- * expression at `regexp_time_limit`, which {@link RespelledNumbers} reaches at the default near 48,000
- * characters of an array of one-digit numbers, the text with the most parts per character.
- */
-const MAX_RESPELLED_CHARS = 32768;
-
-/**
- * The key a dedup gives a value's JSON text: its {@link RespelledNumbers}. Longer text keeps its own
- * spelling, so two such values that differ only in a number's spelling stay apart.
- */
-function DedupKey(text: Sql): Sql {
-  return sql`(CASE WHEN CHAR_LENGTH(${text}) <= ${int(MAX_RESPELLED_CHARS)} THEN ${RespelledNumbers(text, "$")} ELSE ${text} END)`;
 }
 
 /**
  * Collects JSON values without reading any back from text, since MySQL 8.4's JSON parser reads some
  * doubles of 17 significant digits as a neighbour. `JSON_ARRAYAGG` takes no order, so an ordered
  * array is first an object keyed by each row's ordinal at a fixed width: the server keeps an
- * object's keys sorted, and `$.*` reads its members in that order. A dedup keys each element by its
- * {@link DedupKey} instead, which keeps one element per value as `DISTINCT` compares JSON, and an
- * absent element by the empty key, which no JSON text is, so it stays apart from a JSON null as a
- * dedup at the top does. An absent element reads back as a JSON null either way.
+ * object's keys sorted, and `$.*` reads its members in that order. It takes no dedup either, so a
+ * dedup passes the number of each element's value as the ordinal, and the object keeps one member
+ * per number.
  */
 function Collect(
   element: Sql,
   ordinal: Sql | undefined,
   distinct: boolean,
-  textOf: (value: Sql) => Sql,
 ): Sql {
-  if (ordinal === undefined && !distinct) {
+  assert(
+    !distinct,
+    "MySQL collects a dedup by the number of each element's value, never by its aggregate",
+  );
+  if (ordinal === undefined) {
     return sql`COALESCE(JSON_ARRAYAGG(${element}), JSON_ARRAY())`;
   }
-  const key =
-    ordinal === undefined
-      ? sql`COALESCE(${DedupKey(textOf(element))}, '')`
-      : sql`LPAD(${ordinal}, ${int(ORDINAL_DIGITS)}, '0')`;
+  const key = sql`LPAD(${ordinal}, ${int(ORDINAL_DIGITS)}, '0')`;
   return sql`COALESCE(JSON_EXTRACT(JSON_OBJECTAGG(${key}, ${element}), '$.*'), JSON_ARRAY())`;
 }
 
@@ -363,6 +346,7 @@ export const MYSQL: Flavour = {
   boolean: (truth) => sql`CAST(${truth} AS JSON)`,
   includes: (array, element) => sql`(${element} MEMBER OF (${array}))`,
   collect: Collect,
+  collectsDistinct: false,
   returning: false,
   lateral: true,
   outerInTableFunction: false,

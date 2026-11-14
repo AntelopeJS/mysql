@@ -70,6 +70,7 @@ const MASKED_JSON: JsonSyntax = {
   indexedElements: (column) => Marked(column),
   truthy: (value) => Marked(value),
   collect: (element, order) => Marked(element, ...Present(order)),
+  collectsDistinct: true,
   length: (container) => Marked(container),
   at: (array, position) => Marked(array, position),
   concatArrays: (left, right) => Marked(left, right),

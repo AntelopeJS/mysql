@@ -23,7 +23,10 @@ const SPELLINGS = sql`INSERT INTO sales.w_accounts (code, raw) VALUES
   ('jn26', JSON_EXTRACT(JSON_ARRAY(10000000000000000000.0), '$[0]')),
   ('jn27', '18446744073709549568e0'), ('jn28', '18446744073709550000'),
   ('jn29', '1.8446744073709552e19'), ('jn30', '18446744073709551615'),
-  ('jn31', '[1e0]'), ('jn32', '[10e-1]')`;
+  ('jn31', '[1e0]'), ('jn32', '[10e-1]'),
+  ('jn33', '[1e19]'), ('jn34', '[10000000000000000000]'),
+  ('jn35', '[1e18]'), ('jn36', '[1000000000000000000]'),
+  ('jn37', '[1.5e15]'), ('jn38', '[1500000000000000]')`;
 
 const EXPECTED = [
   Sorted([
@@ -44,11 +47,16 @@ const EXPECTED = [
     ["1"],
     [1.05],
     [1.5],
+    [1e19],
+    [1e18],
+    [1.5e15],
   ]),
-  17,
+  20,
 ];
 
 const CODES = "^jn";
+
+const SPELLED_ROWS = 38;
 
 let sales: Schema<SalesTables>;
 
@@ -90,8 +98,10 @@ describe("a dedup of external JSON number spellings", function () {
         status,
         values: stream.distinct("raw"),
         count: stream.distinct("raw").count(),
+        rows: stream.count(),
       }))
       .run();
     expect([Sorted(group?.values), group?.count]).to.deep.equal(EXPECTED);
+    expect(group?.rows).to.equal(SPELLED_ROWS);
   });
 });
