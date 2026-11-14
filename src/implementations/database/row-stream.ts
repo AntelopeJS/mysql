@@ -1,5 +1,6 @@
 import type { Readable } from "node:stream";
 import { PoolConnection as CallbackPoolConnection } from "mysql2";
+import type { PoolConnection } from "mysql2/promise";
 
 import {
   AcquireUncapped,
@@ -15,7 +16,7 @@ import {
   type SortBufferLadder,
 } from "../../sort-buffer";
 import { CheckedBehind, CutBehind, WarnedFailure } from "../../warnings";
-import { Bind, type Sql } from "../../statement";
+import { Bind, type Sql, sql } from "../../statement";
 import { IsDocument } from "./guards";
 
 const NOT_A_POOL_CONNECTION =
@@ -79,6 +80,46 @@ function Attempted(
   return attempt;
 }
 
+/**
+ * One snapshot for every run of a checked statement, so a second run reads the rows the first
+ * read and raises the warnings it raised, whatever another session writes meanwhile.
+ */
+const SNAPSHOT = [
+  sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ`,
+  sql`START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY`,
+];
+
+const END_SNAPSHOT = sql`ROLLBACK`;
+
+async function RunAll(
+  connection: PoolConnection,
+  statements: readonly Sql[],
+): Promise<void> {
+  for (const statement of statements) {
+    await connection.query(Bind(statement).sql);
+  }
+}
+
+/** Starts the snapshot the statement's later runs read in, answering whether that held. */
+async function Snapshotted(connection: PoolConnection) {
+  try {
+    await RunAll(connection, SNAPSHOT);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Ends the snapshot the statement's runs read in, answering whether that held. */
+async function Ended(connection: PoolConnection) {
+  try {
+    await RunAll(connection, [END_SNAPSHOT]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Puts back the session's sort buffer where a retry grew it, answering whether that held. */
 async function Restored(ladder: SortBufferLadder | undefined) {
   try {
@@ -105,6 +146,10 @@ async function Restored(ladder: SortBufferLadder | undefined) {
  * warning, and no row read wrong is handed over. A statement that failed there for warnings no read
  * fails on, such as a sort past `max_sort_length`, runs once more, tolerating as many. A failure
  * after a row, or of a statement that streams as it is, is never run again for its warnings.
+ * That run, and the one that counts the warnings to tolerate before it, read in one read-only
+ * transaction that took its snapshot after the first run failed, so a write between them cannot
+ * trade a harmless warning for one a read fails on. The transaction ends once the result has ended
+ * whole, and holds the statement's metadata locks until then.
  *
  * A statement that fails with `Out of sort memory` before its first row runs again on the same
  * connection up a {@link SortBufferLadder}: the server sorts before it sends a row, so no row is read
@@ -139,6 +184,7 @@ export async function OpenRowStream(
   const isChecked = first !== statement;
   let attempt = Attempted(driver, first, batchSize);
   let tolerated: number | undefined;
+  let isSnapshotted = false;
   let ladder: SortBufferLadder | undefined;
   let isLadderSpent = false;
   let isClosed = false;
@@ -153,7 +199,9 @@ export async function OpenRowStream(
     attempt.isSettled = true;
     if (!attempt.failure) {
       attempt.failure = await WarnedFailure(connection, dialect);
-      isClean = !attempt.failure;
+      isClean =
+        !attempt.failure && (!isSnapshotted || (await Ended(connection)));
+      isSnapshotted = false;
       return;
     }
     const behind =
@@ -164,12 +212,15 @@ export async function OpenRowStream(
       attempt.failure = behind;
     } else if (behind <= (tolerated ?? NONE_TOLERATED)) {
       return;
+    } else if (!isSnapshotted) {
+      isSnapshotted = await Snapshotted(connection);
+      attempt = isSnapshotted ? Attempted(driver, first, batchSize) : attempt;
     } else if (tolerated === undefined) {
       tolerated = behind;
       attempt = Attempted(driver, checked(behind), batchSize);
     } else {
       attempt.failure = new Error(
-        `MariaDB raised ${behind} warnings computing the cursor's rows on a second run where the first raised ${tolerated}, none of them one a read fails on; re-run the query`,
+        `MariaDB raised ${behind} warnings computing the cursor's rows where an earlier run in the same snapshot raised ${tolerated}, none of them one a read fails on; re-run the query`,
       );
     }
   }
