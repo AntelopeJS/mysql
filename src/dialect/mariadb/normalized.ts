@@ -66,6 +66,14 @@ function Rewritten(text: Sql, rewrites: readonly Rewrite[]): Sql {
  */
 const GROWTH = 9;
 
+/**
+ * The most backslashes a container's text may hold to be encoded. The rewrite that crosses a string
+ * takes a step of MariaDB's regular expression match limit for each escape, and fails, answering
+ * NULL, past about 1.5 million escapes that each follow a character, as in `"x\"x\"`. They are
+ * counted by a regular expression, since `REPLACE` takes time in the square of their number.
+ */
+const MOST_ESCAPES = 1_000_000;
+
 /** Whether a JSON value is an array or an object. */
 export function IsContainer(value: Sql): Sql {
   return sql`(JSON_TYPE(${value}) IN ('ARRAY', 'OBJECT'))`;
@@ -79,13 +87,15 @@ export function IsContainer(value: Sql): Sql {
  * and 12.3 rewrites a string's escapes. The container's text starts and ends with a run of
  * {@link STRUCTURE}, so its encoding starts and ends with a comma, which the array leaves out. Text
  * without a `{` or an escape holds neither, so its own `JSON_NORMALIZE` text is the same, sooner.
- * MariaDB answers NULL for text longer than `max_allowed_packet`, so a container whose array could
- * be longer keeps its compact text as written.
+ * MariaDB answers NULL for text longer than `max_allowed_packet`, and for a regular expression past
+ * its match limit, so a container whose array could be longer, or whose text holds more than
+ * {@link MOST_ESCAPES} backslashes, keeps its compact text as written.
  */
 export function NormalizedContainer(value: Sql): Sql {
   const encoded = Rewritten(sql`JSON_COMPACT(${value})`, ENCODE);
   const array = sql`CONCAT('[', TRIM(BOTH ',' FROM ${encoded}), ']')`;
   const plain = sql`INSTR(${value}, '{') = 0 AND INSTR(${value}, CHAR(92)) = 0`;
-  const fits = sql`LENGTH(${value}) * ${int(GROWTH)} <= @@max_allowed_packet`;
+  const escapes = sql`LENGTH(REGEXP_REPLACE(CAST(CONVERT(${value} USING utf8mb4) AS BINARY), ${lit(String.raw`[^\\]++`)}, ''))`;
+  const fits = sql`LENGTH(${value}) * ${int(GROWTH)} <= @@max_allowed_packet AND ${escapes} <= ${int(MOST_ESCAPES)}`;
   return sql`(CASE WHEN ${plain} THEN JSON_NORMALIZE(${value}) WHEN ${fits} THEN ${Rewritten(sql`JSON_NORMALIZE(${array})`, DECODE)} ELSE JSON_COMPACT(${value}) END)`;
 }
