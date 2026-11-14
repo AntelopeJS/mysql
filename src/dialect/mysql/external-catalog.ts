@@ -24,28 +24,32 @@ const USER_SEPARATOR = "@";
 
 const SYSTEM_SCHEMAS = sql`('mysql', 'information_schema', 'performance_schema', 'sys')`;
 
-/** How a relation's columns fold into one answer: every column holds the privilege, or some does. */
-const FOLDS = { every: sql`MIN`, some: sql`MAX` } as const;
-
 /**
- * Whether the account holds `privilege` on every or on some column of the relation `t` names, as
- * `information_schema.COLUMNS.PRIVILEGES` answers it. That column is the server's own reckoning
- * for the session: it counts global, schema, table and column grants, those of every enabled role
- * and of the roles they hold, and it never spells the account's name. NULL when the account sees
- * none of the relation's columns.
+ * What the account may do with each relation's columns, one row per relation the filter keeps:
+ * whether it holds SELECT on every column and on some column, and INSERT and UPDATE on every
+ * column. `information_schema.COLUMNS.PRIVILEGES` is the server's own reckoning for the session:
+ * it counts global, schema, table and column grants, those of every enabled role and of the roles
+ * they hold, and never spells the account's name. It lists only the columns the account holds some
+ * privilege on. One grouped read, filtered as the relations are, so MariaDB scans only the listed
+ * schemas once rather than every schema once per relation.
  */
-function ColumnPrivilege(fold: keyof typeof FOLDS, privilege: string): Sql {
-  return sql`(SELECT ${FOLDS[fold]}(FIND_IN_SET(${param(privilege)}, c.PRIVILEGES) > 0) FROM information_schema.COLUMNS c
-    WHERE c.TABLE_SCHEMA = t.TABLE_SCHEMA AND c.TABLE_NAME = t.TABLE_NAME)`;
+function ColumnPrivileges(filter: Sql): Sql {
+  return sql`SELECT c.TABLE_SCHEMA AS col_schema, c.TABLE_NAME AS col_table,
+      MIN(FIND_IN_SET('select', c.PRIVILEGES) > 0) AS every_select, MAX(FIND_IN_SET('select', c.PRIVILEGES) > 0) AS some_select,
+      MIN(FIND_IN_SET('insert', c.PRIVILEGES) > 0) AS every_insert, MIN(FIND_IN_SET('update', c.PRIVILEGES) > 0) AS every_update
+    FROM information_schema.COLUMNS c
+    WHERE c.TABLE_SCHEMA NOT IN ${SYSTEM_SCHEMAS} AND ${filter}
+    GROUP BY c.TABLE_SCHEMA, c.TABLE_NAME`;
 }
 
-function Relations(filter: Sql): Sql {
+/** The relations `filter` keeps, given the alias it reads a relation's `TABLE_SCHEMA` and `TABLE_NAME` from. */
+function Relations(filter: (table: Sql) => Sql): Sql {
   return sql`SELECT t.TABLE_SCHEMA AS rel_schema, t.TABLE_NAME AS rel_name, t.TABLE_TYPE AS rel_type,
     t.CREATE_OPTIONS AS rel_options, t.TABLE_ROWS AS rel_rows, t.TABLE_COMMENT AS rel_comment,
-    ${ColumnPrivilege("every", "select")} AS can_select, ${ColumnPrivilege("some", "select")} AS some_columns,
-    ${ColumnPrivilege("every", "insert")} AS can_insert, ${ColumnPrivilege("every", "update")} AS can_update
+    p.every_select AS can_select, p.some_select AS some_columns, p.every_insert AS can_insert, p.every_update AS can_update
     FROM information_schema.TABLES t
-    WHERE t.TABLE_TYPE IN ('BASE TABLE', 'VIEW') AND t.TABLE_SCHEMA NOT IN ${SYSTEM_SCHEMAS} AND ${filter}
+    LEFT JOIN (${ColumnPrivileges(filter(sql`c`))}) p ON p.col_schema = t.TABLE_SCHEMA AND p.col_table = t.TABLE_NAME
+    WHERE t.TABLE_TYPE IN ('BASE TABLE', 'VIEW') AND t.TABLE_SCHEMA NOT IN ${SYSTEM_SCHEMAS} AND ${filter(sql`t`)}
     ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME`;
 }
 
@@ -238,10 +242,13 @@ function ParsePlannedRows(rows: readonly Row[]): number | null {
 export function ExternalCatalogOf(flavour: Flavour): ExternalCatalogSyntax {
   return {
     relations: (schemas) =>
-      Relations(schemas ? sql`t.TABLE_SCHEMA IN ${List(schemas)}` : sql`TRUE`),
+      Relations((table) =>
+        schemas ? sql`${table}.TABLE_SCHEMA IN ${List(schemas)}` : sql`TRUE`,
+      ),
     namedRelations: (names) =>
       Relations(
-        sql`CONCAT(t.TABLE_SCHEMA, '.', t.TABLE_NAME) IN ${List(names)}`,
+        (table) =>
+          sql`CONCAT(${table}.TABLE_SCHEMA, '.', ${table}.TABLE_NAME) IN ${List(names)}`,
       ),
     parseRelation: ParseRelation,
     columns: (schema, table) =>
