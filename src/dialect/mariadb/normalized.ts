@@ -1,4 +1,4 @@
-import { type Sql, ident, lit, sql } from "../../statement";
+import { type Sql, ident, int, lit, sql } from "../../statement";
 import { BINARY_COLLATION } from "./json-text";
 
 /** A JSON string literal, escapes included. */
@@ -59,6 +59,13 @@ function Rewritten(text: Sql, rewrites: readonly Rewrite[]): Sql {
   return sql`CONVERT(${rewritten} USING utf8mb4) COLLATE ${ident(BINARY_COLLATION)}`;
 }
 
+/**
+ * The most bytes the array {@link ENCODE} writes, normalized, takes per byte of a container's text:
+ * a run of {@link STRUCTURE} grows at most 7 times, and `JSON_NORMALIZE` adds at most 4 bytes to a
+ * number, of which a byte and a run take 2 bytes at least.
+ */
+const GROWTH = 9;
+
 /** Whether a JSON value is an array or an object. */
 export function IsContainer(value: Sql): Sql {
   return sql`(JSON_TYPE(${value}) IN ('ARRAY', 'OBJECT'))`;
@@ -72,10 +79,13 @@ export function IsContainer(value: Sql): Sql {
  * and 12.3 rewrites a string's escapes. The container's text starts and ends with a run of
  * {@link STRUCTURE}, so its encoding starts and ends with a comma, which the array leaves out. Text
  * without a `{` or an escape holds neither, so its own `JSON_NORMALIZE` text is the same, sooner.
+ * MariaDB answers NULL for text longer than `max_allowed_packet`, so a container whose array could
+ * be longer keeps its compact text as written.
  */
 export function NormalizedContainer(value: Sql): Sql {
   const encoded = Rewritten(sql`JSON_COMPACT(${value})`, ENCODE);
   const array = sql`CONCAT('[', TRIM(BOTH ',' FROM ${encoded}), ']')`;
   const plain = sql`INSTR(${value}, '{') = 0 AND INSTR(${value}, CHAR(92)) = 0`;
-  return sql`IF(${plain}, JSON_NORMALIZE(${value}), ${Rewritten(sql`JSON_NORMALIZE(${array})`, DECODE)})`;
+  const fits = sql`LENGTH(${value}) * ${int(GROWTH)} <= @@max_allowed_packet`;
+  return sql`(CASE WHEN ${plain} THEN JSON_NORMALIZE(${value}) WHEN ${fits} THEN ${Rewritten(sql`JSON_NORMALIZE(${array})`, DECODE)} ELSE JSON_COMPACT(${value}) END)`;
 }
