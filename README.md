@@ -32,6 +32,8 @@ This package requires Node.js `>=22`.
 
 The module supports MySQL 8.4 LTS, MySQL 9.7 LTS, MariaDB 11.8 LTS and MariaDB 12.3 LTS, and `pnpm test` runs every suite on all four. It reads the server's version when it connects and picks the MySQL or the MariaDB dialect. [MariaDB](./docs/mariadb.md) lists every behaviour that differs between the two.
 
+A date part read in a named time zone, such as `hours("Europe/Paris")`, needs the server's time zone tables (`mysql.time_zone_name` and the tables beside it). The official `mysql` and `mariadb` images load them unless `MYSQL_INITDB_SKIP_TZINFO` or `MARIADB_INITDB_SKIP_TZINFO` is set. On a server without them, every named zone, `UTC` included, reads as `null` with no error. Load them with `mysql_tzinfo_to_sql /usr/share/zoneinfo | mysql -u root mysql` or `mariadb-tzinfo-to-sql /usr/share/zoneinfo | mariadb -u root mysql`. An offset such as `"+02:00"` needs no tables. See [Behaviour worth knowing](./docs/behaviour.md#reading-a-value).
+
 ## Install
 
 ```bash
