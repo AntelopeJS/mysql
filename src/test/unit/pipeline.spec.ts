@@ -1,11 +1,13 @@
 import { expect } from "chai";
 import { ValueProxy } from "@antelopejs/interface-database";
 
+import { DIALECTS } from "../../dialect";
 import {
   Compile,
   CompiledRelation,
   CrossInstanceRoot,
   Other,
+  type Person,
   PlanOf,
   ProfilesRoot,
   Root,
@@ -94,6 +96,28 @@ describe("A read", () => {
   it("reads a key the statement computes through a path in the session collation, which 9.7 refuses to mix", () => {
     const bound = Compile(Root().key(ValueProxy.constant<"name">("name")));
     expect(bound.sql).to.include("CONCAT('$.', CAST(JSON_QUOTE(?) AS CHAR))");
+  });
+
+  it("grows a chain of keys each computed from the one before by the same length per level", () => {
+    for (const dialect of [DIALECTS.mysql, DIALECTS.mariadb]) {
+      const chained = (levels: number) =>
+        Compile(
+          Root().map((doc) => {
+            let key = doc.key("name").cast<keyof Person>();
+            for (let level = 0; level < levels; level++) {
+              key = doc.key(key).cast<keyof Person>();
+            }
+            return key;
+          }),
+          dialect,
+        ).sql.length;
+      const growth = (levels: number) => chained(levels + 1) - chained(levels);
+      for (let levels = 2; levels < 8; levels++) {
+        expect(growth(levels), `${dialect.id} level ${levels}`).to.equal(
+          growth(1),
+        );
+      }
+    }
   });
 
   it("tests a null against both SQL NULL and a JSON null where the operand is JSON", () => {

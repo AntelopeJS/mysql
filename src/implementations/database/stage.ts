@@ -1,7 +1,9 @@
 import type { QueryStage } from "@antelopejs/interface-database/common";
 
 import type { Dialect } from "../../dialect";
+import { ident, sql } from "../../statement";
 import type { Compiled } from "./sql";
+import { IsJsonBacked, TEXT } from "./types";
 import { DecodeValue } from "./value";
 import type { DecodingContext } from "./context";
 import { JsonRowSource, type RowSource } from "./row-source";
@@ -162,5 +164,24 @@ export function FieldOf(
     stage,
     FIRST_OPERAND,
   );
-  return source.dynamicField(key, def);
+  return source.dynamicField(KeyText(key, context), def);
+}
+
+/**
+ * A computed key's text. The text read of a JSON value spells the value twice, to test its kind and
+ * to take its text, so a key read through a computed key is held once in a one-row table: a chain
+ * of them then grows the statement linearly. A key read by a static path is short and is read in
+ * place.
+ */
+function KeyText(key: Compiled, context: DecodingContext): Compiled {
+  if (!IsJsonBacked(key.type) || key.path !== undefined) {
+    return key;
+  }
+  const { dialect } = context;
+  const alias = context.nextAlias();
+  const held = dialect.sql.rows.hold(key.sql, alias);
+  return {
+    sql: sql`(SELECT ${dialect.sql.json.as(held.value, TEXT.kind)} FROM ${held.from} AS ${ident(alias)})`,
+    type: TEXT,
+  };
 }
