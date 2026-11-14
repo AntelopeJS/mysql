@@ -288,13 +288,21 @@ const SIGNED_BOUND = sql`9223372036854775808e0`;
 /** 2^63 as an exact decimal, which a decimal just below it compares under, where a double rounds. */
 const SIGNED_BOUND_DECIMAL = sql`9223372036854775808`;
 
+/** 2^64, the first magnitude an `UNSIGNED` cannot hold, as a double. */
+const UNSIGNED_BOUND = sql`18446744073709551616e0`;
+
+/** 2^64 as an exact decimal. */
+const UNSIGNED_BOUND_DECIMAL = sql`18446744073709551616`;
+
 /** 10^35, the first magnitude a `DECIMAL(65, 30)` cannot hold, as a double. */
 const DECIMAL_BOUND = sql`1e35`;
 
 /**
  * MySQL parses `1` as an integer and `1.0` as a double, keeps `CAST(1.0 AS JSON)` as a decimal, and
- * spells the three apart, so a double or a decimal that holds an integer becomes that integer, -0
- * becoming 0. A decimal is read as one, which keeps the digits a double would round. Any other
+ * spells the three apart, so a double or a decimal that holds an integer below 2^64 becomes that
+ * integer, -0 becoming 0, and `1e19` meets `10000000000000000000`, which MySQL parses as unsigned;
+ * a double from 2^63 becomes the digits of its shortest decimal, as MySQL compares it with an
+ * integer, its own cast to `UNSIGNED` stopping at 2^63. A decimal is read as one, which keeps the digits a double would round. Any other
  * decimal, which keeps the scale it was written with, becomes the double it equals where one holds
  * it exactly, and otherwise its value at the greatest scale, so `1.5` and `1.50` meet; one too large for that scale keeps its text. The type name
  * is compared as bytes: `JSON_TYPE` answers in `utf8mb4_bin`, which a literal in the session's
@@ -304,10 +312,12 @@ function CanonicalNumber(value: Sql): Sql {
   const type = sql`CAST(JSON_TYPE(${value}) AS BINARY)`;
   const integer = (number: Sql, bound: Sql) =>
     sql`${number} = FLOOR(${number}) AND ABS(${number}) < ${bound}`;
+  const unsigned = (number: Sql, bound: Sql) =>
+    sql`${number} = FLOOR(${number}) AND ${number} >= 0 AND ${number} < ${bound}`;
   const double = sql`JSON_VALUE(${value}, '$' RETURNING DOUBLE)`;
   const decimal = sql`JSON_VALUE(${value}, '$' RETURNING DECIMAL(65, 30))`;
   const scaled = sql`CAST(${decimal} AS DECIMAL(65, 30))`;
-  return sql`(CASE WHEN ${type} = 'DOUBLE' AND ${integer(double, SIGNED_BOUND)} THEN CAST(CAST(${double} AS SIGNED) AS JSON) WHEN ${type} = 'DECIMAL' AND ${integer(decimal, SIGNED_BOUND_DECIMAL)} THEN CAST(CAST(${decimal} AS SIGNED) AS JSON) WHEN ${type} = 'DECIMAL' AND ABS(${double}) < ${DECIMAL_BOUND} AND CAST(${double} AS DECIMAL(65, 30)) = ${scaled} THEN CAST(${double} AS JSON) WHEN ${type} = 'DECIMAL' AND ${scaled} IS NOT NULL THEN CAST(${scaled} AS JSON) ELSE ${value} END)`;
+  return sql`(CASE WHEN ${type} = 'DOUBLE' AND ${integer(double, SIGNED_BOUND)} THEN CAST(CAST(${double} AS SIGNED) AS JSON) WHEN ${type} = 'DECIMAL' AND ${integer(decimal, SIGNED_BOUND_DECIMAL)} THEN CAST(CAST(${decimal} AS SIGNED) AS JSON) WHEN ${type} = 'DOUBLE' AND ${unsigned(double, UNSIGNED_BOUND)} THEN CAST(CAST(CAST(${double} AS DECIMAL(20, 0)) AS UNSIGNED) AS JSON) WHEN ${type} = 'DECIMAL' AND ${unsigned(decimal, UNSIGNED_BOUND_DECIMAL)} THEN CAST(CAST(${decimal} AS UNSIGNED) AS JSON) WHEN ${type} = 'DECIMAL' AND ABS(${double}) < ${DECIMAL_BOUND} AND CAST(${double} AS DECIMAL(65, 30)) = ${scaled} THEN CAST(${double} AS JSON) WHEN ${type} = 'DECIMAL' AND ${scaled} IS NOT NULL THEN CAST(${scaled} AS JSON) ELSE ${value} END)`;
 }
 
 /**
