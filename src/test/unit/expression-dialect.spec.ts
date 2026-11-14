@@ -70,10 +70,10 @@ describe("The MySQL int32 members", () => {
 });
 
 describe("The MySQL JSON walk", () => {
-  it("name the rows of a list walk over its source held in a derived table, and read an object's keys through JSON_KEYS", () => {
+  it("name the rows of a list walk over its source cast and held in a derived table, and read an object's keys through JSON_KEYS", () => {
     const elements = json.walk("elements", sql`doc`, "w");
     expect(Bind(elements.aggregate(elements.ordinal)).sql).to.equal(
-      "(SELECT `w`.`ord` FROM (SELECT `ord`, `value` FROM (SELECT doc AS `source`) AS `w_s`, JSON_TABLE(`w_s`.`source`, '$[*]' COLUMNS (`ord` FOR ORDINALITY, `value` JSON PATH '$')) AS `w`) AS `w`)",
+      "(SELECT `w`.`ord` FROM (SELECT `ord`, `value` FROM (SELECT CAST(doc AS JSON) AS `source`) AS `w_s`, JSON_TABLE(`w_s`.`source`, '$[*]' COLUMNS (`ord` FOR ORDINALITY, `value` JSON PATH '$')) AS `w`) AS `w`)",
     );
     const keys = json.walk("keys", sql`doc`, "w");
     expect(Bind(keys.aggregate(keys.value, sql`1`)).sql).to.include(
