@@ -6,7 +6,7 @@ import { NativeWrite, RegisterSales, type SalesTables } from "./sales";
 
 /**
  * Spellings of 0, 1, 1.5, 1e19, 1e20, the greatest double below 2^64, 2^64 and 2^64 - 1, 1e35, 2e35, the greatest double and a 1 nested in an array or an
- * object, and a 1 with an exponent nested in an array, in an object, under an escaped key, under a repeated key and beside a string holding `{`,
+ * object, and a 1 with an exponent nested in an array, in an object, under a key with an escaped quote or line feed, under a key named twice, which reads its last member, and beside a string holding `{`,
  * another writer stores in a JSON column: MySQL parses text into integers and doubles and keeps an SQL decimal as a decimal, MariaDB keeps
  * each one's text.
  */
@@ -31,7 +31,10 @@ const SPELLINGS = sql`INSERT INTO sales.w_accounts (code, raw) VALUES
   ('jn39', '{"a": 1e0}'), ('jn40', '[{"a": 1}]'), ('jn41', '[{"a": 1e0}]'),
   ('jn42', CONCAT('{"a', CHAR(92 USING utf8mb4), '"b": 1}')), ('jn43', CONCAT('{"a', CHAR(92 USING utf8mb4), '"b": 1e0}')),
   ('jn44', '{"r": 2, "r": 1}'), ('jn45', '{"r": 2, "r": 1e0}'),
-  ('jn46', '[1, "{"]'), ('jn47', '[1e0, "{"]')`;
+  ('jn46', '[1, "{"]'), ('jn47', '[1e0, "{"]'),
+  ('jn48', '{"r": 1, "r": 2}'), ('jn49', '[{"r": 2, "r": 1}]'), ('jn50', '[{"r": 2, "r": 1e0}]'),
+  ('jn51', CONCAT('{"a', CHAR(92 USING utf8mb4), 'nb": 1}')),
+  ('jn52', CONCAT('{"a', CHAR(92 USING utf8mb4), 'nb": 1e0}'))`;
 
 const EXPECTED = [
   Sorted([
@@ -59,13 +62,16 @@ const EXPECTED = [
     { 'a"b': 1 },
     { r: 1 },
     [1, "{"],
+    { r: 2 },
+    [{ r: 1 }],
+    { "a\nb": 1 },
   ]),
-  24,
+  27,
 ];
 
 const CODES = "^jn";
 
-const SPELLED_ROWS = 47;
+const SPELLED_ROWS = 52;
 
 let sales: Schema<SalesTables>;
 
