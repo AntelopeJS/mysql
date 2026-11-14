@@ -4,14 +4,13 @@ import {
   type Held,
   type MemberPath,
   FamilyDialect,
-  UnsignedZeros,
 } from "../mysql";
 import type { CollectedRows, HashRow, HeldKeys, HeldTexts } from "../sql-types";
 import { Bind, type Sql, ident, int, join, lit, sql } from "../../statement";
 import { CATALOG } from "./catalog";
+import { BINARY_COLLATION, Json } from "./json-text";
+import { JsonEquals, JsonHash, JsonNumber, UnsignedZero } from "./numbers";
 import { MAX_KEY_CHARS } from "../../implementations/database/utils";
-
-const BINARY_COLLATION = "utf8mb4_nopad_bin";
 
 /**
  * The largest `group_concat_max_len`. MariaDB builds `JSON_ARRAYAGG` and `JSON_OBJECTAGG` on its
@@ -54,16 +53,6 @@ const STATEMENT_TIMEOUT = 1969;
 const OFFSET_CHARS = 6;
 const ZONE_OFFSET = lit(`[+-][0-9]{2}:[0-9]{2}$`);
 const UTC_DESIGNATOR = /Z$/;
-
-/**
- * Text as a JSON value. MariaDB stores a document as text and has no JSON type to cast to, but the
- * text a JSON function answers is JSON to every other JSON function. The text is taken into the
- * session's collation first: `JSON_QUOTE` answers in another one, which `JSON_OBJECT` refuses to
- * mix with the key beside it.
- */
-function Json(text: Sql): Sql {
-  return sql`JSON_EXTRACT(CONVERT(${text} USING utf8mb4) COLLATE ${ident(BINARY_COLLATION)}, '$')`;
-}
 
 /** A backslash, which every escaped key is spelled with. */
 const BACKSLASH = lit("\\");
@@ -218,23 +207,6 @@ const ESCAPED_KEYS: EscapedKeys = {
 };
 
 /**
- * Equality as JSON: a number however it is spelled, an object whatever its key order. `JSON_EQUALS`
- * is compared with 1 rather than read as a truth, which MariaDB 11.8 and 12.3 take to hold where it
- * is SQL NULL, in a `WHERE` and a `CASE` alike.
- */
-function JsonEquals(left: Sql, right: Sql): Sql {
-  return sql`(JSON_EQUALS(${left}, ${right}) = 1)`;
-}
-
-/**
- * `JSON_EQUALS` holds where the two values normalize to the same text, so that text's CRC-32, in
- * one character set whatever the value's, is shared by every pair it holds for.
- */
-function JsonHash(value: Sql): Sql {
-  return sql`CRC32(CONVERT(JSON_NORMALIZE(${value}) USING utf8mb4))`;
-}
-
-/**
  * A JSON value, or SQL NULL where it is the JSON `null`. MariaDB compares a JSON string by its
  * unquoted text, where `"null"` equals the JSON `null`, so the value is compared as bytes and read
  * back as JSON. It is compacted first: MariaDB keeps the text a client wrote to a JSON column,
@@ -263,16 +235,6 @@ function Includes(array: Sql, element: Sql): Sql {
   const found = sql`EXISTS (SELECT 1 FROM ${elements} WHERE ${JsonEquals(sql`${member}.${value}`, sought)})`;
   const itself = JsonEquals(array, sought);
   return sql`(CASE WHEN ${array} IS NULL OR ${element} IS NULL THEN NULL WHEN JSON_TYPE(${array}) = 'ARRAY' THEN ${found} ELSE ${itself} END)`;
-}
-
-/**
- * MariaDB writes a negative zero as `0`, so one is spelled `-0`, which JSON text keeps; `ATAN2`
- * tells it from a positive zero, which compares equal to it.
- */
-function JsonNumber(value: Sql): Sql {
-  return Json(
-    sql`IF(${value} = 0 AND ATAN2(${value}, -1) < 0, '-0', ${value})`,
-  );
 }
 
 /**
@@ -493,7 +455,7 @@ const MARIADB: Flavour = {
   value: (document, path) => sql`JSON_VALUE(${document}, ${path})`,
   valueIsRead: false,
   number: JsonNumber,
-  unsignedZero: (value) => Json(UnsignedZeros(value, "\\")),
+  unsignedZero: UnsignedZero,
   keepsInText: (value) => !Object.is(value, -0),
   boolean: (truth) =>
     sql`(CASE ${truth} WHEN TRUE THEN ${Json(lit("true"))} WHEN FALSE THEN ${Json(lit("false"))} END)`,
