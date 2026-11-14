@@ -14,6 +14,12 @@ const MS_PER_ROW = 100;
 /** The runs a dedup gets to come in under its budget, since a busy host only adds to its time. */
 const ATTEMPTS = 3;
 
+/**
+ * How many times the top-level budget a group's dedup gets: its numbering join and the unwrap of its
+ * keyed `JSON_OBJECTAGG` took 327 and 357 ms on the Windows runner, against 157 to 187 ms locally.
+ */
+const GROUP_BUDGETS = 2;
+
 /** How many times `part` and a comma fill {@link DOCUMENT_BYTES}. */
 function Fitting(part: string): number {
   return Math.ceil(DOCUMENT_BYTES / (part.length + 1));
@@ -64,12 +70,6 @@ function Sorted(values: readonly unknown[] | undefined): unknown[] {
     JSON.stringify(left).localeCompare(JSON.stringify(right)),
   );
 }
-
-/**
- * The times a group's dedup reads each document: to number its distinct values, to join each row
- * to its number, and to collect it.
- */
-const GROUP_READS = 3;
 
 /** The result of `run` and its fastest time over up to {@link ATTEMPTS} runs, stopping at one in `budget`. */
 async function Fastest<T>(
@@ -130,8 +130,8 @@ describe("a dedup of large external JSON documents", function () {
     expect(await SortBuffer()).to.equal(before);
   });
 
-  it("keeps one value per document in a group in under 0.1 s a read of a row", async () => {
-    const budget = MS_PER_ROW * DOCUMENTS.length * GROUP_READS;
+  it("keeps one value per document in a group in under 0.2 s a row, which 327 and 357 ms on Windows need", async () => {
+    const budget = MS_PER_ROW * DOCUMENTS.length * GROUP_BUDGETS;
     const [groups, ms] = await Fastest(
       () =>
         Large()
