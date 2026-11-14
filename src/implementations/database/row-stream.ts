@@ -1,5 +1,6 @@
 import type { Readable } from "node:stream";
 import { PoolConnection as CallbackPoolConnection } from "mysql2";
+import type { PoolConnection } from "mysql2/promise";
 
 import {
   AcquireUncapped,
@@ -15,7 +16,7 @@ import {
   type SortBufferLadder,
 } from "../../sort-buffer";
 import { CheckedBehind, CutBehind, WarnedFailure } from "../../warnings";
-import { Bind, type Sql } from "../../statement";
+import { Bind, type Sql, sql } from "../../statement";
 import { IsDocument } from "./guards";
 
 const NOT_A_POOL_CONNECTION =
@@ -79,6 +80,36 @@ function Attempted(
   return attempt;
 }
 
+/**
+ * One snapshot for every run of a checked statement, so a second run reads the rows the first
+ * read and raises the warnings it raised, whatever another session writes meanwhile.
+ */
+const SNAPSHOT = [
+  sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ`,
+  sql`START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY`,
+];
+
+const END_SNAPSHOT = sql`ROLLBACK`;
+
+async function RunAll(
+  connection: PoolConnection,
+  statements: readonly Sql[],
+): Promise<void> {
+  for (const statement of statements) {
+    await connection.query(Bind(statement).sql);
+  }
+}
+
+/** Ends the snapshot a checked statement read in, answering whether that held. */
+async function Ended(connection: PoolConnection, isChecked: boolean) {
+  try {
+    await RunAll(connection, isChecked ? [END_SNAPSHOT] : []);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Puts back the session's sort buffer where a retry grew it, answering whether that held. */
 async function Restored(ladder: SortBufferLadder | undefined) {
   try {
@@ -105,6 +136,9 @@ async function Restored(ladder: SortBufferLadder | undefined) {
  * warning, and no row read wrong is handed over. A statement that failed there for warnings no read
  * fails on, such as a sort past `max_sort_length`, runs once more, tolerating as many. A failure
  * after a row, or of a statement that streams as it is, is never run again for its warnings.
+ * Every run of such a statement reads in one read-only transaction that took its snapshot before
+ * the first, so the second reads the rows the first read and raises the warnings it raised; that
+ * transaction holds the statement's metadata locks until the cursor closes.
  *
  * A statement that fails with `Out of sort memory` before its first row runs again on the same
  * connection up a {@link SortBufferLadder}: the server sorts before it sends a row, so no row is read
@@ -137,6 +171,12 @@ export async function OpenRowStream(
     dialect.capture.warnings?.checked(statement, tolerated) ?? statement;
   const first = checked(0);
   const isChecked = first !== statement;
+  try {
+    await RunAll(connection, isChecked ? SNAPSHOT : []);
+  } catch (err) {
+    connection.destroy();
+    throw err;
+  }
   let attempt = Attempted(driver, first, batchSize);
   let tolerated: number | undefined;
   let ladder: SortBufferLadder | undefined;
@@ -222,7 +262,12 @@ export async function OpenRowStream(
       }
       isClosed = true;
       driver.off("error", lost);
-      if (isClean && !attempt.failure && (await Restored(ladder))) {
+      if (
+        isClean &&
+        !attempt.failure &&
+        (await Ended(connection, isChecked)) &&
+        (await Restored(ladder))
+      ) {
         await ReleaseCapped(connection);
       } else {
         Discard(connection);
