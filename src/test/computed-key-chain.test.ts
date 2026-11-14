@@ -5,7 +5,7 @@ import { Schema } from "@antelopejs/interface-database/schema";
 const INSTANCE = "one";
 const LEVELS = 8;
 
-type Doc = Record<string, string | number> & { _id: string };
+type Doc = Record<string, string | boolean> & { _id: string };
 
 const HOPS = Array.from({ length: LEVELS + 1 }, (_, level) => `h${level}`);
 
@@ -17,7 +17,7 @@ const DOCS: Doc[] = [
       HOPS.slice(0, -1).map((hop, at) => [hop, HOPS[at + 1]]),
     ),
   },
-  { _id: "number", start: "h0", h0: 5 },
+  { _id: "boolean", start: "h0", h0: true, true: "h1", h1: "h2" },
 ];
 
 const schema = new Schema<{ rows: Doc }>("computed_key_chain", {
@@ -58,9 +58,9 @@ describe("a chain of keys each computed from the one before", function () {
       .run();
     const ends = Object.fromEntries(rows.map((row) => [row.id, row.ends]));
     expect(ends.chain).to.deep.equal(HOPS);
-    expect(ends.number).to.deep.equal([
+    expect(ends.boolean).to.deep.equal([
       "h0",
-      5,
+      true,
       ...Array.from({ length: LEVELS - 1 }, () => null),
     ]);
   });

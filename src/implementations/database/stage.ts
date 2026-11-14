@@ -170,8 +170,8 @@ export function FieldOf(
 /**
  * A computed key's text. The text read of a JSON value spells the value twice, to test its kind and
  * to take its text, so a key read through a computed key is held once in a one-row table: a chain
- * of them then grows the statement linearly. A key read by a static path is short and is read in
- * place.
+ * of them then grows the statement linearly. A key read by a static path, such as a row's member,
+ * is read in place, which keeps the common one-level read as it was.
  */
 function KeyText(key: Compiled, context: DecodingContext): Compiled {
   if (!IsJsonBacked(key.type) || key.path !== undefined) {
