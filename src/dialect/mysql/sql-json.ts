@@ -316,7 +316,10 @@ const WALK_ROWS: Record<WalkKind, (source: Sql) => Sql> = {
 /**
  * The rows of a walk as one FROM item. Where a subquery inside a table function's argument cannot
  * read an outer query, the source is held in a derived table first, which can, and walked from
- * there: the source of a walk over a walk's result reads the outer row inside a subquery.
+ * there: the source of a walk over a walk's result reads the outer row inside a subquery. The
+ * holder casts the source, so it never holds a bare outer column: MySQL 8.4 cannot resolve the
+ * holder's column inside `JSON_TABLE` where a derived table around the walk also selects that same
+ * outer column bare, as a merge of a row with an object built from its `keys()` does.
  */
 function WalkFrom(
   flavour: Flavour,
@@ -327,7 +330,11 @@ function WalkFrom(
   if (flavour.outerInTableFunction) {
     return WALK_ROWS[kind](source);
   }
-  const held: Held = { name: "source", value: source, kind: "json" };
+  const held: Held = {
+    name: "source",
+    value: sql`CAST(${source} AS JSON)`,
+    kind: "json",
+  };
   const holder = `${alias}_s`;
   const rows = WALK_ROWS[kind](HeldRead(flavour, holder, held));
   return sql`(SELECT ${ORDINAL}, ${VALUE} FROM ${flavour.holdBare(held)} AS ${ident(holder)}, ${rows} AS ${ident(alias)})`;
