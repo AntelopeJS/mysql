@@ -85,7 +85,9 @@ describe("obj_keys and obj_values", () => {
   it("walk the keys of the object, in the order of its ordinal, behind an object guard", () => {
     const sql = Projected(Compile(Root().map((doc) => doc.key("meta").keys())));
     expect(sql).to.include("(CASE WHEN (JSON_TYPE(`t0`.`meta`) IN ('OBJECT'");
-    expect(sql).to.include(`(SELECT ${META} AS \`source\`) AS \`t1_s\``);
+    expect(sql).to.include(
+      `(SELECT CAST(${META} AS JSON) AS \`source\`) AS \`t1_s\``,
+    );
     expect(sql).to.include("JSON_TABLE(JSON_KEYS(`t1_s`.`source`), '$[*]'");
     expect(sql).to.include("JSON_OBJECTAGG(LPAD(`t1`.`ord`, 20, '0'), ");
   });
@@ -94,7 +96,9 @@ describe("obj_keys and obj_values", () => {
     const sql = Projected(
       Compile(Root().map((doc) => doc.key("meta").values())),
     );
-    expect(sql).to.include(`(SELECT ${META} AS \`source\`) AS \`t1_s\``);
+    expect(sql).to.include(
+      `(SELECT CAST(${META} AS JSON) AS \`source\`) AS \`t1_s\``,
+    );
     expect(sql).to.include("JSON_TABLE(`t1_s`.`source`, '$.*'");
     expect(sql).to.not.include("JSON_KEYS");
   });

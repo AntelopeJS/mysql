@@ -264,6 +264,15 @@ export function HeldRead(flavour: Flavour, alias: string, held: Held): Sql {
   return held.kind === "text" ? column : flavour.tabled(column);
 }
 
+/**
+ * A JSON value to hold where `JSON_TABLE` reads it. MySQL 8.4 cannot resolve a held column inside
+ * `JSON_TABLE` where a derived table around it selects the same outer column bare, so MySQL holds
+ * it cast: a merge holds the row as its left side and walks or merges it again inside.
+ */
+export function Holdable(flavour: Flavour, value: Sql): Sql {
+  return flavour.outerInTableFunction ? value : sql`CAST(${value} AS JSON)`;
+}
+
 const UTC_DESIGNATOR = /Z$/;
 const UTC_OFFSET = "+00:00";
 

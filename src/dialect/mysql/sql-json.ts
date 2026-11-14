@@ -9,7 +9,13 @@ import type {
 import type { KeyColumn } from "../../implementations/database/paths";
 import type { Ordering } from "../../implementations/database/json";
 import { type Sql, ident, int, join, lit, param, sql } from "../../statement";
-import { type Flavour, type Held, HeldRead, type MemberPath } from "./flavour";
+import {
+  type Flavour,
+  type Held,
+  HeldRead,
+  Holdable,
+  type MemberPath,
+} from "./flavour";
 import { LastMembers, EscapesOrRepeatsKey, Listable } from "./sql-last-members";
 import { IsoText, ParseInstant } from "./sql-time";
 
@@ -327,7 +333,11 @@ function WalkFrom(
   if (flavour.outerInTableFunction) {
     return WALK_ROWS[kind](source);
   }
-  const held: Held = { name: "source", value: source, kind: "json" };
+  const held: Held = {
+    name: "source",
+    value: Holdable(flavour, source),
+    kind: "json",
+  };
   const holder = `${alias}_s`;
   const rows = WALK_ROWS[kind](HeldRead(flavour, holder, held));
   return sql`(SELECT ${ORDINAL}, ${VALUE} FROM ${flavour.holdBare(held)} AS ${ident(holder)}, ${rows} AS ${ident(alias)})`;
@@ -362,8 +372,8 @@ function ShallowMerge(
   alias: string,
 ): Sql {
   const sides: readonly Held[] = [
-    { name: "l", value: left, kind: "jsonText" },
-    { name: "r", value: right, kind: "jsonText" },
+    { name: "l", value: Holdable(flavour, left), kind: "jsonText" },
+    { name: "r", value: Holdable(flavour, right), kind: "jsonText" },
   ];
   const [leftSide, rightSide] = sides.map((side) =>
     HeldRead(flavour, alias, side),
