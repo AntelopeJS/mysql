@@ -90,6 +90,24 @@ export interface InPlaceSyntax {
    * SQL NULL, with a warning only.
    */
   heldFits(key: readonly Sql[]): Sql;
+  /**
+   * A one-row table holding the `parts` texts of a JSON array the row it is read for computes, as
+   * a FROM item without its alias, and each text's column at `alias`, in the binary collation a
+   * table's columns compare in. Every column is SQL NULL where the array is.
+   */
+  heldTexts(array: Sql, parts: number, alias: string): HeldTexts;
+  /**
+   * The elements of a JSON array, each an array of `parts` texts, as the rows of a FROM item
+   * without its alias, and each text's column at `alias`, as {@link InPlaceSyntax.heldTexts}
+   * reads them. No row where the array is SQL NULL.
+   */
+  heldElements(array: Sql, parts: number, alias: string): HeldTexts;
+}
+
+/** What {@link InPlaceSyntax.heldTexts} answers. */
+export interface HeldTexts {
+  readonly from: Sql;
+  readonly columns: readonly Sql[];
 }
 
 /** What {@link InPlaceSyntax.hashRow} answers. */

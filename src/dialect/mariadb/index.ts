@@ -5,9 +5,10 @@ import {
   type MemberPath,
   FamilyDialect,
 } from "../mysql";
-import type { CollectedRows, HashRow, HeldKeys } from "../sql-types";
+import type { CollectedRows, HashRow, HeldKeys, HeldTexts } from "../sql-types";
 import { Bind, type Sql, ident, int, join, lit, sql } from "../../statement";
 import { CATALOG } from "./catalog";
+import { MAX_KEY_CHARS } from "../../implementations/database/utils";
 
 const BINARY_COLLATION = "utf8mb4_nopad_bin";
 
@@ -16,6 +17,12 @@ const BINARY_COLLATION = "utf8mb4_nopad_bin";
  * group concatenation, which truncates an aggregate at this many bytes.
  */
 const UNBOUNDED_AGGREGATE_BYTES = 4294967295;
+
+/**
+ * The bytes of a value MariaDB sorts by, past which it sorts two values as equal: the longest `_id`
+ * at four bytes per character, so that a sort by identity orders every row of a table apart.
+ */
+const ID_SORT_BYTES = MAX_KEY_CHARS * 4;
 
 /** MariaDB's statement timeout, in seconds, which a fraction of a second refines. */
 const MS_PER_SECOND = 1000;
@@ -433,6 +440,27 @@ function Hold(columns: readonly Held[]): Sql {
   return sql`JSON_TABLE(JSON_ARRAY(${values}), '$' COLUMNS (${join(definitions, sql`, `)}))`;
 }
 
+/**
+ * The texts of a JSON array of `parts` texts, or of each such array a JSON array holds, read back
+ * in the binary collation a table's columns compare in.
+ */
+function TextColumns(
+  array: Sql,
+  rows: "$" | "$[*]",
+  parts: number,
+  alias: string,
+): HeldTexts {
+  const names = Array.from({ length: parts }, (_, part) => ident(`e${part}`));
+  const definitions = names.map(
+    (name, part) =>
+      sql`${name} LONGTEXT COLLATE ${ident(BINARY_COLLATION)} PATH ${lit(`$[${part}]`)}`,
+  );
+  return {
+    from: sql`JSON_TABLE(COALESCE(${array}, JSON_ARRAY()), ${lit(rows)} COLUMNS (${join(definitions, sql`, `)}))`,
+    columns: names.map((name) => sql`${ident(alias)}.${name}`),
+  };
+}
+
 /** MariaDB 11.8 LTS and 12.3 LTS. */
 const MARIADB: Flavour = {
   id: "mariadb",
@@ -444,7 +472,10 @@ const MARIADB: Flavour = {
   warnsTooDeep: true,
   heldNesting: 1,
   multiValuedIndex: false,
-  pinned: [sql`group_concat_max_len = ${int(UNBOUNDED_AGGREGATE_BYTES)}`],
+  pinned: [
+    sql`group_concat_max_len = ${int(UNBOUNDED_AGGREGATE_BYTES)}`,
+    sql`max_sort_length = ${int(ID_SORT_BYTES)}`,
+  ],
   readTimeout: (ms) =>
     sql`max_statement_time = ${int(ms)} / ${int(MS_PER_SECOND)}`,
   uncapped: Uncapped,
@@ -476,6 +507,9 @@ const MARIADB: Flavour = {
     hashedKey: HashedKey,
     held: HeldArray,
     heldFits: HeldFits,
+    heldTexts: (array, parts, alias) => TextColumns(array, "$", parts, alias),
+    heldElements: (array, parts, alias) =>
+      TextColumns(array, "$[*]", parts, alias),
   },
   returning: true,
   lateral: false,

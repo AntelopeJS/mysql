@@ -89,13 +89,17 @@ export function KeyedIdentities(
   relation: Relation,
   columns: Readonly<Record<string, Sql>>,
 ): Sql {
-  const identity = [INSTANCE_COLUMN, ID_COLUMN].map((name) =>
-    QualifiedColumn(relation.alias, name),
-  );
   const computed = Object.entries(columns).map(
     ([name, value]) => sql`${value} AS ${ident(name)}`,
   );
-  return sql`SELECT ${join([...identity, ...computed], COMMA)} ${RenderClauses(relation, BODY)}`;
+  return sql`SELECT ${join([...IdentityColumns(relation), ...computed], COMMA)} ${RenderClauses(relation, BODY)}`;
+}
+
+/** Each row's `_instance` and `_id`, as the relation's alias reads them. */
+export function IdentityColumns(relation: Relation): Sql[] {
+  return [INSTANCE_COLUMN, ID_COLUMN].map((name) =>
+    QualifiedColumn(relation.alias, name),
+  );
 }
 
 function JoinClauses(relation: Relation): Sql | undefined {

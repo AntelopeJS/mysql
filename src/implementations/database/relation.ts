@@ -45,7 +45,28 @@ export interface TableOrigin {
 export interface OrderTerm {
   sql: Sql;
   descending: boolean;
+  /** The name `orderBy` sorted by, where it did, which reads the term again at another alias. */
+  readonly sortedBy?: SortedBy;
 }
+
+/** A term's name, and its place among the terms {@link SortedTerms} answers for that name. */
+export interface SortedBy {
+  readonly name: string;
+  readonly part: number;
+  /**
+   * Whether the engine sorts by the term's whole value: a number, a truth or an instant. MariaDB
+   * sorts a text or a JSON value by its leading characters only, and fewer of them where the sort
+   * takes a `LIMIT`, so two values that share them sort as equal there and differ in a comparison.
+   */
+  readonly whole: boolean;
+}
+
+/** The kinds of value the engine sorts by whole. */
+const WHOLE_SORT_KINDS: ReadonlySet<SqlType["kind"]> = new Set([
+  "float",
+  "bool",
+  "timestamp",
+]);
 
 /**
  * What a single-row relation answers with when it read no row: `null` everywhere but `get`, which
@@ -182,6 +203,30 @@ export function ScanColumns(relation: Relation, name: string): IndexedMember[] {
     relation.origin?.crossInstanceScan?.(name);
   }
   return IndexColumns(relation, name);
+}
+
+/**
+ * The terms that sort by an index or field: a declared index's key parts, key columns included,
+ * so its index serves the order, and an external relation's column by its native column or
+ * columns, in the column's own order.
+ */
+export function SortedTerms(
+  members: readonly IndexedMember[],
+  name: string,
+  descending: boolean,
+): OrderTerm[] {
+  return members
+    .flatMap((column) =>
+      (column.value.native?.order ?? column.order).map((sql) => ({
+        sql,
+        whole: WHOLE_SORT_KINDS.has(column.value.type.kind),
+      })),
+    )
+    .map(({ sql, whole }, part) => ({
+      sql,
+      descending,
+      sortedBy: { name, part, whole },
+    }));
 }
 
 /**
