@@ -262,10 +262,15 @@ const SIGNED_BOUND = sql`9223372036854775808e0`;
 /** 2^63 as an exact decimal, which a decimal just below it compares under, where a double rounds. */
 const SIGNED_BOUND_DECIMAL = sql`9223372036854775808`;
 
+/** 10^35, the first magnitude a `DECIMAL(65, 30)` cannot hold, as a double. */
+const DECIMAL_BOUND = sql`1e35`;
+
 /**
  * MySQL parses `1` as an integer and `1.0` as a double, keeps `CAST(1.0 AS JSON)` as a decimal, and
  * spells the three apart, so a double or a decimal that holds an integer becomes that integer, -0
- * becoming 0. A decimal is read as one, which keeps the digits a double would round. The type name
+ * becoming 0. A decimal is read as one, which keeps the digits a double would round. Any other
+ * decimal, which keeps the scale it was written with, becomes the double it equals where one holds
+ * it exactly, and otherwise its value at the greatest scale, so `1.5` and `1.50` meet; one too large for that scale keeps its text. The type name
  * is compared as bytes: `JSON_TYPE` answers in `utf8mb4_bin`, which a literal in the session's
  * collation cannot be compared with.
  */
@@ -275,7 +280,8 @@ function CanonicalNumber(value: Sql): Sql {
     sql`${number} = FLOOR(${number}) AND ABS(${number}) < ${bound}`;
   const double = sql`JSON_VALUE(${value}, '$' RETURNING DOUBLE)`;
   const decimal = sql`JSON_VALUE(${value}, '$' RETURNING DECIMAL(65, 30))`;
-  return sql`(CASE WHEN ${type} = 'DOUBLE' AND ${integer(double, SIGNED_BOUND)} THEN CAST(CAST(${double} AS SIGNED) AS JSON) WHEN ${type} = 'DECIMAL' AND ${integer(decimal, SIGNED_BOUND_DECIMAL)} THEN CAST(CAST(${decimal} AS SIGNED) AS JSON) ELSE ${value} END)`;
+  const scaled = sql`CAST(${decimal} AS DECIMAL(65, 30))`;
+  return sql`(CASE WHEN ${type} = 'DOUBLE' AND ${integer(double, SIGNED_BOUND)} THEN CAST(CAST(${double} AS SIGNED) AS JSON) WHEN ${type} = 'DECIMAL' AND ${integer(decimal, SIGNED_BOUND_DECIMAL)} THEN CAST(CAST(${decimal} AS SIGNED) AS JSON) WHEN ${type} = 'DECIMAL' AND ABS(${double}) < ${DECIMAL_BOUND} AND CAST(${double} AS DECIMAL(65, 30)) = ${scaled} THEN CAST(${double} AS JSON) WHEN ${type} = 'DECIMAL' AND ${scaled} IS NOT NULL THEN CAST(${scaled} AS JSON) ELSE ${value} END)`;
 }
 
 /**
