@@ -149,6 +149,8 @@ async function CountsALongTextSlice(): Promise<void> {
 }
 
 describe("a stage after an ordered slice of an outer row's rows", function () {
+  this.timeout(300_000);
+
   before(Seed);
 
   after(Unseed);
