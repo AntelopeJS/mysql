@@ -6,8 +6,10 @@ import { NativeWrite, RegisterSales, type SalesTables } from "./sales";
 
 /**
  * Spellings of 0, 1, 1.5, 1e19, 1e20, the greatest double below 2^64, 2^64 and 2^64 - 1, 1e35, 2e35, the greatest double and a 1 nested in an array or an
- * object, and a 1 with an exponent nested in an array, another writer stores in a JSON column: MySQL parses text into integers and doubles and
- * keeps an SQL decimal as a decimal, MariaDB keeps each one's text.
+ * object, and a 1 with an exponent nested in an array or an object, another writer stores in a JSON column: MySQL parses text into integers and doubles and
+ * keeps an SQL decimal as a decimal, MariaDB keeps each one's text. Beside them, objects that a `JSON_NORMALIZE` of every object would break:
+ * a key with an escaped quote or line feed, which MariaDB 12.3 writes back unescaped, and a key named twice, at the top and nested, whose
+ * members both versions reorder, so that `{"r": 2, "r": 1}` would read 2 and meet `{"r": 1, "r": 2}`. MySQL keeps the last member.
  */
 const SPELLINGS = sql`INSERT INTO sales.w_accounts (code, raw) VALUES
   ('jn1', '0'), ('jn2', '0.0'), ('jn3', '-0.0'), ('jn4', '1'), ('jn5', '1.0'),
@@ -26,7 +28,10 @@ const SPELLINGS = sql`INSERT INTO sales.w_accounts (code, raw) VALUES
   ('jn31', '[1e0]'), ('jn32', '[10e-1]'),
   ('jn33', '[1e19]'), ('jn34', '[10000000000000000000]'),
   ('jn35', '[1e18]'), ('jn36', '[1000000000000000000]'),
-  ('jn37', '[1.5e15]'), ('jn38', '[1500000000000000]')`;
+  ('jn37', '[1.5e15]'), ('jn38', '[1500000000000000]'),
+  ('jn39', '{"a": 1e0}'),
+  ('jn40', '{"a\\\\"b": 1}'), ('jn41', '{"a\\\\nb": 1}'),
+  ('jn42', '{"r": 2, "r": 1}'), ('jn43', '{"r": 1, "r": 2}'), ('jn44', '[{"r": 2, "r": 1}]')`;
 
 const EXPECTED = [
   Sorted([
@@ -50,13 +55,18 @@ const EXPECTED = [
     [1e19],
     [1e18],
     [1.5e15],
+    { 'a"b': 1 },
+    { "a\nb": 1 },
+    { r: 1 },
+    { r: 2 },
+    [{ r: 1 }],
   ]),
-  20,
+  25,
 ];
 
 const CODES = "^jn";
 
-const SPELLED_ROWS = 38;
+const SPELLED_ROWS = 44;
 
 let sales: Schema<SalesTables>;
 
