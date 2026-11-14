@@ -73,8 +73,8 @@ stopOn("SIGINT", 130);
 stopOn("SIGTERM", 143);
 stopOn("SIGHUP", 129);
 symlinkSync(path.join(root, "node_modules"), path.join(out, "node_modules"), "dir");
-const tsc = path.join(root, "node_modules", ".bin", "tsc");
-const compiled = await run(tsc, ["-p", path.join(skill, "tsconfig.json"), "--outDir", out]);
+const tsc = path.join(root, "node_modules", "typescript", "bin", "tsc");
+const compiled = await run(process.execPath, [tsc, "-p", path.join(skill, "tsconfig.json"), "--outDir", out]);
 if (compiled !== 0) {
   console.error("tsc failed");
   finish(TOOL_ERROR);
