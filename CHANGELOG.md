@@ -1,5 +1,63 @@
 # Changelog
 
+## v0.2.0
+
+[compare changes](https://github.com/AntelopeJS/mysql/compare/v0.1.2...v0.2.0)
+
+### 🚀 Enhancements
+
+- **deps:** ⚠️  Require interface-database 0.4 ([#33](https://github.com/AntelopeJS/mysql/pull/33))
+
+### 🔥 Performance
+
+- **join:** Treat a filter on `_id` as a one-row left side of a MariaDB JSON-key join ([#36](https://github.com/AntelopeJS/mysql/pull/36))
+- **default:** Hold a computed value once so a chain of defaults reads each link once ([#48](https://github.com/AntelopeJS/mysql/pull/48))
+- **stage:** Read a key computed from a computed key through one held value ([#50](https://github.com/AntelopeJS/mysql/pull/50))
+
+### 🩹 Fixes
+
+- **formal:** Load the change-feed check's output as CommonJS whatever package.json sits above TMPDIR ([#37](https://github.com/AntelopeJS/mysql/pull/37))
+- **dialect:** Dedup 0 and -0 as one value at the top and in a group on both engines ([#39](https://github.com/AntelopeJS/mysql/pull/39))
+- **dialect:** Group 0 and -0 as one key on MariaDB and in a compound key on MySQL ([#51](https://github.com/AntelopeJS/mysql/pull/51))
+- **feeds:** End a MariaDB 11.8 feed at a projection nested past its limit, and deliver a hollow field 29 levels deep ([#41](https://github.com/AntelopeJS/mysql/pull/41))
+- **json:** Read a MariaDB member under a computed key a JSON writer escapes ([#42](https://github.com/AntelopeJS/mysql/pull/42))
+- **catalog:** Count privileges granted through a role, and an account name holding @ ([#43](https://github.com/AntelopeJS/mysql/pull/43))
+- **dialect:** Read a constant slice of a table's rows on MariaDB without aggregating them whole past max_allowed_packet ([#45](https://github.com/AntelopeJS/mysql/pull/45))
+- **bench:** Check every nested field in the run output and record guards ([#47](https://github.com/AntelopeJS/mysql/pull/47))
+- **dialect:** Dedup 0 and -0 nested in an array or an object as one value ([#53](https://github.com/AntelopeJS/mysql/pull/53))
+- **feeds:** Deliver a MariaDB 11.8 merge map's 31-container document ([#52](https://github.com/AntelopeJS/mysql/pull/52))
+- **dialect:** Dedup the spellings of a top-level JSON number as one value on both engines ([#54](https://github.com/AntelopeJS/mysql/pull/54))
+- **mariadb:** Sort texts that share their first 2,048 bytes apart, a slice's included ([#56](https://github.com/AntelopeJS/mysql/pull/56))
+
+### 📖 Documentation
+
+- Name the time zone tables a named zone needs, and the null it reads without them ([#44](https://github.com/AntelopeJS/mysql/pull/44))
+- **mariadb:** State what each read takes from an object that names one key twice ([#49](https://github.com/AntelopeJS/mysql/pull/49))
+
+### 📦 Build
+
+- **deps:** ⚠️  Cap every @antelopejs range below its next minor on tooling-configs 0.7 ([#55](https://github.com/AntelopeJS/mysql/pull/55))
+
+### ✅ Tests
+
+- **dialect:** Map and filter a nested distinct() that reads its outer row on MariaDB ([#35](https://github.com/AntelopeJS/mysql/pull/35))
+- Send off-contract values from plain-JS untyped specs instead of WithForeign ([#38](https://github.com/AntelopeJS/mysql/pull/38))
+- **verify:** Build every compared journey array with GROUP_CONCAT ORDER BY ([#46](https://github.com/AntelopeJS/mysql/pull/46))
+- **verify:** Read the session pin on MariaDB from its statement history ([#40](https://github.com/AntelopeJS/mysql/pull/40))
+
+### 🤖 CI
+
+- Run checks and tests on Windows against the runner's MySQL 8.4 ([#34](https://github.com/AntelopeJS/mysql/pull/34))
+
+#### ⚠️ Breaking Changes
+
+- **deps:** ⚠️  Require interface-database 0.4 ([#33](https://github.com/AntelopeJS/mysql/pull/33))
+- **deps:** ⚠️  Cap every @antelopejs range below its next minor on tooling-configs 0.7 ([#55](https://github.com/AntelopeJS/mysql/pull/55))
+
+### ❤️ Contributors
+
+- Antony Rizzitelli ([@Upd4ting](http://github.com/Upd4ting))
+
 ## v0.1.2
 
 [compare changes](https://github.com/AntelopeJS/mysql/compare/v0.1.1...v0.1.2)
