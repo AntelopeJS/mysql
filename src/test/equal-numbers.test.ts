@@ -7,29 +7,51 @@ import { PhysicalTable, Run } from "./tables";
 const SCHEMA_ID = "equal_numbers";
 
 /**
- * JSON numbers another writer stores, each in the class of the numbers MySQL's JSON `=` finds it
- * equal to: MySQL reads an integer literal from -2^63 to 2^64 - 1 as an integer and any other
- * number as a double, and finds an integer equal to a double where the double's shortest decimal
- * has the integer's digits.
+ * Spellings of JSON numbers another writer stores, which MySQL's JSON `=` and orderings tell apart
+ * where a double holding both would not, or find equal where their text differs.
  */
-const NUMBERS: readonly (readonly [string, string])[] = [
-  ["18446744073709549568e0", "a"],
-  ["18446744073709550000", "a"],
-  ["18446744073709549568", "b"],
-  ["9223372036854774784e0", "c"],
-  ["9223372036854775000", "c"],
-  ["9223372036854774784", "d"],
-  ["-9223372036854775808", "e"],
-  ["-9223372036854775808e0", "f"],
-  ["100000000000000000001", "g"],
-  ["1e20", "g"],
-  ["1e19", "h"],
-  ["10000000000000000000", "h"],
-  ["9007199254740993", "i"],
-  ["9007199254740992e0", "j"],
-  ["1", "k"],
-  ["1.0", "k"],
-];
+const NUMBERS = [
+  "18446744073709549568e0",
+  "18446744073709550000",
+  "18446744073709549568",
+  "9223372036854774784e0",
+  "9223372036854775000",
+  "9223372036854774784",
+  "-9223372036854775808",
+  "-9223372036854775808e0",
+  "100000000000000000001",
+  "1e20",
+  "1e19",
+  "10000000000000000000",
+  "9007199254740993",
+  "9007199254740992e0",
+  "1",
+  "1.0",
+] as const;
+
+const SIGNED_MIN = -(2n ** 63n);
+const UNSIGNED_MAX = 2n ** 64n - 1n;
+
+/**
+ * The value MySQL compares a number by: an integer literal from -2^63 to 2^64 - 1 exactly, and any
+ * other number as the double it parses to, by the digits of its shortest decimal. Each number of
+ * {@link NUMBERS} is integral and below 10^21, which JavaScript writes without an exponent.
+ */
+function MysqlValue(text: string): bigint {
+  if (/^-?[0-9]+$/.test(text)) {
+    const exact = BigInt(text);
+    if (exact >= SIGNED_MIN && exact <= UNSIGNED_MAX) {
+      return exact;
+    }
+  }
+  return BigInt(Number(text).toString());
+}
+
+/** What `lt`, `eq`, `gt`, `le` and `ge` answer for two numbers, as MySQL compares them. */
+function Order(left: string, right: string): string {
+  const [l, r] = [MysqlValue(left), MysqlValue(right)];
+  return JSON.stringify([l < r, l === r, l > r, l <= r, l >= r]);
+}
 
 interface Pair {
   _id: string;
@@ -48,15 +70,15 @@ const schema = new Schema<{ pairs: Pair; singles: Single }>(SCHEMA_ID, {
 });
 
 /** Each ordered pair of numbers MySQL finds equal, as `left right` texts. */
-const EQUAL = NUMBERS.flatMap(([left, leftClass]) =>
-  NUMBERS.filter(([, rightClass]) => rightClass === leftClass).map(
-    ([right]) => `${left} ${right}`,
+const EQUAL = NUMBERS.flatMap((left) =>
+  NUMBERS.filter((right) => MysqlValue(left) === MysqlValue(right)).map(
+    (right) => `${left} ${right}`,
   ),
 ).sort();
 
 /** The texts of the numbers at `indexes`, joined by a space. */
 function Texts(indexes: readonly string[]): string {
-  return indexes.map((index) => NUMBERS[Number(index)]?.[0]).join(" ");
+  return indexes.map((index) => NUMBERS[Number(index)]).join(" ");
 }
 
 /** Rows of `table` with their `_id` and their undeclared keys, in the default instance. */
@@ -79,9 +101,9 @@ describe("eq on JSON numbers another writer spelled", function () {
     await Run(
       Insert(
         "pairs",
-        NUMBERS.flatMap(([left], l) =>
+        NUMBERS.flatMap((left, l) =>
           NUMBERS.map(
-            ([right], r) =>
+            (right, r) =>
               [
                 `${l}-${r}`,
                 sql`JSON_OBJECT('l', ${Parsed(left)}, 'r', ${Parsed(right)})`,
@@ -94,7 +116,7 @@ describe("eq on JSON numbers another writer spelled", function () {
       Insert(
         "singles",
         NUMBERS.map(
-          ([number], index) =>
+          (number, index) =>
             [String(index), sql`JSON_OBJECT('n', ${Parsed(number)})`] as const,
         ),
       ),
@@ -109,6 +131,31 @@ describe("eq on JSON numbers another writer spelled", function () {
       .map((row) => row.key("_id"))
       .run();
     expect(ids.map((id) => Texts(id.split("-"))).sort()).to.deep.equal(EQUAL);
+  });
+
+  it("orders two keys of a row as MySQL's JSON orderings do", async () => {
+    const rows = await schema
+      .instance()
+      .table("pairs")
+      .map((row) => ({
+        id: row.key("_id"),
+        lt: row.key("l").lt(row.key("r")),
+        eq: row.key("l").eq(row.key("r")),
+        gt: row.key("l").gt(row.key("r")),
+        le: row.key("l").le(row.key("r")),
+        ge: row.key("l").ge(row.key("r")),
+      }))
+      .run();
+    const read = rows
+      .map(({ id, lt, eq, gt, le, ge }) => {
+        const [left, right] = Texts(id.split("-")).split(" ");
+        return `${left} ${right} ${JSON.stringify([lt, eq, gt, le, ge])}`;
+      })
+      .sort();
+    const expected = NUMBERS.flatMap((left) =>
+      NUMBERS.map((right) => `${left} ${right} ${Order(left, right)}`),
+    ).sort();
+    expect(read).to.deep.equal(expected);
   });
 
   it("answers as MySQL's JSON = in a join that hashes the key", async () => {
