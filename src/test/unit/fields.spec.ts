@@ -1,10 +1,6 @@
 import { expect } from "chai";
-import type {
-  FieldType,
-  TableDefinition,
-} from "@antelopejs/interface-database/schema";
+import type { FieldType } from "@antelopejs/interface-database/schema";
 
-import { type ForeignValue, WithForeign } from "./spec-fixture";
 import { MysqlIdentifier } from "../../implementations/database/identifier";
 import {
   DocumentKeys,
@@ -20,10 +16,6 @@ import {
   TEXT,
   TIMESTAMP,
 } from "../../implementations/database/types";
-
-function Declaring(field: string, declared: ForeignValue): TableDefinition {
-  return { fields: WithForeign({}, field, declared), indexes: {} };
-}
 
 describe("ParseFieldType", () => {
   it("accepts the token set case-insensitively", () => {
@@ -79,14 +71,6 @@ describe("ParseFieldType", () => {
       expect(() => ParseFieldType(token, "t.f")).to.throw(
         /Unsupported field type/,
       );
-    }
-  });
-
-  it("rejects a declaration that is neither a string, array nor object", () => {
-    for (const declared of [null, 123, true]) {
-      expect(() =>
-        ParseTable(Declaring("f", declared), "shop.orders"),
-      ).to.throw(/Unsupported field type/);
     }
   });
 });

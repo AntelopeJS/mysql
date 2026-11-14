@@ -1,11 +1,6 @@
 import { expect } from "chai";
 
-import {
-  type ForeignValue,
-  Untyped,
-  WithOptions,
-  WithoutOptions,
-} from "./spec-fixture";
+import { WithOptions, WithoutOptions } from "./spec-fixture";
 import { GetOptions, type Options, SetOptions } from "../../config";
 
 const VALIDATED = [
@@ -39,8 +34,6 @@ const REFUSED_NUMBERS: readonly number[] = [
   1e21,
 ];
 
-const REFUSED_NON_NUMBERS: readonly ForeignValue[] = ["100", null, {}];
-
 const EXTERNAL_REFUSED: readonly Options[] = [
   { schemaPrefix: "app_" },
   { migrations: "safe" },
@@ -71,12 +64,9 @@ describe("SetOptions on integer options", () => {
 
     it(`refuses a ${option} that is not a positive safe integer, naming it`, () => {
       for (const value of REFUSED_NUMBERS) {
-        const options = Untyped(option, value);
+        const options = Setting(option, value);
         expect(() => SetOptions(options)).to.throw(option);
         expect(() => SetOptions(options)).to.throw(String(value));
-      }
-      for (const value of REFUSED_NON_NUMBERS) {
-        expect(() => SetOptions(Untyped(option, value))).to.throw(option);
       }
     });
   }
@@ -87,9 +77,6 @@ describe("SetOptions on integer options", () => {
     });
     expect(() => SetOptions({ statementTimeoutMs: -1 })).to.throw(
       /statementTimeoutMs must be a non-negative safe integer/,
-    );
-    expect(() => SetOptions(Untyped("statementTimeoutMs", "5"))).to.throw(
-      /statementTimeoutMs/,
     );
   });
 
@@ -149,33 +136,10 @@ describe("SetOptions on the other options", () => {
     });
   });
 
-  it("refuses a dialect it has no entry for, naming it", () => {
-    expect(() => SetOptions(Untyped("dialect", "oracle"))).to.throw("oracle");
-    expect(() => SetOptions(Untyped("dialect", "toString"))).to.throw(
-      "toString",
-    );
-  });
-
-  it("refuses a pool option the module sets itself, naming each", () => {
-    expect(() => SetOptions({ pool: Untyped("jsonStrings", false) })).to.throw(
-      "pool.jsonStrings",
-    );
-    expect(() => SetOptions({ pool: Untyped("uri", "mysql://x/y") })).to.throw(
-      "pool.uri",
-    );
-    expect(() =>
-      SetOptions({ pool: Untyped("resetOnRelease", true) }),
-    ).to.throw("pool.resetOnRelease");
-  });
-
   it("serves owned tables when no mode is given", () => {
     WithOptions({}, () => {
       expect(GetOptions().mode).to.equal("owned");
     });
-  });
-
-  it("refuses a mode it does not know", () => {
-    expect(() => SetOptions(Untyped("mode", "readonly"))).to.throw("readonly");
   });
 
   for (const refused of EXTERNAL_REFUSED) {

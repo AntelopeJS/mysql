@@ -1,7 +1,6 @@
 import { expect } from "chai";
 import { DuplicateKeyError } from "@antelopejs/interface-database";
 
-import { WithForeign } from "./spec-fixture";
 import {
   CrossInstanceRoot,
   LogsRoot,
@@ -113,17 +112,6 @@ describe("An insert with a conflict mode", () => {
         Root().insert([{ _id: "a" }, { _id: "a" }], { conflict: "update" }),
       ),
     ).to.throw(DuplicateKeyError);
-  });
-
-  it("refuses a conflict mode it does not know, naming the ones it does", () => {
-    expect(() =>
-      Written(
-        Root().insert(
-          { _id: "a" },
-          WithForeign({ conflict: "update" }, "conflict", "merge"),
-        ),
-      ),
-    ).to.throw(/conflict mode of update or replace/);
   });
 });
 

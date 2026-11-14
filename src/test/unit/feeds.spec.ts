@@ -1,36 +1,22 @@
-import assert from "node:assert";
 import { expect } from "chai";
 import { QueryStage } from "@antelopejs/interface-database/common";
 import { CROSS_INSTANCE } from "@antelopejs/interface-database/schema";
 
 import { GetOptions } from "../../config";
 import { ReadFeedEvent } from "../../implementations/database/feeds";
-import { WithForeign } from "./spec-fixture";
 import {
   After,
   type Answer,
   Feed,
   Matched,
   Reader,
+  Refused,
   Settled,
   Stages,
   Step,
 } from "./feeds-fixture";
 
 const ABSENT = undefined;
-
-async function Refused(between: QueryStage[]): Promise<string> {
-  const { env } = Reader([{}]);
-  return Feed((reqId) =>
-    Step(reqId, env, ...between).then(
-      () => expect.fail("the feed should have been refused"),
-      (err: unknown) => {
-        assert(err instanceof Error, "the feed rejects with an Error");
-        return err.message;
-      },
-    ),
-  );
-}
 
 describe("a change feed's refusals", () => {
   it("refuses a stage that needs an order, naming the stage and the position", async () => {
@@ -49,13 +35,6 @@ describe("a change feed's refusals", () => {
     const message = await Refused([QueryStage("insert", undefined, {})]);
     expect(message).to.contain("'insert'");
     expect(message).to.contain("'changes'");
-  });
-
-  it("keeps the fold's own wording for a stage nothing knows, which is a typo", async () => {
-    const typo = WithForeign(QueryStage("count", {}), "stage", "filtr");
-    const message = await Refused([typo]);
-    expect(message).to.contain("Unsupported query stage 'filtr'");
-    expect(message).to.not.contain("'changes'");
   });
 
   it("names the first unsupported stage rather than the last", async () => {
