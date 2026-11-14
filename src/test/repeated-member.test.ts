@@ -1,4 +1,5 @@
 import { expect } from "chai";
+import type { ValueProxy } from "@antelopejs/interface-database";
 import { Schema } from "@antelopejs/interface-database/schema";
 
 import { GetDialect } from "../connection";
@@ -14,9 +15,15 @@ interface Doc {
   o?: Record<string, string>;
 }
 
-const schema = new Schema<{ bare: Doc; indexed: Doc }>(SCHEMA_ID, {
+interface Side {
+  _id: string;
+  v: string;
+}
+
+const schema = new Schema<{ bare: Doc; indexed: Doc; side: Side }>(SCHEMA_ID, {
   bare: { fields: {}, indexes: {} },
   indexed: { fields: {}, indexes: { o: { fields: ["o.é"] } } },
+  side: { fields: {}, indexes: {} },
 });
 
 type TableId = "bare" | "indexed";
@@ -38,29 +45,44 @@ interface Filtered {
   equalsX: Id[];
   equalsG: Id[];
   notEqualsG: Id[];
+  unequalG: Id[];
 }
 
 interface Reads {
   member: Record<Id, string>;
+  merged: Record<Id, string>;
   keys: Record<Id, string[]>;
   values: string[];
   indexedG: Id[];
   filtered: Record<TableId, Filtered>;
+  joined: Record<"g" | "x", Id[]>;
+  equalsObject: Id[];
+  distinctObjects: number;
 }
 
-const LAST: Filtered = { equalsX: [], equalsG: IDS, notEqualsG: [] };
+const LAST: Filtered = {
+  equalsX: [],
+  equalsG: IDS,
+  notEqualsG: [],
+  unequalG: [],
+};
 
-/** What each read answers, as `docs/mariadb.md` states it. */
+/** What each read answers, as `docs/mariadb-repeated-keys.md` states it. */
 const EXPECTED: Readonly<Record<"mysql" | "mariadb", Reads>> = {
   mysql: {
     member: { plain: "g", escapedFirst: "g", escapedLast: "g" },
+    merged: { plain: "g", escapedFirst: "g", escapedLast: "g" },
     keys: { plain: ["é"], escapedFirst: ["é"], escapedLast: ["é"] },
     values: ["g"],
     indexedG: IDS,
     filtered: { bare: LAST, indexed: LAST },
+    joined: { g: IDS, x: [] },
+    equalsObject: IDS,
+    distinctObjects: 1,
   },
   mariadb: {
     member: { plain: "x", escapedFirst: "g", escapedLast: "x" },
+    merged: { plain: "x", escapedFirst: "g", escapedLast: "x" },
     keys: { plain: ["é"], escapedFirst: ["é", "é"], escapedLast: ["é", "é"] },
     values: ["x", "g"],
     indexedG: ["escapedFirst"],
@@ -69,13 +91,18 @@ const EXPECTED: Readonly<Record<"mysql" | "mariadb", Reads>> = {
         equalsX: ["escapedLast", "plain"],
         equalsG: [],
         notEqualsG: IDS,
+        unequalG: ["escapedLast", "plain"],
       },
       indexed: {
         equalsX: ["escapedLast", "plain"],
         equalsG: ["escapedFirst"],
         notEqualsG: ["escapedLast", "plain"],
+        unequalG: ["escapedLast", "plain"],
       },
     },
+    joined: { g: ["escapedFirst"], x: ["escapedLast", "plain"] },
+    equalsObject: [],
+    distinctObjects: 3,
   },
 };
 
@@ -83,28 +110,43 @@ function Table(table: TableId) {
   return schema.instance(INSTANCE).table(table);
 }
 
+function Member(row: ValueProxy<Doc>): ValueProxy<string> {
+  return row.key("o").key("é");
+}
+
 async function Ids(rows: Promise<Doc[]>): Promise<string[]> {
   return (await rows).map((row) => row._id).sort();
 }
 
-async function Filter(table: TableId): Promise<Record<string, string[]>> {
+async function Filter(
+  table: TableId,
+): Promise<Record<keyof Filtered, string[]>> {
+  const where = (condition: (row: ValueProxy<Doc>) => ValueProxy<boolean>) =>
+    Ids(Table(table).filter(condition).run());
   return {
-    equalsX: await Ids(
-      Table(table)
-        .filter((row) => row.key("o").key("é").eq("x"))
-        .run(),
-    ),
-    equalsG: await Ids(
-      Table(table)
-        .filter((row) => row.key("o").key("é").eq("g"))
-        .run(),
-    ),
-    notEqualsG: await Ids(
-      Table(table)
-        .filter((row) => row.key("o").key("é").eq("g").not())
-        .run(),
-    ),
+    equalsX: await where((row) => Member(row).eq("x")),
+    equalsG: await where((row) => Member(row).eq("g")),
+    notEqualsG: await where((row) => Member(row).eq("g").not()),
+    unequalG: await where((row) => Member(row).ne("g")),
   };
+}
+
+async function Joined(): Promise<Record<"g" | "x", string[]>> {
+  const pairs = await schema
+    .instance(INSTANCE)
+    .table("side")
+    .joinInner(
+      Table("bare"),
+      (side, row) => Member(row).eq(side.key("v")),
+      (side, row) => ({ v: side.key("v"), id: row.key("_id") }),
+    )
+    .run();
+  const matched = (value: string) =>
+    pairs
+      .filter((pair) => pair.v === value)
+      .map((pair) => pair.id)
+      .sort();
+  return { g: matched("g"), x: matched("x") };
 }
 
 describe("an object that names one key twice", function () {
@@ -112,6 +154,14 @@ describe("an object that names one key twice", function () {
 
   before(async () => {
     await schema.createInstance(INSTANCE).run();
+    await schema
+      .instance(INSTANCE)
+      .table("side")
+      .insert([
+        { _id: "g", v: "g" },
+        { _id: "x", v: "x" },
+      ])
+      .run();
     for (const table of TABLES) {
       await Table(table)
         .insert(IDS.map((_id) => ({ _id })))
@@ -131,30 +181,65 @@ describe("an object that names one key twice", function () {
 
   it("reads the last member as the whole document", async () => {
     const rows = await Table("bare").orderBy("_id").run();
-    expect(rows.map((row) => row.o)).to.deep.equal(IDS.map(() => ({ é: "g" })));
+    const objects = await Table("bare")
+      .orderBy("_id")
+      .map((row) => row.key("o"))
+      .run();
+    expect([rows.map((row) => row.o), objects]).to.deep.equal([
+      IDS.map(() => ({ é: "g" })),
+      IDS.map(() => ({ é: "g" })),
+    ]);
   });
 
-  it("reads each member as docs/mariadb.md states", async () => {
+  it("reads each member as docs/mariadb-repeated-keys.md states", async () => {
     const expected =
       GetDialect().id === "mariadb" ? EXPECTED.mariadb : EXPECTED.mysql;
     const rows = await Table("bare")
       .orderBy("_id")
       .map((row) => ({
         id: row.key("_id"),
-        member: row.key("o").key("é"),
+        member: Member(row),
+        merged: row.key("o").merge({ k: "1" }).key("é"),
         keys: row.key("o").keys(),
         values: row.key("o").values(),
       }))
       .run();
+    const byId = <T>(read: (row: (typeof rows)[number]) => T) =>
+      Object.fromEntries(rows.map((row) => [row.id, read(row)]));
     expect({
-      member: Object.fromEntries(rows.map((row) => [row.id, row.member])),
-      keys: Object.fromEntries(rows.map((row) => [row.id, row.keys])),
+      member: byId((row) => row.member),
+      merged: byId((row) => row.merged),
+      keys: byId((row) => row.keys),
       values: rows.map((row) => row.values),
       indexedG: await Ids(Table("indexed").getAll("g", "o").run()),
       filtered: {
         bare: await Filter("bare"),
         indexed: await Filter("indexed"),
       },
+      joined: await Joined(),
+      equalsObject: await Ids(
+        Table("bare")
+          .filter((row) => row.key("o").eq({ é: "g" }))
+          .run(),
+      ),
+      distinctObjects: (
+        await Table("bare")
+          .map((row) => row.key("o"))
+          .distinct()
+          .run()
+      ).length,
     }).to.deep.equal({ ...expected, values: IDS.map(() => expected.values) });
+  });
+
+  it("stores the member a path read takes where an update writes a merged object", async () => {
+    await Table("bare")
+      .get("plain")
+      .update((row) => ({ o: row.key("o").merge({ k: "1" }) }))
+      .run();
+    const stored = await Table("bare").get("plain").run();
+    expect(stored?.o).to.deep.equal({
+      é: GetDialect().id === "mariadb" ? "x" : "g",
+      k: "1",
+    });
   });
 });
