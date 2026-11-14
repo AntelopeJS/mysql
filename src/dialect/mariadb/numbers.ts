@@ -49,10 +49,10 @@ const GREATEST_EXPONENT = 308;
 
 /**
  * The JSON syntax's `canonicalNumber` on MariaDB, which stores JSON as text and dedups by it. An
- * array whose text holds no object is its `JSON_NORMALIZE` text, as {@link JsonEquals} compares it,
- * each nested number in one exact spelling: `1`, `1.0`, `1e0`, `10e-1` and `1.` alike. An object is
- * left out, since 12.3 writes its keys back unescaped and both versions reorder a repeated key's
- * members. Any other container's text has each zero spelled `0` and each fraction of zeros dropped,
+ * array whose text holds no `{` is its `JSON_NORMALIZE` text, as {@link JsonEquals} compares it,
+ * each nested number in one exact spelling: `1`, `1.0`, `1e0`, `10e-1` and `1.` alike. Text with a
+ * `{` may hold an object, which is left out, since 12.3 writes its keys back unescaped and both
+ * versions reorder a repeated key's members. Any other container's text has each zero spelled `0` and each fraction of zeros dropped,
  * a nested one included. A number's text is as written,
  * `-0`, `0.0` and `1.0` included, and `JSON_TYPE` calls `15e-1` an integer, so the text decides. An
  * integer literal from -2^63 to 2^64 - 1 keeps its digits, which a double would round past 2^53,
