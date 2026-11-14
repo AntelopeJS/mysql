@@ -9,5 +9,6 @@ The nested-field benchmark in [`bench/RESULTS.md`](../bench/RESULTS.md) runs on 
 - MariaDB stores JSON as text, so reading a path costs more the longer the document is. One `JSON_EXTRACT` of a 430-byte document over 100,000 rows takes about 110 ms, against 16 ms on `mysql:8.4`. A filter that compares a read with a string tests its `JSON_VALUE` first, which took about a third of that on the bench's documents.
 - MariaDB has no hash join at its default `join_cache_level`. A join no index serves evaluates its condition once per pair of rows in the join buffer.
 - A sort over a value of no declared type reads the document once per term of MySQL's JSON order.
+- A `distinct()` or `group()` respells each number nested in a document, which took about 60 ms per 400 KB document of small objects, against 25 ms for its text. A document longer than a ninth of `max_allowed_packet`, or holding over a million backslashes, is compared by its compact text with each number as written, since MariaDB answers NULL for a longer rewrite.
 
 Declare an index on a nested path that a filter, sort or join reads, and the read goes through its key column on both engines.

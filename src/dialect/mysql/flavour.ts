@@ -172,52 +172,6 @@ export interface Flavour {
 /** The digits of the largest row number, to which an ordinal is padded so its text sorts as it does. */
 const ORDINAL_DIGITS = 20;
 
-/** The rest of a JSON number equal to zero after its sign and first `0`; `0.5` and `05` are not one. */
-const ZERO_REST = String.raw`(?:\.0+)?(?:[eE][-+]?[0-9]+)?(?![0-9.eE])`;
-
-/** The parts of JSON text that hold no zero spelled other than `0`, such as `-0` or `0.0`. */
-const NO_SPELLED_ZERO = [
-  String.raw`[^"0-9-]++`,
-  String.raw`"(?:[^"\\]++|\\.)*+"`,
-  String.raw`-?[1-9][0-9]*+(?:\.[0-9]++)?(?:[eE][-+]?[0-9]++)?`,
-  String.raw`-?0\.0*+[1-9][0-9]*+(?:[eE][-+]?[0-9]++)?`,
-  String.raw`0(?![.eE])`,
-].join("|");
-
-/**
- * The next zero of JSON text spelled other than `0`: the text before it in group 1 and its first `0`
- * in group 2. `\G` starts each match where the last one ended, and group 1 crosses whole strings and
- * other numbers, so no `-` or digit inside either is read as a zero. Every quantifier is possessive,
- * since the parts of group 1 never overlap.
- */
-const NEXT_SPELLED_ZERO = String.raw`\G((?:${NO_SPELLED_ZERO})*+)-?(0)${ZERO_REST}`;
-
-/** The parts of JSON text that hold no integer spelled with a fraction of zeros, such as `1.0`. */
-const NO_ZERO_FRACTION = [
-  String.raw`[^"0-9-]++`,
-  String.raw`"(?:[^"\\]++|\\.)*+"`,
-  String.raw`-?[0-9]++(?:\.[0-9]++)?[eE][-+]?[0-9]++`,
-  String.raw`-?[0-9]++\.0*+[1-9][0-9]*+`,
-  String.raw`-?[0-9]++(?![.eE])`,
-].join("|");
-
-/**
- * The next integer of JSON text spelled with a fraction of zeros and no exponent: the text before it
- * in group 1 and its integer part in group 2, read as {@link NEXT_SPELLED_ZERO} reads a zero.
- */
-const NEXT_ZERO_FRACTION = String.raw`\G((?:${NO_ZERO_FRACTION})*+)(-?[0-9]++)\.0++(?![0-9eE])`;
-
-/**
- * JSON text with each zero spelled `0` and each integer's fraction of zeros dropped, a nested one
- * included, so a value spells the same text as another with a number spelled `1.0` rather than `1`,
- * or a zero of another sign or type, where `DISTINCT` finds the two equal. The replacement puts a
- * group's number back as `\1` does, which MariaDB's engine reads. SQL NULL stays SQL NULL.
- */
-export function RespelledNumbers(text: Sql): Sql {
-  const groups = lit("\\1\\2");
-  return sql`REGEXP_REPLACE(REGEXP_REPLACE(${text}, ${lit(NEXT_SPELLED_ZERO)}, ${groups}), ${lit(NEXT_ZERO_FRACTION)}, ${groups})`;
-}
-
 /**
  * Collects JSON values without reading any back from text, since MySQL 8.4's JSON parser reads some
  * doubles of 17 significant digits as a neighbour. `JSON_ARRAYAGG` takes no order, so an ordered

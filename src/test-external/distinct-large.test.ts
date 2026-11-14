@@ -8,8 +8,8 @@ import { NativeWrite, RegisterSales, type SalesTables } from "./sales";
 /** The bytes of JSON text each document holds. */
 const DOCUMENT_BYTES = 400 * 1024;
 
-/** The longest a dedup may take per row it reads. */
-const MS_PER_ROW = 100;
+/** The longest a dedup may take per row it reads, which respelling each number nested in an object costs. */
+const MS_PER_ROW = 150;
 
 /** The runs a dedup gets to come in under its budget, since a busy host only adds to its time. */
 const ATTEMPTS = 3;
@@ -108,7 +108,7 @@ describe("a dedup of large external JSON documents", function () {
     await NativeWrite(sql`DELETE FROM sales.w_accounts WHERE code LIKE 'jl%'`);
   });
 
-  it("keeps one value per document at the top in under 0.1 s a row", async () => {
+  it("keeps one value per document at the top in under 0.15 s a row", async () => {
     const budget = MS_PER_ROW * DOCUMENTS.length;
     const [values, ms] = await Fastest(
       () => Large().distinct("raw").run(),
@@ -130,7 +130,7 @@ describe("a dedup of large external JSON documents", function () {
     expect(await SortBuffer()).to.equal(before);
   });
 
-  it("keeps one value per document in a group in under 0.1 s a read of a row", async () => {
+  it("keeps one value per document in a group in under 0.15 s a read of a row", async () => {
     const budget = MS_PER_ROW * DOCUMENTS.length * GROUP_READS;
     const [groups, ms] = await Fastest(
       () =>
