@@ -1,4 +1,4 @@
-import type { TimePart, TimeSyntax } from "../sql-types";
+import type { TimePart, TimeSyntax } from "../sql-time-types";
 import { type Sql, sql } from "../../statement";
 import type { Flavour } from "./flavour";
 

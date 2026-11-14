@@ -9,8 +9,8 @@ import type {
   RegexSyntax,
   RowSyntax,
   ScalarSyntax,
-  TimeSyntax,
 } from "../../dialect/sql-types";
+import type { TimeSyntax } from "../../dialect/sql-time-types";
 import { type Bound, type Sql, join, sql } from "../../statement";
 import {
   Compile,
