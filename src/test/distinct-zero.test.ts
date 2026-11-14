@@ -11,11 +11,18 @@ interface Reading {
   loose: number | string;
   list: (number | string)[];
   record: { a: number | string };
+  numbers: number[];
+  pair: { a: number };
 }
 
 const schema = new Schema<{ readings: Reading }>(SCHEMA_ID, {
   readings: {
-    fields: { kind: "string", declared: "number" },
+    fields: {
+      kind: "string",
+      declared: "number",
+      numbers: "number[]",
+      pair: { a: "number" },
+    },
     indexes: {},
   },
 });
@@ -26,7 +33,8 @@ function Readings() {
 
 /**
  * One kind holding 0 and -0 in a declared number, in an undeclared field, and nested in an array and
- * an object, and the string `"0"` in the undeclared ones, which no dedup may merge with the number 0.
+ * an object, undeclared and declared, and the string `"0"` in the undeclared ones, which no dedup may
+ * merge with the number 0.
  */
 const ROWS: Reading[] = [
   {
@@ -36,6 +44,8 @@ const ROWS: Reading[] = [
     loose: 0,
     list: [0],
     record: { a: 0 },
+    numbers: [0],
+    pair: { a: 0 },
   },
   {
     _id: "negative",
@@ -44,6 +54,8 @@ const ROWS: Reading[] = [
     loose: -0,
     list: [-0],
     record: { a: -0 },
+    numbers: [-0],
+    pair: { a: -0 },
   },
   {
     _id: "text",
@@ -52,10 +64,19 @@ const ROWS: Reading[] = [
     loose: "0",
     list: ["0"],
     record: { a: "0" },
+    numbers: [1],
+    pair: { a: 1 },
   },
 ];
 
-const FIELDS = ["declared", "loose", "list", "record"] as const;
+const FIELDS = [
+  "declared",
+  "loose",
+  "list",
+  "record",
+  "numbers",
+  "pair",
+] as const;
 
 type Field = (typeof FIELDS)[number];
 
@@ -70,6 +91,8 @@ const EXPECTED: Record<Field, string[]> = {
   loose: ['"0"', "0"],
   list: ['["0"]', "[0]"],
   record: ['{"a":"0"}', '{"a":0}'],
+  numbers: ["[0]", "[1]"],
+  pair: ['{"a":0}', '{"a":1}'],
 };
 
 /** The JSON text of each value a dedup kept, in order, with a top-level -0 spelled `-0`. */
@@ -169,6 +192,8 @@ const LONG: Reading = {
   loose: 0,
   list: Array.from({ length: 40_000 }, () => 1),
   record: { a: 0 },
+  numbers: [0],
+  pair: { a: 0 },
 };
 
 describe("a dedup of an array past the respelled length", function () {
