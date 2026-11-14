@@ -366,7 +366,12 @@ export function CaptureOf(flavour: Flavour, syntax: SqlSyntax): CaptureSyntax {
     triggerRefusal: TriggerRefusal,
     tooDeep: (error) =>
       "errno" in error && error.errno === flavour.tooDeepErrno,
-    warnings: flavour.warnsTooDeep ? sql`SHOW WARNINGS` : undefined,
+    warnings: flavour.warnsTooDeep
+      ? {
+          list: sql`SHOW WARNINGS`,
+          clear: sql`SELECT 1 FROM (SELECT 1) AS ${ident("cleared")}`,
+        }
+      : undefined,
     lockTable: (table) => sql`LOCK TABLES ${ident(table)} WRITE`,
     unlockTables: sql`UNLOCK TABLES`,
     markMoves: sql`SET ${MOVING} = 1`,

@@ -85,12 +85,13 @@ export interface CaptureSyntax {
   /** Whether a statement failed because a JSON document it built nests deeper than the engine allows. */
   tooDeep(error: Error): boolean;
   /**
-   * The statement listing the warnings of the session's last statement, on an engine that answers
-   * SQL NULL for a JSON document nested deeper than it allows rather than failing; `undefined`
-   * where such a statement fails. A warning it lists counts as {@link CaptureSyntax.tooDeep} by its
-   * `Code` as an `errno`.
+   * On an engine that answers SQL NULL for a JSON document nested deeper than it allows rather than
+   * failing, the statements that `list` the session's warnings and `clear` them; `undefined` where
+   * such a statement fails. A warning `list` answers counts as {@link CaptureSyntax.tooDeep} by its
+   * `Code` as an `errno`. The engine keeps a warning listed through every later statement that reads
+   * no table, so `clear` reads one that every account can read.
    */
-  readonly warnings?: Sql;
+  readonly warnings?: { readonly list: Sql; readonly clear: Sql };
   /** Holds a table against every other session, so no write runs while its triggers change. */
   lockTable(table: string): Sql;
   readonly unlockTables: Sql;

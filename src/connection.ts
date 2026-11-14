@@ -451,7 +451,7 @@ async function ReadFailingTooDeep(
   if (!capture.warnings) {
     return rows;
   }
-  const warned = (await ReadOn(connection, capture.warnings))
+  const warned = (await ReadOn(connection, capture.warnings.list))
     .map(
       (warning) =>
         new ServerWarning(
@@ -461,6 +461,7 @@ async function ReadFailingTooDeep(
     )
     .find((warning) => capture.tooDeep(warning));
   if (warned) {
+    await ReadOn(connection, capture.warnings.clear);
     throw warned;
   }
   return rows;
@@ -472,8 +473,9 @@ async function ReadFailingTooDeep(
  * with that warning as its error, as MySQL fails the statement.
  *
  * On `held` when given, which stays checked out; otherwise on a pooled connection taken for this
- * statement alone. MariaDB keeps a warning listed until a statement that reads a table, so a pooled
- * connection whose read failed too deep is destroyed rather than lend that warning to the next read.
+ * statement alone. MariaDB keeps a warning listed until a statement that reads a table, so a read
+ * that fails too deep clears the list before it fails, and the next read on that connection does
+ * not inherit the warning.
  */
 export async function Read(
   statement: Sql,
@@ -484,16 +486,9 @@ export async function Read(
   }
   const connection = await AcquireConnection();
   try {
-    const rows = await ReadFailingTooDeep(connection, statement);
+    return await ReadFailingTooDeep(connection, statement);
+  } finally {
     connection.release();
-    return rows;
-  } catch (err) {
-    if (err instanceof Error && GetDialect().capture.tooDeep(err)) {
-      connection.destroy();
-    } else {
-      connection.release();
-    }
-    throw err;
   }
 }
 
