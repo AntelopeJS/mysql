@@ -77,8 +77,21 @@ async function Repin(
   await held.query(Bind(GetDialect().session.pin({})).sql);
 }
 
-async function Value(statement: Sql) {
-  return Only(await Read(statement)).get("value");
+/** The numbers in each of the two arrays {@link LargeSort} collects, 400 KB of JSON text each. */
+const LARGE_ELEMENTS = 100_000;
+
+/** A `GROUP BY` that sorts two JSON arrays of {@link LARGE_ELEMENTS}, each larger than 256 KiB. */
+function LargeSort(): Sql {
+  const array = (value: string) =>
+    sql`JSON_EXTRACT(CONCAT('[', REPEAT(${lit(`${value},`)}, ${int(LARGE_ELEMENTS - 1)}), ${lit(`${value}]`)}), '$')`;
+  return sql`SELECT JSON_ARRAYAGG(j) AS value FROM (SELECT 1 AS g, ${array("1.5")} AS j UNION ALL SELECT 1, ${array("2.5")}) AS t GROUP BY g`;
+}
+
+async function Value(
+  statement: Sql,
+  held?: Awaited<ReturnType<typeof AcquireConnection>>,
+) {
+  return Only(await Read(statement, held)).get("value");
 }
 
 describe("a pooled connection", () => {
@@ -145,6 +158,26 @@ describe("a held connection", () => {
       await Repin(held, LARGE_SORT_BUFFER);
       const buffer = await Read(sql`SELECT @@sort_buffer_size AS value`, held);
       expect(Number(Only(buffer).get("value"))).to.equal(LARGE_SORT_BUFFER);
+    } finally {
+      held.release();
+    }
+  });
+  it("answers a sort whose row outgrows its sort buffer, and keeps that buffer after", async () => {
+    const held = await AcquireConnection();
+    try {
+      await Write(
+        sql`SET SESSION sort_buffer_size = ${int(SMALL_SORT_BUFFER)}`,
+        held,
+      );
+      const collected: unknown = JSON.parse(
+        String(await Value(LargeSort(), held)),
+      );
+      expect(collected).to.have.deep.members([
+        Array.from({ length: LARGE_ELEMENTS }, () => 1.5),
+        Array.from({ length: LARGE_ELEMENTS }, () => 2.5),
+      ]);
+      const buffer = await Read(sql`SELECT @@sort_buffer_size AS value`, held);
+      expect(Number(Only(buffer).get("value"))).to.equal(SMALL_SORT_BUFFER);
     } finally {
       held.release();
     }

@@ -11,6 +11,7 @@ import { Logger } from "./logger";
 import { Bind, type Sql, sql } from "./statement";
 import { ANY_ENGINE, DIALECTS, type Dialect, DetectDialect } from "./dialect";
 import { DescribeConnectFailure } from "./connect-failure";
+import { GrowingSortBuffer } from "./sort-buffer";
 import { CutBehind, WarnedFailure } from "./warnings";
 import {
   ClearOptions,
@@ -460,18 +461,21 @@ async function ReadFailingTooDeep(
  * On `held` when given, which stays checked out; otherwise on a pooled connection taken for this
  * statement alone. MariaDB keeps a warning listed until a statement that reads a table, so a read
  * that fails too deep clears the list before it fails, and the next read on that connection does
- * not inherit the warning.
+ * not inherit the warning. A read whose sort runs out of sort memory runs again under a larger
+ * buffer, as {@link GrowingSortBuffer} tells.
  */
 export async function Read(
   statement: Sql,
   held?: PoolConnection,
 ): Promise<Row[]> {
   if (held) {
-    return ReadFailingTooDeep(held, statement);
+    return GrowingSortBuffer(held, () => ReadFailingTooDeep(held, statement));
   }
   const connection = await AcquireConnection();
   try {
-    return await ReadFailingTooDeep(connection, statement);
+    return await GrowingSortBuffer(connection, () =>
+      ReadFailingTooDeep(connection, statement),
+    );
   } finally {
     connection.release();
   }
