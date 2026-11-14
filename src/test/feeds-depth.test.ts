@@ -34,7 +34,7 @@ const MOST_LEVELS = 100;
  */
 async function Depths() {
   let inColumn = MOST_LEVELS;
-  while (!(await Nests(inColumn))) {
+  while (!(await Builds(inColumn))) {
     inColumn -= 1;
   }
   return { inColumn, inExtra: inColumn - 1, inDocument: inColumn - 1 };
@@ -49,14 +49,6 @@ async function Nests(levels: number): Promise<boolean> {
 /** Whether the server builds a document `levels` deep; MySQL refuses to with an error. */
 async function Builds(levels: number): Promise<boolean> {
   return Nests(levels).catch(() => false);
-}
-
-/** Whether the server fails a statement that builds a document `levels` deep, as MySQL does. */
-async function Refuses(levels: number): Promise<boolean> {
-  return Nests(levels).then(
-    () => false,
-    () => true,
-  );
 }
 
 /** A value nested `levels` objects deep, the innermost one empty. */
@@ -316,7 +308,7 @@ describe("a change feed reaching a document deeper than the server builds", func
         "newValue.w.x.n",
         "🦌 deep",
       );
-      if (await Refuses(depths.inDocument + 2)) {
+      if (!GetDialect().capture.warnings) {
         expect(await Settled(feed.next())).to.match(ENDED);
       }
     } finally {

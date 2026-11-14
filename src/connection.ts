@@ -432,24 +432,68 @@ export async function ReleaseCapped(connection: PoolConnection): Promise<void> {
   connection.release();
 }
 
+/** A warning the server raised, as the error a statement that failed for it would have raised. */
+class ServerWarning extends Error {
+  constructor(
+    readonly errno: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+async function ReadFailingTooDeep(
+  connection: PoolConnection,
+  statement: Sql,
+): Promise<Row[]> {
+  const rows = await ReadOn(connection, statement);
+  const { capture } = GetDialect();
+  if (!capture.warnings) {
+    return rows;
+  }
+  const warned = (await ReadOn(connection, capture.warnings))
+    .map(
+      (warning) =>
+        new ServerWarning(
+          Number(warning.get("Code")),
+          String(warning.get("Message")),
+        ),
+    )
+    .find((warning) => capture.tooDeep(warning));
+  if (warned) {
+    throw warned;
+  }
+  return rows;
+}
+
 /**
- * Runs a statement through the prepared-statement protocol and answers its rows.
+ * Runs a statement through the prepared-statement protocol and answers its rows. Where the engine
+ * answered SQL NULL with a warning for a JSON document nested deeper than it builds, the read fails
+ * with that warning as its error, as MySQL fails the statement.
  *
  * On `held` when given, which stays checked out; otherwise on a pooled connection taken for this
- * statement alone.
+ * statement alone. MariaDB keeps a warning listed until a statement that reads a table, so a pooled
+ * connection whose read failed too deep is destroyed rather than lend that warning to the next read.
  */
 export async function Read(
   statement: Sql,
   held?: PoolConnection,
 ): Promise<Row[]> {
   if (held) {
-    return ReadOn(held, statement);
+    return ReadFailingTooDeep(held, statement);
   }
   const connection = await AcquireConnection();
   try {
-    return await ReadOn(connection, statement);
-  } finally {
+    const rows = await ReadFailingTooDeep(connection, statement);
     connection.release();
+    return rows;
+  } catch (err) {
+    if (err instanceof Error && GetDialect().capture.tooDeep(err)) {
+      connection.destroy();
+    } else {
+      connection.release();
+    }
+    throw err;
   }
 }
 
