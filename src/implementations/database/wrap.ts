@@ -3,6 +3,7 @@ import { type Sql, sql } from "../../statement";
 import { Cast } from "./coerce";
 import type { DecodingContext } from "./context";
 import { GroupedInPlace } from "./grouped";
+import { BoundedInPlace } from "./edge";
 import { AsJson } from "./readings";
 import {
   CurrentValue,
@@ -148,7 +149,8 @@ export function InPlaceFor(
  * The one place a *conditional* wrap is decided: every stage continuing its own relation opens by
  * naming the flags that block it, and reaches {@link Nested} through nothing else. Once the
  * subquery compiling now has read its outer row, an engine that reads no outer column inside a
- * derived table reads the rows back through {@link Walked} instead, in their order.
+ * derived table bounds a slice of the table's own rows in place through {@link BoundedInPlace},
+ * and reads any rows still blocked back through {@link Walked}, in their order.
  *
  * A stage blocked by `ordered`, such as `group` or `distinct`, drops the order ahead of it. Every
  * other stage keeps it across the wrap, since a derived table's own `ORDER BY` orders nothing the
@@ -164,7 +166,10 @@ export function Prepare(
   }
   const inPlace = InPlaceFor(context, context.readsOuterRow);
   if (inPlace) {
-    return Walked(relation, inPlace, context).relation;
+    const bounded = BoundedInPlace(relation, inPlace, context);
+    return HasFlag(bounded, blockedBy)
+      ? Walked(bounded, inPlace, context).relation
+      : bounded;
   }
   return blockedBy.includes("ordered")
     ? Nested(relation, context)
