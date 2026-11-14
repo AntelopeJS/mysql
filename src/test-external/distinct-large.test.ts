@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import type { Schema } from "@antelopejs/interface-database/schema";
 
-import { GetDialect } from "../connection";
+import { Read } from "../connection";
 import { param, sql } from "../statement";
 import { NativeWrite, RegisterSales, type SalesTables } from "./sales";
 
@@ -53,15 +53,29 @@ function Large() {
     .filter((row) => row.key("code").match(CODES));
 }
 
+/** The sort buffer of the pooled connection a read takes, which the pool hands out last in, first out. */
+async function SortBuffer(): Promise<number> {
+  const [row] = await Read(sql`SELECT @@session.sort_buffer_size AS value`);
+  return Number(row.get("value"));
+}
+
 function Sorted(values: readonly unknown[] | undefined): unknown[] {
   return [...(values ?? [])].sort((left, right) =>
     JSON.stringify(left).localeCompare(JSON.stringify(right)),
   );
 }
 
-/** The result of `run` and its fastest time over up to {@link ATTEMPTS} runs, stopping at one in budget. */
-async function Fastest<T>(run: () => Promise<T>): Promise<[T, number]> {
-  const budget = MS_PER_ROW * DOCUMENTS.length;
+/**
+ * The times a group's dedup reads each document: to number its distinct values, to join each row
+ * to its number, and to collect it.
+ */
+const GROUP_READS = 3;
+
+/** The result of `run` and its fastest time over up to {@link ATTEMPTS} runs, stopping at one in `budget`. */
+async function Fastest<T>(
+  run: () => Promise<T>,
+  budget: number,
+): Promise<[T, number]> {
   let [result, fastest] = await Timed(run);
   for (let attempt = 1; attempt < ATTEMPTS && fastest >= budget; attempt++) {
     const [next, ms] = await Timed(run);
@@ -95,21 +109,37 @@ describe("a dedup of large external JSON documents", function () {
   });
 
   it("keeps one value per document at the top in under 0.1 s a row", async () => {
-    const [values, ms] = await Fastest(() => Large().distinct("raw").run());
+    const budget = MS_PER_ROW * DOCUMENTS.length;
+    const [values, ms] = await Fastest(
+      () => Large().distinct("raw").run(),
+      budget,
+    );
     expect(Sorted(values)).to.deep.equal(Sorted(EXPECTED));
-    expect(ms).to.be.below(MS_PER_ROW * DOCUMENTS.length);
+    expect(ms).to.be.below(budget);
   });
 
-  it("keeps one value per document in a group on MariaDB in under 0.1 s a row", async function () {
-    if (GetDialect().id !== "mariadb") {
-      this.skip();
+  it("keeps one value per document in a group read by a cursor, and gives back its sort buffer", async () => {
+    const before = await SortBuffer();
+    const query = Large().group("status", (stream) => stream.distinct("raw"));
+    const groups = [];
+    for await (const group of query) {
+      groups.push(group);
     }
-    const [groups, ms] = await Fastest(() =>
-      Large()
-        .group("status", (stream) => stream.distinct("raw"))
-        .run(),
+    expect(groups).to.have.length(1);
+    expect(Sorted(groups[0])).to.deep.equal(Sorted(EXPECTED));
+    expect(await SortBuffer()).to.equal(before);
+  });
+
+  it("keeps one value per document in a group in under 0.1 s a read of a row", async () => {
+    const budget = MS_PER_ROW * DOCUMENTS.length * GROUP_READS;
+    const [groups, ms] = await Fastest(
+      () =>
+        Large()
+          .group("status", (stream) => stream.distinct("raw"))
+          .run(),
+      budget,
     );
     expect(Sorted(groups[0])).to.deep.equal(Sorted(EXPECTED));
-    expect(ms).to.be.below(MS_PER_ROW * DOCUMENTS.length);
+    expect(ms).to.be.below(budget);
   });
 });

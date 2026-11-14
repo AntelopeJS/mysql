@@ -8,6 +8,11 @@ import {
   type Row,
   ReleaseCapped,
 } from "../../connection";
+import {
+  ClimbSortBuffer,
+  OutOfSortMemory,
+  type SortBufferLadder,
+} from "../../sort-buffer";
 import { CutBehind, WarnedFailure } from "../../warnings";
 import { Bind, type Sql } from "../../statement";
 import { IsDocument } from "./guards";
@@ -43,6 +48,16 @@ function Arrival(stream: Readable): Promise<void> {
   });
 }
 
+/** Puts back the session's sort buffer where a retry grew it, answering whether that held. */
+async function Restored(ladder: SortBufferLadder | undefined) {
+  try {
+    await ladder?.restore();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Opens the compiled statement on a connection taken from the pool for the cursor's whole life, as
  * an unbuffered result set read through the driver's stream with a high-water mark of one batch.
@@ -60,9 +75,13 @@ function Arrival(stream: Readable): Promise<void> {
  * buffers between the server and the client. And the connection is out of the pool until the cursor
  * is read to its end or closed, which is what `maxOpenCursors` bounds.
  *
+ * A statement that fails with `Out of sort memory` before its first row runs again on the same
+ * connection up a {@link SortBufferLadder}: the server sorts before it sends a row, so no row is read
+ * twice.
+ *
  * `close` after a `next` read the result's end and found the statement whole hands the connection
- * back to the pool. Any other `close` destroys the connection instead of draining it or clearing
- * what the statement left listed on it: the server aborts the statement, and the pool opens a
+ * back to the pool, with the session's sort buffer put back. Any other `close` destroys the
+ * connection instead of draining it or clearing what the statement left listed on it: the server aborts the statement, and the pool opens a
  * replacement on demand.
  */
 export async function OpenRowStream(
@@ -76,16 +95,22 @@ export async function OpenRowStream(
     throw new Error(NOT_A_POOL_CONNECTION);
   }
   const bound = Bind(statement);
-  const stream = driver
-    .execute(bound.sql, [...bound.args])
-    .stream({ highWaterMark: batchSize });
   let failure: Error | undefined;
   let isClosed = false;
   let isSettled = false;
   let isClean = false;
-  stream.on("error", (err: Error) => {
-    failure ??= err;
-  });
+  let isRetryable = true;
+  let ladder: SortBufferLadder | undefined;
+  const Execute = () => {
+    const opened = driver
+      .execute(bound.sql, [...bound.args])
+      .stream({ highWaterMark: batchSize });
+    opened.on("error", (err: Error) => {
+      failure ??= err;
+    });
+    return opened;
+  };
+  let stream = Execute();
   const lost = (err: Error) => {
     failure ??= err;
     stream.destroy(err);
@@ -97,7 +122,16 @@ export async function OpenRowStream(
     while (rows.length < count) {
       const row: unknown = stream.read();
       if (IsDocument(row)) {
+        isRetryable = false;
         rows.push(ParseRow(Object.entries(row)));
+      } else if (isRetryable && OutOfSortMemory(failure)) {
+        ladder ??= await ClimbSortBuffer(connection);
+        if (await ladder.grow()) {
+          failure = undefined;
+          stream = Execute();
+        } else {
+          isRetryable = false;
+        }
       } else if ((failure || stream.readableEnded) && !isSettled) {
         isSettled = true;
         failure = failure
@@ -123,7 +157,7 @@ export async function OpenRowStream(
       }
       isClosed = true;
       driver.off("error", lost);
-      if (isClean && !failure) {
+      if (isClean && !failure && (await Restored(ladder))) {
         await ReleaseCapped(connection);
       } else {
         connection.destroy();
