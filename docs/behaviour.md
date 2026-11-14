@@ -38,6 +38,7 @@ These queries answer instead of throwing, and the answer may not be the one you 
 | `union` never deduplicates                                                      | The interface asserts that a stream unioned with itself is twice as long                                                                                                    |
 | `distinct` discards the ordering ahead of it                                    | MySQL refuses `SELECT DISTINCT … ORDER BY` a term outside the select list, and neither engine keeps the order of a derived table a dedup reads, so the dedup drops the sort |
 | `group` discards the ordering ahead of it                                       | Neither engine keeps the order of a derived table a `GROUP BY` reads, and a group collects its rows unordered, so the group drops the sort                                  |
+| A query nested in a `group` callback reads its own rows and constants only      | Reading the group's key, its stream or a row from outside the group there is refused. See [Errors and refusals](./errors.md#grouping)                                       |
 
 ## Storing a value
 
