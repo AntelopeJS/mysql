@@ -80,8 +80,6 @@ const FIELDS = [
 
 type Field = (typeof FIELDS)[number];
 
-type Value = Reading[Field];
-
 /**
  * The JSON text of each value a dedup keeps, a string's quote before a digit. Of two equal containers
  * MySQL keeps either, and the text spells a nested -0 as `0`; a top-level -0 reads `-0`.
@@ -96,7 +94,7 @@ const EXPECTED: Record<Field, string[]> = {
 };
 
 /** The JSON text of each value a dedup kept, in order, with a top-level -0 spelled `-0`. */
-function Kept(values: readonly Value[]): string[] {
+function Kept(values: readonly unknown[]): string[] {
   return values
     .map((value) => (Object.is(value, -0) ? "-0" : JSON.stringify(value)))
     .sort();
@@ -143,6 +141,21 @@ async function Mapped(field: Field): Promise<string[][]> {
   return [Kept(top), Kept(group?.values ?? [])];
 }
 
+/** A field a `map` wraps in an object, then deduped whole: the dedup of a shape the query builds. */
+async function Wrapped(field: Field): Promise<string[][]> {
+  const top = await Readings()
+    .map((reading) => ({ a: reading.key(field) }))
+    .distinct()
+    .run();
+  const [group] = await Readings()
+    .group("kind", (stream, kind) => ({
+      kind,
+      values: stream.map((reading) => ({ a: reading.key(field) })).distinct(),
+    }))
+    .run();
+  return [Kept(top), Kept(group?.values ?? [])];
+}
+
 describe("a dedup of 0 and -0", function () {
   this.timeout(30_000);
 
@@ -177,6 +190,11 @@ describe("a dedup of 0 and -0", function () {
         EXPECTED[field],
         EXPECTED[field],
       ]);
+    });
+
+    it(`keeps one 0 of a ${field} field a map wraps, at the top and in a group`, async () => {
+      const wrapped = EXPECTED[field].map((text) => `{"a":${text}}`);
+      expect(await Wrapped(field)).to.deep.equal([wrapped, wrapped]);
     });
   }
 });
