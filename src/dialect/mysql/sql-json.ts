@@ -418,6 +418,7 @@ export function JsonOf(flavour: Flavour): JsonSyntax {
         ? [sql`COALESCE(${join([...value, ...def], COMMA)})`]
         : [...value, ...def],
     dynamicMember: (document, key) =>
+      flavour.escapedKeys?.computed(document, key, DynamicPath) ??
       sql`JSON_EXTRACT(${document}, ${DynamicPath(key)})`,
     is: Is,
     as: (value, kind) => reads[kind](value),

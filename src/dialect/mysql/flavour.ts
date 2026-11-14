@@ -27,6 +27,8 @@ export interface EscapedKeys {
   member(member: MemberPath, read: (document: Sql) => Sql): Sql;
   /** Whether the document holds the member, where `found` of a document, the test by the path's own spelling, is false. */
   has(member: MemberPath, found: (document: Sql) => Sql): Sql;
+  /** The member under a key the statement computes as text, whose path as the key is spelled is `path` of the key. */
+  computed(document: Sql, key: Sql, path: (key: Sql) => Sql): Sql;
 }
 
 /**
