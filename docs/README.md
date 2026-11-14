@@ -12,6 +12,7 @@ Reference for `@antelopejs/mysql`. The [root README](../README.md) covers instal
 | [Errors and refusals](./errors.md)                     | Everything the module refuses, with the message it refuses by                                                                         |
 | [MariaDB](./mariadb.md)                                | Running on MariaDB 11.8 and 12.3, and every place it behaves differently from MySQL                                                   |
 | [Repeated keys on MariaDB](./mariadb-repeated-keys.md) | What each read takes from an object that names one key twice, on MariaDB and MySQL                                                    |
+| [MariaDB performance](./mariadb-performance.md)        | How fast MariaDB reads nested fields beside MySQL and PostgreSQL, and why                                                             |
 | [Behaviour worth knowing](./behaviour.md)              | Things that answer rather than throw, where the answer may surprise you, including where this backend differs from the PostgreSQL one |
 
 If you are choosing between the SQL backends, read [Behaviour worth knowing](./behaviour.md). It records where this backend and `@antelopejs/postgres` disagree.
