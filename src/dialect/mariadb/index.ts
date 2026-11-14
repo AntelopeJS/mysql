@@ -92,8 +92,9 @@ function Includes(array: Sql, element: Sql): Sql {
 
 /**
  * `JSON_ARRAYAGG` takes an order on MariaDB. A dedup keeps one element per text and one absent
- * element, apart from a JSON null, as MySQL's does; MariaDB keeps an object's keys in the order they
- * were written, so two objects that differ only in that order are both kept.
+ * element, apart from a JSON null, as MySQL's does. The text is the element's {@link CanonicalNumber},
+ * which sorts an object's keys unless the object's text holds a backslash or names a key twice, so
+ * two such objects that differ only in that order are both kept.
  */
 function Collect(
   element: Sql,

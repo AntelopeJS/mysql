@@ -1,5 +1,5 @@
 import { RespelledNumbers } from "../mysql";
-import { type Sql, ident, int, sql } from "../../statement";
+import { type Sql, ident, int, lit, sql } from "../../statement";
 import { BINARY_COLLATION, Json } from "./json-text";
 
 /**
@@ -47,6 +47,17 @@ const GREATEST_DOUBLE = sql`1.7976931348623157e308`;
 /** The greatest double's decimal exponent. */
 const GREATEST_EXPONENT = 308;
 
+/** A JSON string in text that holds no backslash. */
+const PLAIN_STRING = String.raw`"[^"]*+"`;
+
+/**
+ * A member of an object followed by a member of the same key, in `JSON_NORMALIZE` text that holds no
+ * backslash. That text is compact, spells every key and string without an escape, and sorts an
+ * object's members by key, so the members of a key named twice sit side by side at any depth. `v`
+ * matches one value, a container through itself.
+ */
+const REPEATED_MEMBER = String.raw`"([^"]*+)":(?<v>${PLAIN_STRING}|[^,\[\]{}":]++|\[(?:(?&v)(?:,(?&v))*+)?\]|\{(?:${PLAIN_STRING}:(?&v)(?:,${PLAIN_STRING}:(?&v))*+)?\}),"\1":`;
+
 /**
  * {@link RespelledNumbers} of JSON text read as its UTF-8 bytes. A MariaDB regular expression over
  * text in a UTF-8 character set takes time in the square of the text's length, and over bytes in
@@ -59,11 +70,13 @@ function RespelledBytes(value: Sql): Sql {
 }
 
 /**
- * The JSON syntax's `canonicalNumber` on MariaDB, which stores JSON as text and dedups by it. An
- * array whose text holds no `{` is its `JSON_NORMALIZE` text, as {@link JsonEquals} compares it,
- * each nested number in one exact spelling: `1`, `1.0`, `1e0`, `10e-1` and `1.` alike. Text with a
- * `{` may hold an object, which is left out, since 12.3 writes its keys back unescaped and both
- * versions reorder a repeated key's members. Any other container's text has each zero spelled `0` and each fraction of zeros dropped,
+ * The JSON syntax's `canonicalNumber` on MariaDB, which stores JSON as text and dedups by it. A
+ * container is its `JSON_NORMALIZE` text, as {@link JsonEquals} compares it, each nested number in
+ * one exact spelling, `1`, `1.0`, `1e0`, `10e-1` and `1.` alike, and each object's members sorted by
+ * key: an array whose text holds no `{`, and any other whose text holds no backslash and no object
+ * that names a key twice, as {@link REPEATED_MEMBER} finds. 12.3 writes an escaped key back
+ * unescaped, and both versions reorder a repeated key's members, so that another member reads back.
+ * Any other container's text has each zero spelled `0` and each fraction of zeros dropped,
  * a nested one included. A number's text is as written,
  * `-0`, `0.0` and `1.0` included, and `JSON_TYPE` calls `15e-1` an integer, so the text decides. An
  * integer literal from -2^63 to 2^64 - 1 keeps its digits, which a double would round past 2^53,
@@ -84,9 +97,12 @@ export function CanonicalNumber(value: Sql): Sql {
   const unsigned = sql`${double} = FLOOR(${double}) AND ${double} >= ${SIGNED_BOUND} AND ${double} < ${UNSIGNED_BOUND}`;
   const exponent = sql`CAST(SUBSTRING(REGEXP_SUBSTR(${text}, '[eE][+-]?[0-9]+$'), 2) AS DECIMAL(65, 0))`;
   const finite = sql`(ABS(${double}) < ${GREATEST_DOUBLE} OR ${exponent} <= ${int(GREATEST_EXPONENT)})`;
-  const flat = sql`JSON_TYPE(${value}) = 'ARRAY' AND INSTR(${value}, '{') = 0`;
+  const normalized = sql`JSON_NORMALIZE(${value})`;
+  const unescaped = sql`LOCATE(${lit("\\")}, CAST(${value} AS BINARY)) = 0`;
+  const unrepeated = sql`NOT (CAST(${normalized} AS BINARY) REGEXP ${lit(REPEATED_MEMBER)})`;
+  const normalizable = sql`JSON_TYPE(${value}) IN ('ARRAY', 'OBJECT') AND (INSTR(${value}, '{') = 0 OR (${unescaped} AND ${unrepeated}))`;
   const exact = sql`${text} REGEXP '^-?[0-9]{1,20}$' AND CAST(${text} AS DECIMAL(65, 0)) BETWEEN ${SIGNED_MIN} AND ${UNSIGNED_MAX}`;
   return Json(
-    sql`(CASE WHEN ${flat} THEN JSON_NORMALIZE(${value}) WHEN NOT ${number} THEN ${RespelledBytes(value)} WHEN ${exact} THEN REGEXP_REPLACE(${text}, '^-0$', '0') WHEN ${text} REGEXP '^-?[0-9]{309,}$' THEN ${text} WHEN ${integral} THEN CAST(${double} AS SIGNED) WHEN ${unsigned} THEN CAST(CAST(${double} AS DECIMAL(20, 0)) AS UNSIGNED) WHEN ${finite} THEN ${double} ELSE ${text} END)`,
+    sql`(CASE WHEN ${normalizable} THEN ${normalized} WHEN NOT ${number} THEN ${RespelledBytes(value)} WHEN ${exact} THEN REGEXP_REPLACE(${text}, '^-0$', '0') WHEN ${text} REGEXP '^-?[0-9]{309,}$' THEN ${text} WHEN ${integral} THEN CAST(${double} AS SIGNED) WHEN ${unsigned} THEN CAST(CAST(${double} AS DECIMAL(20, 0)) AS UNSIGNED) WHEN ${finite} THEN ${double} ELSE ${text} END)`,
   );
 }
