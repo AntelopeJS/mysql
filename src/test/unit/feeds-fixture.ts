@@ -18,7 +18,7 @@ import type { TableOrigin } from "../../implementations/database/relation";
 import {
   CloseOneFeed,
   type FeedEnvironment,
-  ReadFeedEvent,
+  ReadFeedEvents,
 } from "../../implementations/database/feeds";
 import type { RowObject } from "../../implementations/database/result";
 
@@ -196,13 +196,13 @@ export function Feed<T>(body: (reqId: number) => Promise<T>) {
   return WhileConfigured(() => body(reqId)).finally(() => CloseOneFeed(reqId));
 }
 
-/** Reads one event of the default instance's feed, with the environment supplied. */
+/** Reads the next events of the default instance's feed, with the environment supplied. */
 export function Step(
   reqId: number,
   env: FeedEnvironment,
   ...between: QueryStage[]
-): Promise<IteratorResult<RowObject, void>> {
-  return ReadFeedEvent(reqId, Stages("default", ...between), env);
+): Promise<RowObject[]> {
+  return ReadFeedEvents(reqId, Stages("default", ...between), env);
 }
 
 /** Lets a feed that has nothing to deliver open and poll, then stops waiting on its read. */

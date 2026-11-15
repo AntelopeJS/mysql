@@ -283,13 +283,9 @@ describe("a DDL statement on a table with an open cursor", function () {
       "the reclaim waited for cursorIdleTimeoutMs",
     ).to.be.at.least(IDLE_MS - TIMER_ROUNDING_MS);
     expect(await Columns(physical)).to.include("added");
-    let failure = "";
-    try {
-      await cursor.next();
-    } catch (err) {
-      failure = String(err);
-    }
-    expect(failure).to.contain("cursorIdleTimeoutMs");
+    expect(await Ending(cursor, COMPLETES_WITHIN_MS)).to.match(
+      /^rejected: .*cursorIdleTimeoutMs/,
+    );
     Schemas.unregister(schemaId);
   });
 });

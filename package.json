@@ -57,7 +57,7 @@
   },
   "dependencies": {
     "@antelopejs/interface-core": ">=0.5.1 <0.6.0",
-    "@antelopejs/interface-database": ">=0.4.0 <0.5.0",
+    "@antelopejs/interface-database": ">=0.4.1 <0.5.0",
     "@antelopejs/interface-database-catalog": ">=0.1.0 <0.2.0",
     "mysql2": "^3.24.6"
   },
@@ -66,7 +66,7 @@
     "@antelopejs/core": "~1.23.1",
     "@antelopejs/interface-api": ">=0.3.3 <0.4.0",
     "@antelopejs/interface-database-decorators": ">=0.5.2 <0.6.0",
-    "@antelopejs/postgres": ">=0.4.0 <0.5.0",
+    "@antelopejs/postgres": ">=0.4.2 <0.5.0",
     "@antelopejs/tooling-configs": ">=0.7.0 <0.8.0",
     "@testcontainers/mysql": "^12.2.1",
     "@types/chai": "^4.3.20",

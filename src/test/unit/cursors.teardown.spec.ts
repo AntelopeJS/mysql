@@ -51,7 +51,7 @@ describe("the cursor registry", () => {
     expect(log.statements).to.deep.equal([OPEN]);
     expect(log.closes).to.equal(0);
     expect(CountOpenCursors()).to.equal(baseline);
-    expect((await Read(reqId, open)).done).to.equal(true);
+    expect(await Read(reqId, open)).to.deep.equal([]);
     expect(log.opens).to.equal(1);
   });
 
@@ -77,16 +77,23 @@ describe("the cursor registry", () => {
     expect(CountOpenCursors()).to.equal(baseline);
   });
 
-  it("answers two concurrent reads consecutive rows, over one open and one pull", async () => {
+  /**
+   * An opener that is not chained per `reqId` opens two streams, and one that hands both reads the
+   * same fetch answers `[1, 2, 3]` twice.
+   */
+  it("answers two concurrent reads consecutive batches, over one open", async () => {
     const log = Recorder();
     const reqId = NextReqId();
-    const open = Requesting(log, [Rows(1, 2, 3)]);
+    const open = Requesting(log, [Rows(1, 2, 3), Rows(4, 5)]);
     const [first, second] = await Promise.all([
       Read(reqId, open),
       Read(reqId, open),
     ]);
-    expect([first.value, second.value]).to.deep.equal([1, 2]);
-    expect(log.statements).to.deep.equal([OPEN, NEXT]);
+    expect([first, second]).to.deep.equal([
+      [1, 2, 3],
+      [4, 5],
+    ]);
+    expect(log.statements).to.deep.equal([OPEN, NEXT, NEXT, CLOSE]);
     expect(log.opens).to.equal(1);
     await CloseOneCursor(reqId);
     expect(log.closes).to.equal(1);
@@ -95,7 +102,7 @@ describe("the cursor registry", () => {
   it("arms an unreferenced reaper on every read", async () => {
     const log = Recorder();
     const reqId = NextReqId();
-    const open = Requesting(log, [Rows(1, 2, 3), Rows(4)]);
+    const open = Requesting(log, [Rows(1, 2, 3), Rows(4, 5, 6), Rows(7, 8, 9)]);
     const timers = TimerRecorder();
     await CapturingTimers(timers, REAPER_PROBE_MS, async () => {
       await Read(reqId, open, PROBING);
@@ -114,7 +121,7 @@ describe("the cursor registry", () => {
   it("clears the reaper it armed on the previous read, and the last one on close", async () => {
     const log = Recorder();
     const reqId = NextReqId();
-    const open = Requesting(log, [Rows(1, 2, 3), Rows(4)]);
+    const open = Requesting(log, [Rows(1, 2, 3), Rows(4, 5, 6), Rows(7, 8, 9)]);
     const timers = TimerRecorder();
     await CapturingTimers(timers, REAPER_PROBE_MS, async () => {
       await Read(reqId, open, PROBING);
@@ -133,7 +140,7 @@ describe("the cursor registry", () => {
   it("ignores a reaper timer that fired before a read re-armed it", async () => {
     const log = Recorder();
     const reqId = NextReqId();
-    const open = Requesting(log, [Rows(1, 2, 3)]);
+    const open = Requesting(log, [Rows(1, 2, 3), Rows(4, 5, 6)]);
     const timers = TimerRecorder();
     await CapturingTimers(timers, REAPER_PROBE_MS, async () => {
       await Read(reqId, open, PROBING);
@@ -141,7 +148,7 @@ describe("the cursor registry", () => {
     });
     timers.handlers[STALE_TIMER]();
     await Delay(REAP_WINDOW_MS);
-    expect(log.statements).to.deep.equal([OPEN, NEXT]);
+    expect(log.statements).to.deep.equal([OPEN, NEXT, NEXT]);
     expect(log.closes).to.equal(0);
     expect(CountOpenCursors()).to.equal(baseline + 1);
     await CloseOneCursor(reqId);
@@ -150,10 +157,9 @@ describe("the cursor registry", () => {
   it("keeps a reaper that fires mid-read from cutting into the read", async () => {
     const log = Recorder();
     const reqId = NextReqId();
-    const open = Requesting(log, [Rows(1, 2, 3), Rows(4, 5, 6)]);
+    const open = Requesting(log, [Rows(1, 2, 3), Rows(4, 5, 6), Rows(7, 8, 9)]);
     const timers = TimerRecorder();
     await CapturingTimers(timers, REAPER_PROBE_MS, async () => {
-      await Read(reqId, open, PROBING);
       await Read(reqId, open, PROBING);
       await Read(reqId, open, PROBING);
       log.holdsNextPull = true;
@@ -163,9 +169,9 @@ describe("the cursor registry", () => {
       }
       timers.handlers[timers.handlers.length - LAST_TIMER]();
       log.resumePull();
-      expect((await held).value).to.equal(4);
+      expect(await held).to.deep.equal([7, 8, 9]);
     });
-    expect(log.statements).to.deep.equal([OPEN, NEXT, NEXT]);
+    expect(log.statements).to.deep.equal([OPEN, NEXT, NEXT, NEXT]);
     expect(log.closes).to.equal(0);
     await CloseOneCursor(reqId);
   });
@@ -174,7 +180,7 @@ describe("the cursor registry", () => {
     const log = Recorder();
     const reqId = NextReqId();
     const open = Requesting(log, [Rows(1, 2, 3), Rows(4)]);
-    expect((await Read(reqId, open, REAPING)).value).to.equal(1);
+    expect(await Read(reqId, open, REAPING)).to.deep.equal([1, 2, 3]);
     await Delay(REAP_WINDOW_MS);
     expect(log.statements).to.deep.equal([OPEN, NEXT, CLOSE]);
     expect(log.closes).to.equal(1);
@@ -247,13 +253,13 @@ describe("the cursor registry", () => {
         });
     };
     const openHeld = Requesting(held, [Rows(1, 2, 3), Rows(4, 5, 6)]);
-    expect((await Read(heldId, openHeld)).value).to.equal(1);
+    expect(await Read(heldId, openHeld)).to.deep.equal([1, 2, 3]);
     await CloseAllCursors();
     if (!late) {
       throw new Error(NEVER_ARRIVED);
     }
     expect(isAnswered).to.equal(true);
-    expect((await late).done).to.equal(true);
+    expect(await late).to.deep.equal([]);
     expect(arriving.opens).to.equal(0);
     expect(arriving.statements).to.deep.equal([]);
     expect(held.opens).to.equal(1);
@@ -263,15 +269,15 @@ describe("the cursor registry", () => {
   it("counts a cursor whose teardown is still on the wire as checked out", async () => {
     const log = Recorder();
     const reqId = NextReqId();
-    const open = Requesting(log, [Rows(1)]);
-    expect((await Read(reqId, open)).value).to.equal(1);
+    const open = Requesting(log, [Rows(1, 2, 3), Rows()]);
+    expect(await Read(reqId, open)).to.deep.equal([1, 2, 3]);
     log.holdsStatement = CLOSE;
     const ending = Read(reqId, open);
     const resume = await WhenHeld(log);
     expect(CountOpenCursors()).to.equal(baseline + 1);
     expect(log.closes).to.equal(0);
     resume();
-    expect((await ending).done).to.equal(true);
+    expect(await ending).to.deep.equal([]);
     expect(log.closes).to.equal(1);
     expect(CountOpenCursors()).to.equal(baseline);
   });
@@ -279,8 +285,8 @@ describe("the cursor registry", () => {
   it("does not resolve the sweep while a self-reclaim is still on the wire", async () => {
     const log = Recorder();
     const reqId = NextReqId();
-    const open = Requesting(log, [Rows(1)]);
-    expect((await Read(reqId, open)).value).to.equal(1);
+    const open = Requesting(log, [Rows(1, 2, 3), Rows()]);
+    expect(await Read(reqId, open)).to.deep.equal([1, 2, 3]);
     log.holdsStatement = CLOSE;
     const ending = Read(reqId, open);
     const resume = await WhenHeld(log);
@@ -294,14 +300,14 @@ describe("the cursor registry", () => {
     resume();
     await sweeping;
     expect(log.closes).to.equal(1);
-    expect((await ending).done).to.equal(true);
+    expect(await ending).to.deep.equal([]);
   });
 
   it("does not resolve the sweep while an explicit close is still on the wire", async () => {
     const log = Recorder();
     const reqId = NextReqId();
     const open = Requesting(log, [Rows(1, 2, 3), Rows(4)]);
-    expect((await Read(reqId, open)).value).to.equal(1);
+    expect(await Read(reqId, open)).to.deep.equal([1, 2, 3]);
     log.holdsStatement = CLOSE;
     const closing = CloseOneCursor(reqId);
     const resume = await WhenHeld(log);
@@ -326,7 +332,7 @@ describe("the cursor registry", () => {
     const reqId = NextReqId();
     const open = Requesting(log, [Rows(1, 2, 3), Rows(4)]);
     log.holdsStatement = CLOSE;
-    expect((await Read(reqId, open, REAPING)).value).to.equal(1);
+    expect(await Read(reqId, open, REAPING)).to.deep.equal([1, 2, 3]);
     const resume = await WhenHeld(log);
     let isSwept = false;
     const sweeping = CloseAllCursors().then(() => {
@@ -352,8 +358,8 @@ describe("the cursor registry", () => {
   it("hands every connection back before the pool is ended", async () => {
     const log = Recorder();
     const reqId = NextReqId();
-    const open = Requesting(log, [Rows(1)]);
-    expect((await Read(reqId, open)).value).to.equal(1);
+    const open = Requesting(log, [Rows(1, 2, 3), Rows()]);
+    expect(await Read(reqId, open)).to.deep.equal([1, 2, 3]);
     log.holdsStatement = CLOSE;
     const ending = Read(reqId, open);
     const resume = await WhenHeld(log);
@@ -370,14 +376,14 @@ describe("the cursor registry", () => {
     await disconnecting;
     expect(checkedOutAtEnd).to.equal(0);
     expect(closesAtEnd).to.equal(1);
-    expect((await ending).done).to.equal(true);
+    expect(await ending).to.deep.equal([]);
   });
 
   it("closes a source once however many paths end its cursor", async () => {
     const log = Recorder();
     const reqId = NextReqId();
     const open = Requesting(log, [Rows(1, 2, 3), Rows(4)]);
-    expect((await Read(reqId, open)).value).to.equal(1);
+    expect(await Read(reqId, open)).to.deep.equal([1, 2, 3]);
     await Promise.all([
       CloseOneCursor(reqId),
       CloseOneCursor(reqId),

@@ -44,7 +44,7 @@ describe("the cursor registry", () => {
     const reqId = NextReqId();
     const open = Reopening(log, 1, 2);
     expect(await Drain(reqId, open)).to.deep.equal([1, 2]);
-    expect((await Read(reqId, open)).done).to.equal(true);
+    expect(await Read(reqId, open)).to.deep.equal([]);
     await OverflowEndings();
     const err = await Rejection(Read(reqId, open));
     expect(err.message).to.contain(`${reqId}`);
@@ -56,8 +56,8 @@ describe("the cursor registry", () => {
   it("refuses a reqId whose reaping it has forgotten, rather than re-serving its rows", async () => {
     const log = Recorder();
     const reqId = NextReqId();
-    const open = Reopening(log, 1, 2);
-    expect((await Read(reqId, open, REAPING)).value).to.equal(1);
+    const open = Reopening(log, 1, 2, 3);
+    expect(await Read(reqId, open, REAPING)).to.deep.equal([1, 2, 3]);
     await Delay(REAP_WINDOW_MS);
     expect(log.closes).to.equal(1);
     await OverflowEndings();
@@ -75,7 +75,7 @@ describe("the cursor registry", () => {
    * round to it, so a slow one's id sits inside a range that grew around it while it was reading.
    * It is still live, still holding its connection, and the registry still has it, so the range is
    * not the question being asked about it. Consulting the range first would end a cursor
-   * mid-iteration, one row into a result the caller is still reading, and leave its connection
+   * mid-iteration, one batch into a result the caller is still reading, and leave its connection
    * checked out with nothing able to give it back.
    */
   it("keeps serving a live cursor the forgotten range has grown around", async () => {
@@ -83,12 +83,12 @@ describe("the cursor registry", () => {
     const ended = Recorder();
     const liveId = NextReqId();
     const endedId = NextReqId();
-    const openLive = Reopening(live, 1, 2);
-    expect((await Read(liveId, openLive)).value).to.equal(1);
+    const openLive = Requesting(live, [Rows(1, 2, 3), Rows(4, 5, 6)]);
+    expect(await Read(liveId, openLive)).to.deep.equal([1, 2, 3]);
     expect(CountOpenCursors()).to.equal(baseline + 1);
     expect(await Drain(endedId, Reopening(ended, 3, 4))).to.deep.equal([3, 4]);
     await OverflowEndings();
-    expect((await Read(liveId, openLive)).value).to.equal(2);
+    expect(await Read(liveId, openLive)).to.deep.equal([4, 5, 6]);
     expect(CountOpenCursors()).to.equal(baseline + 1);
     expect(live.opens).to.equal(1);
     await CloseOneCursor(liveId);

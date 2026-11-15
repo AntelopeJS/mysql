@@ -95,9 +95,13 @@ export interface Options {
   schemaPrefix?: string;
   /** Schema convergence policy. Defaults to `safe`. */
   migrations?: MigrationMode;
-  /** Rows fetched per round trip when iterating a cursor. Defaults to 100. */
+  /** The most rows one read of a cursor hands over. Defaults to 100. */
   cursorBatchSize?: number;
-  /** How long an untouched cursor is kept open before being reclaimed. Defaults to 60000. */
+  /**
+   * How long a cursor is kept open without a read before being reclaimed. Defaults to 60000. A read
+   * hands over up to `cursorBatchSize` rows, so the time a loop spends on the rows of one read counts:
+   * a loop slower than this per batch needs a larger value or a smaller `cursorBatchSize`.
+   */
   cursorIdleTimeoutMs?: number;
   /**
    * How many cursors may be open at once. An open cursor keeps one pooled connection for as long as

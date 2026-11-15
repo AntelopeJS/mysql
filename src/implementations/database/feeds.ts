@@ -37,7 +37,7 @@ import { IsString } from "./guards";
  * Why a feed stopped, and therefore what a read arriving after it is told.
  * `lapsed` and `restarted` are losses and raise, naming the feed and the range that went;
  * `tooDeep` raises, naming the last `seq` the feed got past; `closed` is an ending and resolves
- * `done`.
+ * an empty batch.
  */
 type FeedEnd =
   | { reason: "closed" }
@@ -408,6 +408,23 @@ async function Open(state: FeedState, stages: QueryStage[]): Promise<void> {
 }
 
 /**
+ * Opens the feed, and ends it when the open fails: a read that rejects has released its feed, and
+ * the consumer never reads it again nor closes it.
+ */
+async function Opened(
+  reqId: number,
+  state: FeedState,
+  stages: QueryStage[],
+): Promise<void> {
+  try {
+    await Open(state, stages);
+  } catch (err) {
+    Retire(reqId, state, CLOSED);
+    throw err;
+  }
+}
+
+/**
  * Answers a poll that failed on a document deeper than the server builds. A poll of a batch says
  * only that some event in it is too deep, so the feed reads on one event at a time, at once, and
  * delivers every event before that one. A poll of one event names it, and ends the feed after the
@@ -426,10 +443,10 @@ function Deepened(reqId: number, state: OpenFeed): void {
   });
 }
 
-function Ended(end: FeedEnd): IteratorResult<RowObject, void> {
+function Ended(end: FeedEnd): RowObject[] {
   switch (end.reason) {
     case "closed":
-      return { done: true, value: undefined };
+      return [];
     case "lapsed":
       throw new Error(LapsedMessage(end.target, end.gap));
     case "restarted":
@@ -440,15 +457,17 @@ function Ended(end: FeedEnd): IteratorResult<RowObject, void> {
 }
 
 /**
- * Answers one event, waiting for as long as it takes, with a transient failure retried not fatal.
- * The poll is raced against the feed's own ending, since `pool.end()` abandons queued acquisitions.
+ * Answers the events one poll admitted, waiting for as long as it takes for one, with a transient
+ * failure retried not fatal. It never waits for more once it holds one, so each event is handed
+ * over as it arrives. The poll is raced against the feed's own ending, since `pool.end()` abandons
+ * queued acquisitions.
  */
 async function Advance(
   reqId: number,
   state: FeedState,
   stages: QueryStage[],
   options: ResolvedOptions,
-): Promise<IteratorResult<RowObject, void>> {
+): Promise<RowObject[]> {
   if (isSweeping) {
     Retire(reqId, state, CLOSED);
   }
@@ -456,12 +475,11 @@ async function Advance(
     if (state.end) {
       return Ended(state.end);
     }
-    const buffered = state.buffer.shift();
-    if (buffered) {
-      return { done: false, value: buffered };
+    if (state.buffer.length > EMPTY) {
+      return state.buffer.splice(EMPTY);
     }
     if (!IsOpen(state)) {
-      await Open(state, stages);
+      await Opened(reqId, state, stages);
       continue;
     }
     state.woken = false;
@@ -483,7 +501,8 @@ async function Advance(
 }
 
 /**
- * Answers one event of the feed named by `reqId`, opening it on the first read.
+ * Answers the next events of the feed named by `reqId`, opening it on the first read. A read hands
+ * over the events one poll admitted, in log order, and an empty answer means the feed was closed.
  *
  * Every read on one `reqId` is chained onto the last, the open included: two overlapping reads
  * would both poll from the same watermark, deliver the same events twice and advance it once. The
@@ -492,11 +511,11 @@ async function Advance(
  * The options are read here, synchronously, so a spec can drive a feed through a temporary
  * configuration without the set outliving the call.
  */
-export function ReadFeedEvent(
+export function ReadFeedEvents(
   reqId: number,
   stages: QueryStage[],
   env?: FeedEnvironment,
-): Promise<IteratorResult<RowObject, void>> {
+): Promise<RowObject[]> {
   const options = GetOptions();
   const state = Registered(reqId, env);
   const next = state.chain.then(() => Advance(reqId, state, stages, options));
@@ -520,7 +539,7 @@ export function CloseOneFeed(reqId: number): Promise<void> {
  * Ends every feed, and is registered to run before the pool is ended.
  *
  * A feed holds no connection between polls, so this exists so an abandoned feed's pending read
- * resolves `{done: true}` instead of being left suspended forever, and so a read starting during
+ * resolves an empty batch instead of being left suspended forever, and so a read starting during
  * the sweep ends rather than opening a connection the teardown will not wait for. Teardown is an
  * ending, not a loss, which is why it resolves rather than rejects.
  */

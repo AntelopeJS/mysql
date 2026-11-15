@@ -57,12 +57,12 @@ describe("the cursor registry's cap", () => {
     const options = Room(1);
     const kept = Recorder();
     const keptId = NextReqId();
-    const open = Requesting(kept, [Rows(1, 2, 3)]);
-    expect((await Read(keptId, open, options)).value).to.equal(1);
+    const open = Requesting(kept, [Rows(1, 2, 3), Rows(4, 5, 6)]);
+    expect(await Read(keptId, open, options)).to.deep.equal([1, 2, 3]);
     await Rejection(
       Read(NextReqId(), Requesting(Recorder(), [Rows(9)]), options),
     );
-    expect((await Read(keptId, open, options)).value).to.equal(2);
+    expect(await Read(keptId, open, options)).to.deep.equal([4, 5, 6]);
   });
 
   /**
@@ -77,8 +77,8 @@ describe("the cursor registry's cap", () => {
     const log = Recorder();
     const reqId = NextReqId();
     expect(
-      (await Read(reqId, Requesting(log, [Rows(2)]), options)).value,
-    ).to.equal(2);
+      await Read(reqId, Requesting(log, [Rows(2)]), options),
+    ).to.deep.equal([2]);
     expect(log.opens).to.equal(1);
   });
 
@@ -89,7 +89,7 @@ describe("the cursor registry's cap", () => {
     await CloseOneCursor(first);
     const log = Recorder();
     const second = await Read(NextReqId(), Requesting(log, [Rows(5)]), options);
-    expect(second.value).to.equal(5);
+    expect(second).to.deep.equal([5]);
     expect(log.opens).to.equal(1);
   });
 
@@ -123,7 +123,7 @@ describe("the cursor registry's cap", () => {
     );
     expect(refused.message).to.contain(CAP_SETTING);
     opening.resumeOpen?.();
-    expect((await first).value).to.equal(1);
+    expect(await first).to.deep.equal([1]);
   });
 
   it("counts a cursor whose close is still on the wire against the cap", async () => {
@@ -142,7 +142,7 @@ describe("the cursor registry's cap", () => {
     await ending;
     const log = Recorder();
     expect(
-      (await Read(NextReqId(), Requesting(log, [Rows(3)]), options)).value,
-    ).to.equal(3);
+      await Read(NextReqId(), Requesting(log, [Rows(3)]), options),
+    ).to.deep.equal([3]);
   });
 });

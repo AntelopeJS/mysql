@@ -29,8 +29,8 @@ import { CompileWrite, SplitWrite, type WriteSplit, WriteRead } from "./writes";
 import { ATOMIC_MUTATION, ExecuteAtomicWrite } from "./writes-atomic";
 import { InTransaction } from "./transaction";
 import { ID_COLUMN, OptionsOf } from "./utils";
-import { CloseOneCursor, type CursorRequest, ReadCursorRow } from "./cursors";
-import { CloseOneFeed, ReadFeedEvent } from "./feeds";
+import { CloseOneCursor, type CursorRequest, ReadCursorBatch } from "./cursors";
+import { CloseOneFeed, ReadFeedEvents } from "./feeds";
 import { NudgeChanges } from "./change-loop";
 import { OUTPUT_COLUMN, type Relation, RequireOrigin } from "./relation";
 import { Render } from "./render";
@@ -327,22 +327,22 @@ async function RefuseExternalFeed(stages: QueryStage[]): Promise<void> {
   }
 }
 
-/** Answers one element of the cursor `reqId` names, or one event of the change feed it names. */
+/** Answers the next batch of rows of the cursor `reqId` names, or of events of the change feed it names. */
 export function ReadCursor(
   reqId: number,
   stages: QueryStage[],
-): Promise<IteratorResult<RowValue, void>> {
+): Promise<RowValue[]> {
   if (IsFeed(stages)) {
     return IsExternal()
-      ? RefuseExternalFeed(stages).then(() => ReadFeedEvent(reqId, stages))
-      : ReadFeedEvent(reqId, stages);
+      ? RefuseExternalFeed(stages).then(() => ReadFeedEvents(reqId, stages))
+      : ReadFeedEvents(reqId, stages);
   }
-  return ReadCursorRow(reqId, () => CompileCursor(stages));
+  return ReadCursorBatch(reqId, () => CompileCursor(stages));
 }
 
 /**
  * Closes the cursor or the feed `reqId` names; total for an id that never opened, so a feed's read
- * arriving after its close answers `done`.
+ * arriving after its close answers an empty batch.
  */
 export async function CloseCursor(reqId: number): Promise<void> {
   await CloseOneFeed(reqId);
