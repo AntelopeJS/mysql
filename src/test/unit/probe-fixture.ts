@@ -1,4 +1,3 @@
-import diagnosticsChannel from "node:diagnostics_channel";
 import { randomBytes } from "node:crypto";
 import net from "node:net";
 import os from "node:os";
@@ -186,6 +185,14 @@ export function Commands(command: number): Stall {
 /** The reply a relay sends a client chunk in place of the server's, if any. */
 export type Answer = (chunk: Buffer) => Buffer | undefined;
 
+/**
+ * What a relay that ignores the goodbye keeps sending a client that has ended its side, every
+ * {@link PING_MS}: a client that merely stopped writing reads it and stays connected, and one that
+ * shut its socket resets the connection, so the relay sees it close.
+ */
+const PING = Buffer.from([0]);
+const PING_MS = 20;
+
 /** A relay's {@link Answer} that counts packets, and the count so far. */
 export interface CommandCount {
   answer: Answer;
@@ -271,6 +278,8 @@ export async function Relay(
       if (ignoresGoodbye) {
         client.on("end", () => {
           stalled = true;
+          const ping = setInterval(() => client.write(PING), PING_MS);
+          client.on("close", () => clearInterval(ping));
         });
       }
       const forward = (chunk: Buffer, fromClient: boolean) => {
@@ -319,47 +328,5 @@ export async function Relay(
       }
       await relay.close();
     },
-  };
-}
-
-/** The client sockets this process opens to one port, whichever library opens them. */
-export interface ClientSockets {
-  /** How many of them are not destroyed once all have been, or after `settleMs`. */
-  leftOpenAfter: (settleMs: number) => Promise<number>;
-  stop: () => void;
-}
-
-/** Whether a `net.client.socket` message carries the socket it announces. */
-function IsSocketMessage(message: unknown): message is { socket: net.Socket } {
-  return (
-    message instanceof Object &&
-    Object.hasOwn(message, "socket") &&
-    "socket" in message &&
-    message.socket instanceof net.Socket
-  );
-}
-
-/** Watches the client sockets this process opens to `port` from now on. */
-export function WatchClientSockets(port: number): ClientSockets {
-  const sockets = new Set<net.Socket>();
-  const track: diagnosticsChannel.ChannelListener = (message) => {
-    if (!IsSocketMessage(message)) {
-      return;
-    }
-    const socket = message.socket;
-    socket.once("connect", () => {
-      if (socket.remotePort === port) {
-        sockets.add(socket);
-      }
-    });
-  };
-  diagnosticsChannel.subscribe("net.client.socket", track);
-  return {
-    leftOpenAfter: (settleMs) =>
-      Settled(
-        () => [...sockets].filter((socket) => !socket.destroyed).length,
-        settleMs,
-      ),
-    stop: () => diagnosticsChannel.unsubscribe("net.client.socket", track),
   };
 }

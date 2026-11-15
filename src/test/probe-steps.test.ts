@@ -11,7 +11,6 @@ import {
   Relay,
   TIMEOUT_MS,
   Unaborted,
-  WatchClientSockets,
 } from "./unit/probe-fixture";
 
 /** A database of one table, so the probe confirms a relation. */
@@ -72,7 +71,6 @@ describe("probe, at each step of a live server", function () {
         const relay = await Relay(host, port, {
           [behaviour]: NthCommand(command, nth),
         });
-        const sockets = WatchClientSockets(relay.port);
         try {
           const started = performance.now();
           const answer = await probe({
@@ -82,9 +80,8 @@ describe("probe, at each step of a live server", function () {
           });
           expect(performance.now() - started).to.be.lessThan(TIMEOUT_MS * 2);
           expect(answer.outcome).to.equal("unreachable");
-          expect(await sockets.leftOpenAfter(TIMEOUT_MS / 2)).to.equal(0);
+          expect(await relay.openAfter(TIMEOUT_MS / 2)).to.equal(0);
         } finally {
-          sockets.stop();
           await relay.close();
         }
       });

@@ -12,7 +12,6 @@ import {
   Relay,
   TIMEOUT_MS,
   Unaborted,
-  WatchClientSockets,
 } from "./unit/probe-fixture";
 
 /** The statement the probe prepares first: the listing of the relations, after the account's query. */
@@ -86,13 +85,11 @@ describe("probe, through a relay to a live server", function () {
       stall: Commands(QUIT_COMMAND),
       ignoresGoodbye: true,
     });
-    const sockets = WatchClientSockets(relay.port);
     try {
       const answer = await Probe(Through(relay.port));
       expect(answer.outcome).to.equal("signed-in");
-      expect(await sockets.leftOpenAfter(CLOSE_SETTLE_MS)).to.equal(0);
+      expect(await relay.openAfter(CLOSE_SETTLE_MS)).to.equal(0);
     } finally {
-      sockets.stop();
       await relay.close();
     }
   });
@@ -100,7 +97,6 @@ describe("probe, through a relay to a live server", function () {
   /** Fails on a probe that keeps what the server answered, or its socket, once the signal aborts. */
   it("answers aborted at once, and shuts its socket, when the signal aborts after the sign-in", async () => {
     const relay = await Relay(host, port, { stall: Commands(PREPARE_COMMAND) });
-    const sockets = WatchClientSockets(relay.port);
     const controller = new AbortController();
     try {
       const pending = probe({
@@ -115,9 +111,8 @@ describe("probe, through a relay to a live server", function () {
         message: "The probe was aborted.",
       });
       expect(performance.now() - started).to.be.lessThan(TIMEOUT_MS);
-      expect(await sockets.leftOpenAfter(TIMEOUT_MS / 2)).to.equal(0);
+      expect(await relay.openAfter(TIMEOUT_MS / 2)).to.equal(0);
     } finally {
-      sockets.stop();
       await relay.close();
     }
   });

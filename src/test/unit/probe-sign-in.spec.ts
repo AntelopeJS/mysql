@@ -6,6 +6,7 @@ import {
   AuthSwitch,
   type ClientLine,
   HandshakeServer,
+  OK_PACKET,
 } from "./probe-handshake";
 
 function Probe(port: number, query = "") {
@@ -56,6 +57,32 @@ describe("probe, against a server that greets and asks for what the probe cannot
     );
     try {
       expect(await Probe(server.port, "?ssl={}")).to.include({
+        outcome: "refused",
+        refusal: "other",
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  /**
+   * Fails on a probe whose process ends on what `mysql2` throws outside any promise: here it reads
+   * an error packet too short to hold its code while no command waits for an answer.
+   */
+  it("answers a server that sends a truncated packet with its sign-in, and its caller keeps running", async () => {
+    const server = await HandshakeServer(
+      "mysql_native_password",
+      async (line) => {
+        await line.next();
+        line.sendAll([
+          [2, OK_PACKET],
+          [0, Buffer.from([0xff])],
+        ]);
+        await line.next();
+      },
+    );
+    try {
+      expect(await Probe(server.port)).to.include({
         outcome: "refused",
         refusal: "other",
       });

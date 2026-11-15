@@ -42,6 +42,8 @@ export interface ClientLine {
   /** The next packet the client sends, or `undefined` once it has closed. */
   next: () => Promise<Packet | undefined>;
   send: (sequence: number, payload: Buffer) => void;
+  /** Sends several packets in one write, so the client reads them in one chunk. */
+  sendAll: (packets: readonly (readonly [number, Buffer])[]) => void;
   /** Every byte the client sent so far. */
   received: () => Buffer;
 }
@@ -89,6 +91,12 @@ function Line(socket: net.Socket, scramble: Buffer): ClientLine {
       }
     },
     send: (sequence, payload) => socket.write(Frame(sequence, payload)),
+    sendAll: (packets) =>
+      socket.write(
+        Buffer.concat(
+          packets.map(([sequence, payload]) => Frame(sequence, payload)),
+        ),
+      ),
     received: () => Buffer.concat(chunks),
   };
 }
