@@ -91,9 +91,8 @@ describe("a cursor's stream over a statement that raises many warnings", functio
   });
 
   /**
-   * Each row raises a truncation warning, as a compiled read does for a JSON number past the
-   * doubles, more than the 64 MariaDB lists by default; a read that failed where its default
-   * list ran out would refuse rows it read whole.
+   * Each row raises a truncation warning, more than the 64 MariaDB lists by default; a read that
+   * failed where its default list ran out would refuse rows it read whole.
    */
   it("answers a read whose many warnings MariaDB lists", async () => {
     const rows = await Read(

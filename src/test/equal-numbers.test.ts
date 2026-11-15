@@ -1,8 +1,9 @@
 import { expect } from "chai";
 import { Schema } from "@antelopejs/interface-database/schema";
 
-import { GetDialect } from "../connection";
+import { AcquireConnection, GetDialect, Read } from "../connection";
 import { type Sql, ident, join, param, sql } from "../statement";
+import { Compiled } from "./compiled";
 import { PhysicalTable, Run } from "./tables";
 
 const SCHEMA_ID = "equal_numbers";
@@ -103,11 +104,13 @@ const schema = new Schema<{
   singles: Single;
   overflows: Single;
   overflowPairs: Pair;
+  wrapped: Single;
 }>(SCHEMA_ID, {
   pairs: { fields: {}, indexes: {} },
   singles: { fields: {}, indexes: {} },
   overflows: { fields: {}, indexes: {} },
   overflowPairs: { fields: {}, indexes: {} },
+  wrapped: { fields: {}, indexes: {} },
 });
 
 /** Each ordered pair of numbers MySQL finds equal, as `left right` texts. */
@@ -322,5 +325,102 @@ describe("eq on JSON numbers beyond the doubles", function () {
       OVERFLOW_PAIRS,
       OVERFLOW_PAIRS,
     ]);
+  });
+
+  /**
+   * MariaDB's cast of such a number to a double warns that it truncated it, once for each row a
+   * read compares, so a read over enough rows raises more warnings than MariaDB lists and a cut
+   * aggregate or a too-deep document among them goes unseen.
+   */
+  it("compares them without a warning", async () => {
+    const overflows = () => schema.instance().table("overflows");
+    const pairs = () => schema.instance().table("overflowPairs");
+    const reads = [
+      overflows().joinInner(
+        overflows(),
+        (left, right) => left.key("n").eq(right.key("n")),
+        (left) => left.key("_id"),
+      ),
+      overflows().distinct("n"),
+      overflows().distinct("na"),
+      overflows().group("n", (rows) => ({ size: rows.count() })),
+      pairs().filter((row) => row.key("l").eq(row.key("r"))),
+      pairs().filter((row) => row.key("la").eq(row.key("ra"))),
+      pairs().filter((row) => row.key("la").includes(row.key("r"))),
+    ];
+    const held = await AcquireConnection();
+    const warnings: number[] = [];
+    try {
+      for (const read of reads) {
+        await Read(Compiled(read), held);
+        const [counted] = await Read(sql`SELECT @@warning_count AS w`, held);
+        warnings.push(Number(counted?.get("w")));
+      }
+    } finally {
+      held.release();
+    }
+    expect(warnings).to.deep.equal(reads.map(() => 0));
+  });
+});
+
+/**
+ * Numbers whose exponent passes a 64-bit integer, which `JSON_NORMALIZE` wraps to the other end:
+ * two that cast to 0, two that cast to the greatest double, and one whose exponent passes the 65
+ * digits a decimal holds, which keeps its own text as {@link OVERFLOWS} do.
+ */
+const WRAPPED = [
+  "0",
+  "0.5e-9223372036854775808",
+  "17.976931348623157e99999999999999999999999",
+  "179.76931348623157e99999999999999999999999",
+  `1e${"9".repeat(66)}`,
+] as const;
+
+describe("eq on JSON numbers whose exponent passes a 64-bit integer", function () {
+  this.timeout(30_000);
+
+  before(async function () {
+    if (GetDialect().id !== "mariadb") {
+      this.skip();
+    }
+    await schema.instance().table("wrapped").delete().run();
+    await Run(
+      Insert(
+        "wrapped",
+        WRAPPED.map(
+          (number, index) =>
+            [String(index), sql`JSON_OBJECT('n', ${Parsed(number)})`] as const,
+        ),
+      ),
+    );
+  });
+
+  /**
+   * MariaDB casts the first two to 0 and the next two to the greatest double, and the last keeps
+   * its text, so they make three values; a key that took `JSON_NORMALIZE`'s wrapped exponent for
+   * the number's would key the second as past the doubles, one that cast the next two would warn
+   * for each, and one that read the last one's exponent as a decimal would warn that it overflows.
+   */
+  it("keys each as MariaDB's cast reads it, without a warning", async () => {
+    const wrapped = () => schema.instance().table("wrapped");
+    const held = await AcquireConnection();
+    try {
+      const [values] = await Read(
+        Compiled(wrapped().distinct("n").count()),
+        held,
+      );
+      const [counted] = await Read(sql`SELECT @@warning_count AS w`, held);
+      const zeros = await wrapped()
+        .filter((row) => row.key("n").eq(0))
+        .map((row) => row.key("_id"))
+        .run();
+      expect({
+        values: Number([...(values?.values() ?? [])][0]),
+        warnings: Number(counted?.get("w")),
+        zeros: zeros.sort(),
+      }).to.deep.equal({ values: 3, warnings: 0, zeros: ["0", "1"] });
+    } finally {
+      held.release();
+    }
   });
 });
