@@ -118,12 +118,13 @@ async function Answer(
 }
 
 /** How a cursor ended: whole, with an error naming the packet, or anything else. */
-function Ending(failure: unknown, isWhole: boolean): string {
+function Ending(failure: Error | undefined, isWhole: boolean): string {
   if (failure === undefined) {
     return isWhole ? "whole" : "short";
   }
-  const message = failure instanceof Error ? failure.message : "no Error";
-  return /max_allowed_packet/.test(message) ? "packet" : message;
+  return /max_allowed_packet/.test(failure.message)
+    ? "packet"
+    : failure.message;
 }
 
 /**

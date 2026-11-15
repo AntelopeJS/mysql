@@ -143,10 +143,7 @@ const config: VerifyConfig = {
       ],
       files: [`${FORMAL_CHANGE_FEED_DELIVERY}/**`],
       command: ["node", `${FORMAL_CHANGE_FEED_DELIVERY}/check.mjs`, "--full"],
-      baseCommand: ["node", `${FORMAL_CHANGE_FEED_DELIVERY}/check.mjs`],
       violation: /^(?:finding|BROKEN|HOLDS) +(\w+)/gm,
-      passing: /(?<=^holds +(?:\w+, )*)(\w+)(?=,| \()/gm,
-      behaviour: { kind: "emit" },
     },
   ],
 };

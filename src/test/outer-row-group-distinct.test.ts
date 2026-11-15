@@ -21,7 +21,7 @@ function ByNumber(left: number, right: number): number {
   return left - right;
 }
 
-function ByJson(left: unknown, right: unknown): number {
+function ByJson(left: Entry | Entry[], right: Entry | Entry[]): number {
   return JSON.stringify(left).localeCompare(JSON.stringify(right));
 }
 
