@@ -126,6 +126,27 @@ GRANT INSERT, UPDATE, DELETE ON sales.customers TO 'dms_client'@'%';
 
 A write to a table that the account was not granted fails as `forbidden`. The module never needs more. With this account, a module wired by mistake to an owned instance on this URL fails at its first `CREATE` and does not change the client's database. Set `statementTimeoutMs` too, because these are someone else's production tables. It bounds `SELECT` statements only, as MySQL's `max_execution_time` does.
 
+## Checking an account before you connect
+
+`@antelopejs/mysql/dist/probe` exports `probe`, typed `Probe` by `@antelopejs/interface-database-catalog`. It loads outside the AntelopeJS runtime, so a tool can check a URL before any instance is configured with it:
+
+```typescript fragment
+const { probe } = require("@antelopejs/mysql/dist/probe");
+const answer = await probe({
+  url: "mysql://dms_client:…@db:3306/sales",
+  timeoutMs: 5000,
+  signal,
+});
+```
+
+The probe signs in on a connection of its own, runs no statement that writes, and never rejects. It answers one of three outcomes:
+
+- `signed-in`, with `CURRENT_USER()` as `user` and the time the first query took as `latencyMs`, rounded up. `canRead` and `canWrite` come from the relations of the URL's database, each decided as the catalog decides it. The account reads when it may `SELECT` from any relation as a whole, or sees none. It writes when it may `INSERT`, `UPDATE` or `DELETE` in any relation. `INSERT` and `UPDATE` count only on a relation it may read. A URL with no database answers `unreadable: "no-database-named"`. A server error after the sign-in answers `unreadable: "cannot-list"`.
+- `refused`, when the server turns the sign-in down. `ER_ACCESS_DENIED_ERROR` is `credentials`, `ER_HOST_NOT_PRIVILEGED` is `host`, `ER_BAD_DB_ERROR` is `database` and `ER_DBACCESS_DENIED_ERROR` is `database-denied`. Any other `ER_*` is `other`.
+- `unreachable`, when no server answered. That covers a wrong host or port, a socket path nothing listens on, and a step that took longer than `timeoutMs`.
+
+`timeoutMs` bounds the connect and each statement. A `socketPath` in the URL's query is connected to in place of its host and port. Once the probe has answered, it says goodbye and shuts its socket, even when the server ignores the goodbye. When `signal` aborts before the probe has answered, the probe shuts its socket at once and answers `{ outcome: "unreachable", message: "The probe was aborted." }`. It opens nothing for a signal that has already aborted.
+
 ## The catalog
 
 An external instance also implements `@antelopejs/interface-database-catalog`. The catalog describes and profiles the database for a generator: relations, columns, keys, references, row estimates, and aggregates over the data. It answers with this module's own registration rules. A relation that it calls mappable registers, and the declarations that it lists for a column are the ones that registration accepts.
