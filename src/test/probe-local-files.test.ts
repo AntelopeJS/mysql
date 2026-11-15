@@ -62,8 +62,8 @@ describe("probe, against a server that asks for a local file", function () {
   after(() => rm(directory, { recursive: true, force: true }));
 
   for (const [step, command] of [
-    ["the account's query", EXECUTE_COMMAND],
-    ["the session pin", QUERY_COMMAND],
+    ["the account's query", QUERY_COMMAND],
+    ["the listing", EXECUTE_COMMAND],
   ] as const) {
     /** Fails on a probe whose client streams a file of the probing host to the server. */
     it(`sends no local file the server asks for in answer to ${step}`, async () => {

@@ -8,6 +8,7 @@ import { probe } from "../probe";
 import { TIMEOUT_MS, Unaborted } from "./unit/probe-fixture";
 
 const DATABASE = "probe_shop";
+const EMPTY = "probe_empty";
 const SECRET = randomBytes(6).toString("hex");
 const WRONG_SECRET = randomBytes(6).toString("hex");
 
@@ -37,6 +38,7 @@ function Account(user: string): string {
 
 const TEARDOWN = [
   `DROP DATABASE IF EXISTS ${DATABASE}`,
+  `DROP DATABASE IF EXISTS ${EMPTY}`,
   ...USERS.map((user) => `DROP USER IF EXISTS ${Account(user)}`),
   ...ROLES.map((role) => `DROP ROLE IF EXISTS ${role}`),
 ];
@@ -44,12 +46,14 @@ const TEARDOWN = [
 const SETUP = [
   ...TEARDOWN,
   `CREATE DATABASE ${DATABASE}`,
+  `CREATE DATABASE ${EMPTY}`,
   `CREATE TABLE ${DATABASE}.orders (id int PRIMARY KEY, total int)`,
   `CREATE TABLE ${DATABASE}.notes (id int PRIMARY KEY)`,
   ...USERS.map(
     (user) => `CREATE USER ${Account(user)} IDENTIFIED BY '${SECRET}'`,
   ),
   ...GRANTS.map(([user, grant]) => `GRANT ${grant} TO ${Account(user)}`),
+  `GRANT SELECT ON ${EMPTY}.* TO ${Account("probe_reader")}`,
   ...ROLES.map((role) => `CREATE ROLE ${role}`),
   `GRANT SELECT ON ${DATABASE}.* TO ${ROLES[0]}`,
   `GRANT ${ROLES[0]} TO ${ROLES[1]}`,
@@ -101,6 +105,17 @@ describe("probe, against a live server", function () {
     });
     expect(answer).to.not.have.property("unreadable");
     expect(answer).to.have.property("latencyMs").that.is.above(0);
+  });
+
+  /** Fails on a probe that answers no read access to an account that sees no relation. */
+  it("answers read access and no write access to an account that sees no relation", async () => {
+    const answer = await Probe(Url("probe_reader", SECRET, EMPTY));
+    expect(answer).to.include({
+      outcome: "signed-in",
+      canRead: true,
+      canWrite: false,
+    });
+    expect(answer).to.not.have.property("unreadable");
   });
 
   it("answers read and write access to an account that may write", async () => {

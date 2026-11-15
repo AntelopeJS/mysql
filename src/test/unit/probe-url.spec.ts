@@ -1,7 +1,12 @@
 import { expect } from "chai";
 
 import { probe } from "../../probe";
-import { ClosedPort, TIMEOUT_MS, Unaborted } from "./probe-fixture";
+import {
+  ClosedPort,
+  SilentServer,
+  TIMEOUT_MS,
+  Unaborted,
+} from "./probe-fixture";
 
 /** Long enough that work quadratic in a value takes seconds. */
 const LENGTH = 100_000;
@@ -71,4 +76,51 @@ describe("probe, with a URL value made to be slow", function () {
       ).to.equal(false);
     }
   });
+});
+
+/**
+ * Queries that read one way as raw text and another once parsed: the URL parser drops tab, CR and
+ * LF, decodes percent-escapes, keeps every repeated key, and `mysql2` keeps the last of them and
+ * reads keys by their case.
+ */
+const DISGUISED: readonly (readonly [string, string])[] = [
+  ["a tab inside a refused name", "infile\tStreamFactory=1"],
+  ["CR and LF inside a refused name", "infile\r\nStreamFactory=1"],
+  ["a percent-escaped refused name", "%69nfileStreamFactory=1"],
+  ["a tab inside a client certificate", 'ssl={"ce\trt":"x"}'],
+  [
+    "a percent-escaped client certificate",
+    `ssl=${encodeURIComponent('{"key":"x"}')}`,
+  ],
+  ["a newline inside an inherited profile", "ssl=__pro\nto__"],
+  ["a percent-escaped inherited profile", "ssl=%5F%5Fproto%5F%5F"],
+  ["a percent-escaped ssl name", "%73sl=__proto__"],
+  ["an inherited profile repeated last", "ssl={}&ssl=__proto__"],
+  ["an inherited profile repeated first", "ssl=__proto__&ssl={}"],
+  ["a refused option in another case", "SSL=__proto__"],
+];
+
+describe("probe, with a URL that reads one way raw and another parsed", function () {
+  this.timeout(TIMEOUT_MS * 5);
+
+  for (const [disguise, query] of DISGUISED) {
+    /** Fails on a probe that checks the raw query rather than the query `mysql2` reads. */
+    it(`refuses ${disguise} before connecting`, async () => {
+      const server = await SilentServer();
+      try {
+        const answer = await probe({
+          url: `mysql://reader:secret@127.0.0.1:${server.port}/shop?${query}`,
+          timeoutMs: TIMEOUT_MS,
+          signal: Unaborted(),
+        });
+        expect(answer).to.include({ outcome: "refused", refusal: "other" });
+        expect(server.accepted()).to.equal(0);
+        expect(Object.hasOwn(Object.prototype, "rejectUnauthorized")).to.equal(
+          false,
+        );
+      } finally {
+        await server.close();
+      }
+    });
+  }
 });

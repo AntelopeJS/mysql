@@ -93,6 +93,17 @@ describe("probe, against servers that never sign in", function () {
     expect(answer.outcome).to.equal("unreachable");
   });
 
+  /** Fails on a probe that answers a host of several addresses with an empty message. */
+  it("answers a port nothing listens on at localhost with what failed", async () => {
+    const answer = await probe({
+      url: `mysql://reader:secret@localhost:${await ClosedPort()}/shop`,
+      timeoutMs: TIMEOUT_MS,
+      signal: Unaborted(),
+    });
+    expect(answer.outcome).to.equal("unreachable");
+    expect(answer).to.have.property("message").that.has.length.above(0);
+  });
+
   /** Fails on a probe that rejects on a URL the driver cannot read. */
   it("answers a URL the driver cannot read as unreachable, without rejecting", async () => {
     const answer = await probe({

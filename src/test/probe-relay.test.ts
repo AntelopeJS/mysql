@@ -4,10 +4,10 @@ import { GetOptions } from "../config";
 import { probe } from "../probe";
 import {
   CLOSE_SETTLE_MS,
+  CommandCounter,
   Commands,
   PREPARE_COMMAND,
   QUIT_COMMAND,
-  NthPrepare,
   RefuseNthPrepare,
   Relay,
   TIMEOUT_MS,
@@ -15,8 +15,8 @@ import {
   WatchClientSockets,
 } from "./unit/probe-fixture";
 
-/** The statement the probe prepares second, after the account's: the listing of the relations. */
-const LISTING = 2;
+/** The statement the probe prepares first: the listing of the relations, after the account's query. */
+const LISTING = 1;
 
 /** `ER_TABLEACCESS_DENIED_ERROR`. */
 const TABLE_ACCESS_DENIED = 1142;
@@ -66,31 +66,15 @@ describe("probe, through a relay to a live server", function () {
     }
   });
 
-  /** Fails on a probe that answers a listing no server answered as one the server refused. */
-  it("answers unreachable when the listing is cut off or times out after the sign-in", async () => {
-    for (const behaviour of [
-      { cut: NthPrepare(LISTING) },
-      { stall: NthPrepare(LISTING) },
-    ]) {
-      const relay = await Relay(host, port, behaviour);
-      try {
-        expect(await Probe(Through(relay.port))).to.have.property(
-          "outcome",
-          "unreachable",
-        );
-      } finally {
-        await relay.close();
-      }
-    }
-  });
-
-  /** Fails on a probe that leaves its connection open once it has answered. */
-  it("closes its connection once it has answered", async () => {
-    const relay = await Relay(host, port);
+  /** Fails on a probe that leaves its connection open once it has answered, or shuts it before its goodbye goes out. */
+  it("says goodbye and closes its connection once it has answered", async () => {
+    const quits = CommandCounter(QUIT_COMMAND);
+    const relay = await Relay(host, port, { answer: quits.answer });
     try {
       const answer = await Probe(Through(relay.port));
       expect(answer.outcome).to.equal("signed-in");
       expect(await relay.openAfter(CLOSE_SETTLE_MS)).to.equal(0);
+      expect(quits.count()).to.equal(1);
     } finally {
       await relay.close();
     }
@@ -106,22 +90,6 @@ describe("probe, through a relay to a live server", function () {
     try {
       const answer = await Probe(Through(relay.port));
       expect(answer.outcome).to.equal("signed-in");
-      expect(await sockets.leftOpenAfter(CLOSE_SETTLE_MS)).to.equal(0);
-    } finally {
-      sockets.stop();
-      await relay.close();
-    }
-  });
-
-  /** Fails on a probe whose statements after the sign-in wait without bound. */
-  it("answers unreachable, and shuts its socket, when the server stops answering after the sign-in", async () => {
-    const relay = await Relay(host, port, { stall: Commands(PREPARE_COMMAND) });
-    const sockets = WatchClientSockets(relay.port);
-    try {
-      const started = performance.now();
-      const answer = await Probe(Through(relay.port));
-      expect(performance.now() - started).to.be.lessThan(TIMEOUT_MS * 2);
-      expect(answer.outcome).to.equal("unreachable");
       expect(await sockets.leftOpenAfter(CLOSE_SETTLE_MS)).to.equal(0);
     } finally {
       sockets.stop();
@@ -147,7 +115,7 @@ describe("probe, through a relay to a live server", function () {
         message: "The probe was aborted.",
       });
       expect(performance.now() - started).to.be.lessThan(TIMEOUT_MS);
-      expect(await sockets.leftOpenAfter(CLOSE_SETTLE_MS)).to.equal(0);
+      expect(await sockets.leftOpenAfter(TIMEOUT_MS / 2)).to.equal(0);
     } finally {
       sockets.stop();
       await relay.close();

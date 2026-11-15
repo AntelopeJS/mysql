@@ -219,21 +219,21 @@ export function RefuseNthPrepare(
   errno: number,
   message: string,
 ): Answer {
-  const isNth = NthPrepare(nth);
+  const isNth = NthCommand(PREPARE_COMMAND, nth);
   return (chunk) =>
     isNth(chunk, true) ? ErrorPacket(1, errno, message, "42000") : undefined;
 }
 
-/** Whether a client chunk starts the `nth` statement the client prepares on its connection. */
-export function NthPrepare(nth: number): Stall {
-  const isPrepare = Commands(PREPARE_COMMAND);
-  let prepared = 0;
+/** Whether a client chunk starts the `nth` `command` the client sends on its connection. */
+export function NthCommand(command: number, nth: number): Stall {
+  const isCommand = Commands(command);
+  let sent = 0;
   return (chunk, fromClient) => {
-    if (!isPrepare(chunk, fromClient)) {
+    if (!isCommand(chunk, fromClient)) {
       return false;
     }
-    prepared += 1;
-    return prepared === nth;
+    sent += 1;
+    return sent === nth;
   };
 }
 
@@ -246,6 +246,8 @@ interface RelayBehaviour {
   answer?: Answer;
   /** Once it answers `true` of a client chunk, the relay drops the connection, as a server that crashes does. */
   cut?: Stall;
+  /** How long each chunk from the server waits before the relay passes it on, as a distant server's do. */
+  delayMs?: number;
 }
 
 /** Forwards each connection to the server on `host:port`, behaving as `behaviour` says. */
@@ -257,6 +259,7 @@ export async function Relay(
     ignoresGoodbye = false,
     answer = () => undefined,
     cut = () => false,
+    delayMs = 0,
   }: RelayBehaviour = {},
 ): Promise<FakeServer> {
   const upstreams = new Set<net.Socket>();
@@ -289,7 +292,13 @@ export async function Relay(
           client.write(reply);
         }
       });
-      upstream.on("data", (chunk) => forward(Buffer.from(chunk), false));
+      upstream.on("data", (chunk) => {
+        if (delayMs === 0) {
+          forward(Buffer.from(chunk), false);
+        } else {
+          setTimeout(forward, delayMs, Buffer.from(chunk), false);
+        }
+      });
       client.on("close", () => upstream.destroy());
       upstream.on("close", () => {
         upstreams.delete(upstream);

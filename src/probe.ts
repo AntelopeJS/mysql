@@ -1,5 +1,9 @@
 import net from "node:net";
-import { type Connection as DriverConnection, createConnection } from "mysql2";
+import {
+  type Connection as DriverConnection,
+  type RowDataPacket,
+  createConnection,
+} from "mysql2";
 import type {
   Probe,
   ProbeAnswer,
@@ -7,7 +11,7 @@ import type {
 } from "@antelopejs/interface-database-catalog";
 
 import { MODULE_POOL_OPTIONS } from "./config";
-import { PreparesOn, ReadRows, type Row } from "./connection";
+import { ParseRow, PreparesOn, ReadRows, type Row } from "./connection";
 import type { Session } from "./session";
 import { DIALECTS, DetectDialect } from "./dialect";
 import { IsString } from "./implementations/database/guards";
@@ -18,7 +22,7 @@ import {
 } from "./implementations/database/external-catalog";
 import type { RelationAccess } from "./dialect/external";
 import { ProbeTarget } from "./probe-options";
-import { Bind, sql } from "./statement";
+import { Bind, int, type Sql, sql } from "./statement";
 
 const ACCESS_DENIED = "ER_ACCESS_DENIED_ERROR";
 
@@ -39,6 +43,17 @@ const ACCOUNT = sql`SELECT CURRENT_USER() AS account, DATABASE() AS current_data
 
 const ABORTED = "The probe was aborted.";
 
+const MS_PER_SECOND = 1000;
+
+/**
+ * Bounds how long a statement of the probe waits for a lock, a metadata lock among them: one
+ * second past the probe's own timeout, so the probe answers first, and the server ends the wait
+ * soon after the probe has gone. MySQL notices a closed client only once the wait ends.
+ */
+function LockWait(timeoutMs: number): Sql {
+  return sql`SET SESSION lock_wait_timeout = ${int(Math.ceil(timeoutMs / MS_PER_SECOND) + 1)}`;
+}
+
 /** What a probe answers once its signal has aborted. */
 function Aborted(): ProbeAnswer {
   return { outcome: "unreachable", message: ABORTED };
@@ -55,7 +70,14 @@ function CodeOf(error: unknown): string | undefined {
   return IsString(error.code) ? error.code : undefined;
 }
 
+/**
+ * What a failure says. Node fails a host name with several addresses, such as `localhost`, with an
+ * `AggregateError` whose own message is empty, so its errors speak for it.
+ */
 function MessageOf(error: unknown): string {
+  if (error instanceof AggregateError && error.message === "") {
+    return error.errors.map(MessageOf).join("; ");
+  }
   return error instanceof Error ? error.message : String(error);
 }
 
@@ -93,7 +115,7 @@ class Line {
 
   constructor(
     uri: string,
-    private readonly timeoutMs: number,
+    readonly timeoutMs: number,
     private readonly signal: AbortSignal,
   ) {
     const options = {
@@ -162,13 +184,19 @@ class Line {
     }
   };
 
-  /** Says goodbye, and shuts the sockets once `mysql2` has, or after the timeout when it has not. */
+  /**
+   * Says goodbye, and shuts the sockets once it has gone out, or after the timeout when it has not.
+   * `mysql2` settles its `end` before it writes the goodbye, so the sockets end on the next turn.
+   */
   close(): void {
     const timer = setTimeout(this.destroy, this.timeoutMs);
     timer.unref();
     this.connection.end(() => {
-      clearTimeout(timer);
-      this.destroy();
+      setImmediate(() => {
+        for (const socket of this.sockets) {
+          socket.end(this.destroy);
+        }
+      });
     });
   }
 }
@@ -213,7 +241,10 @@ async function Inspect(line: Line): Promise<ProbeAnswer> {
   const client = line.connection.promise();
   await line.answer(client.connect());
   const started = performance.now();
-  const [account] = await line.answer(ReadRows(client, ACCOUNT));
+  const [cells] = await line.answer(
+    client.query<RowDataPacket[]>(Bind(ACCOUNT).sql),
+  );
+  const account = cells[0] && ParseRow(Object.entries(cells[0]));
   const signedIn: Pick<SignedIn, "outcome" | "latencyMs" | "user"> = {
     outcome: "signed-in",
     latencyMs: Math.ceil(performance.now() - started),
@@ -231,6 +262,7 @@ async function Inspect(line: Line): Promise<ProbeAnswer> {
   const dialect = DIALECTS[DetectDialect(Text(account, "version") ?? "")];
   try {
     await line.answer(client.query(Bind(dialect.session.pin({})).sql));
+    await line.answer(client.query(Bind(LockWait(line.timeoutMs)).sql));
     const session = line.session(dialect);
     const rows = await ReadRelationAccess(session, [database]);
     return {
@@ -307,10 +339,6 @@ export const probe: Probe = async ({ url, timeoutMs, signal }) => {
     answer = await Inspect(line);
   } catch (error) {
     answer = Failed(error, Boolean(line.connection.config.password));
-  }
-  if (signal.aborted) {
-    line.destroy();
-    return Aborted();
   }
   if (answer.outcome === "unreachable") {
     line.destroy();
