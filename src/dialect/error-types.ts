@@ -25,4 +25,10 @@ export type Failure =
 
 export interface ErrorSyntax {
   classify(error: Error): Failure;
+  /**
+   * Whether the server answered that it could not take up a statement at all, rather than that it
+   * would not take it from the account: a cap on prepared statements or on the account's use,
+   * memory, a lock it could not take, or an interrupted statement.
+   */
+  unanswered(error: Error): boolean;
 }

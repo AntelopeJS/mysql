@@ -1,9 +1,11 @@
-import { GetDialect, Prepares, Read } from "../../connection";
+import { GetDialect, Read } from "../../connection";
+import { PoolSession, type Session } from "../../session";
 import type { Sql } from "../../statement";
 import type {
   CatalogColumn,
   CatalogIndex,
   ReferenceRow,
+  RelationAccess,
   RelationRow,
 } from "../../dialect/external";
 
@@ -42,25 +44,46 @@ export function KeyOf(indexes: CatalogIndex[]): CatalogIndex | undefined {
 }
 
 /**
- * The relations a listing statement answers. A relation whose listed columns the account may all
- * SELECT is readable only once the server takes a `SELECT *` of it: the catalog lists only the
- * columns the account holds some privilege on, so it cannot count a column the account may not
- * touch at all. Only then are its listed columns all of its columns, so INSERT and UPDATE on every
- * listed column count only on a readable relation.
+ * A relation as the server confirms what the listing read. A relation whose listed columns the
+ * account may all SELECT is readable only once the server takes a `SELECT *` of it: the catalog
+ * lists only the columns the account holds some privilege on, so it cannot count a column the
+ * account may not touch at all. Only then are its listed columns all of its columns, so INSERT and
+ * UPDATE on every listed column count only on a readable relation.
  */
+export async function Confirmed<Access extends RelationAccess>(
+  session: Session,
+  row: Access,
+): Promise<Access> {
+  const readable =
+    row.readable &&
+    (await session.prepares(
+      session.dialect.external.catalog.selection(row.schema, row.name),
+    ));
+  return {
+    ...row,
+    readable,
+    insert: readable && row.insert,
+    update: readable && row.update,
+  };
+}
+
+/** Whether the account may DELETE from a relation it sees: once the server prepares one, since no column privilege tells it. */
+export function Deletes(
+  session: Session,
+  row: RelationAccess,
+): Promise<boolean> {
+  return session.prepares(
+    session.dialect.external.catalog.deletion(row.schema, row.name),
+  );
+}
+
+/** The relations a listing statement answers, each {@link Confirmed}. */
 async function ParseRelations(statement: Sql): Promise<RelationRow[]> {
-  const catalog = GetDialect().external.catalog;
+  const session = PoolSession();
+  const catalog = session.dialect.external.catalog;
   const parsed: RelationRow[] = [];
-  for (const cells of await Read(statement)) {
-    const row = catalog.parseRelation(cells);
-    const readable =
-      row.readable && (await Prepares(catalog.selection(row.schema, row.name)));
-    parsed.push({
-      ...row,
-      readable,
-      insert: readable && row.insert,
-      update: readable && row.update,
-    });
+  for (const cells of await session.read(statement)) {
+    parsed.push(await Confirmed(session, catalog.parseRelation(cells)));
   }
   return parsed;
 }
@@ -76,6 +99,19 @@ export function ReadRelationRows(
   schemas: readonly string[] | undefined,
 ): Promise<RelationRow[]> {
   return ParseRelations(GetDialect().external.catalog.relations(schemas));
+}
+
+/**
+ * The relations of `schemas` that the account `session` reads on sees, with what it may do as the
+ * listing reads it, before {@link Confirmed}: one statement, whatever the number of relations.
+ */
+export async function ReadRelationAccess(
+  session: Session,
+  schemas: readonly string[],
+): Promise<RelationAccess[]> {
+  const catalog = session.dialect.external.catalog;
+  const rows = await session.read(catalog.access(schemas));
+  return rows.map((cells) => catalog.parseAccess(cells));
 }
 
 export async function ReadColumns(row: RelationRow): Promise<CatalogColumn[]> {

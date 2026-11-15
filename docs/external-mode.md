@@ -126,6 +126,10 @@ GRANT INSERT, UPDATE, DELETE ON sales.customers TO 'dms_client'@'%';
 
 A write to a table that the account was not granted fails as `forbidden`. The module never needs more. With this account, a module wired by mistake to an owned instance on this URL fails at its first `CREATE` and does not change the client's database. Set `statementTimeoutMs` too, because these are someone else's production tables. It bounds `SELECT` statements only, as MySQL's `max_execution_time` does.
 
+## Checking an account before you connect
+
+[The connection probe](./probe.md) checks a URL and its account before any instance is configured with it.
+
 ## The catalog
 
 An external instance also implements `@antelopejs/interface-database-catalog`. The catalog describes and profiles the database for a generator: relations, columns, keys, references, row estimates, and aggregates over the data. It answers with this module's own registration rules. A relation that it calls mappable registers, and the declarations that it lists for a column are the ones that registration accepts.

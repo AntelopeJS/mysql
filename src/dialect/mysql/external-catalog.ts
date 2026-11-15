@@ -6,6 +6,7 @@ import type {
   ExternalCatalogSyntax,
   ExternalRelationKind,
   ReferenceRow,
+  RelationAccess,
   RelationRow,
 } from "../external";
 import type { Flavour } from "./flavour";
@@ -43,15 +44,31 @@ function ColumnPrivileges(filter: Sql): Sql {
     GROUP BY col_schema, col_table`;
 }
 
-/** The relations `filter` keeps, given the alias it reads a relation's `TABLE_SCHEMA` and `TABLE_NAME` from. */
-function Relations(filter: (table: Sql) => Sql): Sql {
-  return sql`SELECT t.TABLE_SCHEMA AS rel_schema, t.TABLE_NAME AS rel_name, t.TABLE_TYPE AS rel_type,
-    t.CREATE_OPTIONS AS rel_options, t.TABLE_ROWS AS rel_rows, t.TABLE_COMMENT AS rel_comment,
-    p.every_select AS can_select, p.some_select AS some_columns, p.every_insert AS can_insert, p.every_update AS can_update
+/** The columns of a relation's name and of what the account may do with it, as {@link ParseAccess} reads them. */
+const ACCESS = sql`t.TABLE_SCHEMA AS rel_schema, t.TABLE_NAME AS rel_name,
+    p.every_select AS can_select, p.some_select AS some_columns, p.every_insert AS can_insert, p.every_update AS can_update`;
+
+/** `columns` of each relation `filter` keeps, given the alias it reads a relation's `TABLE_SCHEMA` and `TABLE_NAME` from. */
+function Listing(columns: Sql, filter: (table: Sql) => Sql): Sql {
+  return sql`SELECT ${columns}
     FROM information_schema.TABLES t
     LEFT JOIN (${ColumnPrivileges(filter(sql`c`))}) p ON p.col_schema = CAST(t.TABLE_SCHEMA AS BINARY) AND p.col_table = CAST(t.TABLE_NAME AS BINARY)
     WHERE t.TABLE_TYPE IN ('BASE TABLE', 'VIEW') AND t.TABLE_SCHEMA NOT IN ${SYSTEM_SCHEMAS} AND ${filter(sql`t`)}
     ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME`;
+}
+
+/** The relations `filter` keeps, with their kind, row estimate and comment. */
+function Relations(filter: (table: Sql) => Sql): Sql {
+  return Listing(
+    sql`${ACCESS}, t.TABLE_TYPE AS rel_type, t.CREATE_OPTIONS AS rel_options, t.TABLE_ROWS AS rel_rows,
+    t.TABLE_COMMENT AS rel_comment`,
+    filter,
+  );
+}
+
+function InSchemas(schemas: readonly string[] | undefined) {
+  return (table: Sql) =>
+    schemas ? sql`${table}.TABLE_SCHEMA IN ${List(schemas)}` : sql`TRUE`;
 }
 
 function List(values: readonly string[]): Sql {
@@ -94,17 +111,23 @@ function CommentOf(row: Row, kind: ExternalRelationKind): string | null {
     : comment;
 }
 
-function ParseRelation(row: Row): RelationRow {
-  const kind = KindOf(row);
-  const rows = row.get("rel_rows");
+function ParseAccess(row: Row): RelationAccess {
   return {
     schema: Text(row, "rel_schema"),
     name: Text(row, "rel_name"),
-    kind,
     readable: Flag(row, "can_select"),
     someColumns: Flag(row, "some_columns"),
     insert: Flag(row, "can_insert"),
     update: Flag(row, "can_update"),
+  };
+}
+
+function ParseRelation(row: Row): RelationRow {
+  const kind = KindOf(row);
+  const rows = row.get("rel_rows");
+  return {
+    ...ParseAccess(row),
+    kind,
     statistics:
       kind === "view" || rows === null || rows === undefined
         ? null
@@ -242,16 +265,15 @@ function ParsePlannedRows(rows: readonly Row[]): number | null {
 
 export function ExternalCatalogOf(flavour: Flavour): ExternalCatalogSyntax {
   return {
-    relations: (schemas) =>
-      Relations((table) =>
-        schemas ? sql`${table}.TABLE_SCHEMA IN ${List(schemas)}` : sql`TRUE`,
-      ),
+    relations: (schemas) => Relations(InSchemas(schemas)),
     namedRelations: (names) =>
       Relations(
         (table) =>
           sql`CONCAT(${table}.TABLE_SCHEMA, '.', ${table}.TABLE_NAME) IN ${List(names)}`,
       ),
     parseRelation: ParseRelation,
+    access: (schemas) => Listing(ACCESS, InSchemas(schemas)),
+    parseAccess: ParseAccess,
     columns: (schema, table) =>
       sql`SELECT COLUMN_NAME AS name, COLUMN_TYPE AS native, DATA_TYPE AS data_type, IS_NULLABLE AS nullable,
       ${flavour.columnDefault.value} AS default_value, ${flavour.columnDefault.extra} AS extra, COLUMN_COMMENT AS comment,

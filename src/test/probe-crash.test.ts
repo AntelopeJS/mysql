@@ -1,0 +1,87 @@
+import { expect } from "chai";
+import { execFile } from "node:child_process";
+import path from "node:path";
+
+import { GetOptions } from "../config";
+import { TIMEOUT_MS } from "./unit/probe-fixture";
+
+/**
+ * Values of kept options that `mysql2` holds raw and uses only once the server has answered, on a
+ * socket event, outside any promise of the probe: in the handshake response, and when it starts TLS.
+ */
+const HOSTILE: readonly (readonly [string, string])[] = [
+  ["connectAttributes", '{"a":{"b":1}}'],
+  ["connectAttributes", "[1,2]"],
+  ["ssl", '{"ca":1}'],
+  ["ssl", '{"minVersion":"x"}'],
+  ["ssl", '{"servername":{}}'],
+  ["ssl", "1"],
+  ["ssl", "true"],
+  ["compress", "{}"],
+  ["keepAliveInitialDelay", "{}"],
+  ["localAddress", "{}"],
+  ["socketPath", "{}"],
+];
+
+/** Runs the probe in a process of its own, which prints its answer, and gives that process's exit code. */
+function ProbeInProcess(
+  url: string,
+  flags: readonly string[] = [],
+): Promise<{ code: number; output: string }> {
+  const script = `require(${JSON.stringify(path.join(__dirname, "..", "probe"))})
+    .probe({ url: process.argv[1], timeoutMs: ${TIMEOUT_MS}, signal: new AbortController().signal })
+    .then((answer) => console.log(JSON.stringify(answer)));`;
+  return new Promise((resolve) => {
+    execFile(
+      process.execPath,
+      [...flags, "-e", script, url],
+      (error, stdout) => {
+        resolve({ code: error ? Number(error.code ?? 1) : 0, output: stdout });
+      },
+    );
+  });
+}
+
+/** Node's permission model, which forbids worker threads unless `--allow-worker` grants them. */
+const PERMISSION = process.allowedNodeEnvironmentFlags.has("--permission")
+  ? "--permission"
+  : "--experimental-permission";
+
+describe("probe, with values mysql2 uses only on a socket event", function () {
+  this.timeout(60_000);
+  const admin = new URL(GetOptions().url ?? "");
+
+  for (const [option, value] of HOSTILE) {
+    /** Fails on a probe whose process ends on a URL value `mysql2` throws on outside the probe's promises. */
+    it(`answers, and its process exits normally, with ${option}=${value}`, async () => {
+      const url = new URL(admin);
+      url.search = `?${option}=${encodeURIComponent(value)}`;
+      const { code, output } = await ProbeInProcess(url.toString());
+      expect(code, output).to.equal(0);
+      expect(output).to.match(/"outcome":"(?:signed-in|refused|unreachable)"/);
+    });
+  }
+
+  /**
+   * Fails on a probe that passes `connectAttributes` on: with TLS, `mysql2` writes the handshake
+   * response from the TLS connect callback, outside its own try/catch, and a number among the
+   * attributes ends the process there.
+   */
+  it("answers a TLS URL with a numeric connect attribute as if it had none, and its process exits normally", async () => {
+    const url = new URL(admin);
+    url.search = `?ssl=${encodeURIComponent('{"rejectUnauthorized":false}')}&connectAttributes=${encodeURIComponent('{"x":1}')}`;
+    const { code, output } = await ProbeInProcess(url.toString());
+    expect(code, output).to.equal(0);
+    expect(output).to.match(/"outcome":"signed-in"/);
+  });
+
+  /** Fails on a probe that rejects when the host forbids the worker thread it runs the driver in. */
+  it("answers, and its process exits normally, where the host forbids worker threads", async () => {
+    const { code, output } = await ProbeInProcess(admin.toString(), [
+      PERMISSION,
+      "--allow-fs-read=*",
+    ]);
+    expect(code, output).to.equal(0);
+    expect(output).to.match(/"outcome":"unreachable"/);
+  });
+});

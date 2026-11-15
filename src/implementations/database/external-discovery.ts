@@ -9,7 +9,8 @@ import type {
   RelationSummary,
 } from "@antelopejs/interface-database-catalog";
 
-import { GetDialect, Prepares, Read } from "../../connection";
+import { GetDialect, Read } from "../../connection";
+import { PoolSession } from "../../session";
 import type {
   CatalogColumn,
   CatalogIndex,
@@ -17,6 +18,7 @@ import type {
   RelationRow,
 } from "../../dialect/external";
 import {
+  Deletes,
   KeyOf,
   ReadColumns,
   ReadIndexes,
@@ -122,9 +124,7 @@ async function SummaryOf(
     writes: {
       insert: row.insert,
       update: row.update,
-      delete: await Prepares(
-        GetDialect().external.catalog.deletion(row.schema, row.name),
-      ),
+      delete: await Deletes(PoolSession(), row),
     },
     comment: row.comment,
   };
