@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.2.4
+
+[compare changes](https://github.com/AntelopeJS/mysql/compare/v0.2.3...v0.2.4)
+
+### 🚀 Enhancements
+
+- **mysql:** Hand over a cursor's rows in batches ([#98](https://github.com/AntelopeJS/mysql/pull/98))
+
+### 🩹 Fixes
+
+- **catalog:** Fold rare category values inside the query ([#99](https://github.com/AntelopeJS/mysql/pull/99))
+
+### ❤️ Contributors
+
+- Antony Rizzitelli ([@Upd4ting](http://github.com/Upd4ting))
+
 ## v0.2.3
 
 [compare changes](https://github.com/AntelopeJS/mysql/compare/v0.2.2...v0.2.3)
