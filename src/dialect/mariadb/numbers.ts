@@ -135,17 +135,18 @@ const HUGE_EXPONENT = sql`9000000000000000000`;
  * MariaDB's cast answers the greatest double, signed, and warns that it truncated the text, as it
  * does up to the first number that overflows. The normalized significand's leading digits are read
  * as a decimal, which holds them exactly. Where the normalized exponent passes
- * {@link HUGE_EXPONENT} and may have wrapped, the exponent `text` writes decides instead: a nonzero
- * number with a positive one is past the doubles, and one with a negative one casts to 0.
+ * {@link HUGE_EXPONENT} and may have wrapped, the sign of the exponent `text` writes decides
+ * instead, read as text, since the exponent may pass the 65 digits a decimal holds: a nonzero number
+ * with a positive one is past the doubles, and one with a negative one casts to 0.
  */
 function PastDoubles(normalized: Sql, text: Sql): Sql {
   const spelled = sql`CAST(${normalized} AS BINARY)`;
   const exponent = sql`CAST(SUBSTRING_INDEX(${spelled}, 'E', -1) AS DECIMAL(65, 0))`;
   const significand = sql`CAST(LEFT(TRIM(LEADING '-' FROM SUBSTRING_INDEX(${spelled}, 'E', 1)), ${int(SIGNIFICAND_CHARS)}) AS DECIMAL(20, 17))`;
-  const written = sql`CAST(SUBSTRING_INDEX(LOWER(${text}), 'e', -1) AS DECIMAL(65, 0))`;
+  const negative = sql`SUBSTRING_INDEX(LOWER(${text}), 'e', -1) LIKE '-%'`;
   const huge = sql`ABS(${exponent}) > ${HUGE_EXPONENT}`;
   const past = sql`(${exponent} > ${int(GREATEST_EXPONENT)} OR (${exponent} = ${int(GREATEST_EXPONENT)} AND ${significand} >= ${GREATEST_SIGNIFICAND}))`;
-  return sql`(CASE WHEN ${huge} THEN ${written} > 0 AND ${significand} > 0 ELSE ${past} END)`;
+  return sql`(CASE WHEN ${huge} THEN NOT ${negative} AND ${significand} > 0 ELSE ${past} END)`;
 }
 
 /**

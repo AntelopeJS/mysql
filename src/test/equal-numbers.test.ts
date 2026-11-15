@@ -365,13 +365,15 @@ describe("eq on JSON numbers beyond the doubles", function () {
 
 /**
  * Numbers whose exponent passes a 64-bit integer, which `JSON_NORMALIZE` wraps to the other end:
- * two that cast to 0, and two that cast to the greatest double.
+ * two that cast to 0, two that cast to the greatest double, and one whose exponent passes the 65
+ * digits a decimal holds, which keeps its own text as {@link OVERFLOWS} do.
  */
 const WRAPPED = [
   "0",
   "0.5e-9223372036854775808",
   "17.976931348623157e99999999999999999999999",
   "179.76931348623157e99999999999999999999999",
+  `1e${"9".repeat(66)}`,
 ] as const;
 
 describe("eq on JSON numbers whose exponent passes a 64-bit integer", function () {
@@ -394,9 +396,10 @@ describe("eq on JSON numbers whose exponent passes a 64-bit integer", function (
   });
 
   /**
-   * MariaDB casts the first two to 0 and the last two to the greatest double, so they make two
-   * values; a key that took `JSON_NORMALIZE`'s wrapped exponent for the number's would key the
-   * second as past the doubles, and one that cast the last two would warn for each.
+   * MariaDB casts the first two to 0 and the next two to the greatest double, and the last keeps
+   * its text, so they make three values; a key that took `JSON_NORMALIZE`'s wrapped exponent for
+   * the number's would key the second as past the doubles, one that cast the next two would warn
+   * for each, and one that read the last one's exponent as a decimal would warn that it overflows.
    */
   it("keys each as MariaDB's cast reads it, without a warning", async () => {
     const wrapped = () => schema.instance().table("wrapped");
@@ -415,7 +418,7 @@ describe("eq on JSON numbers whose exponent passes a 64-bit integer", function (
         values: Number([...(values?.values() ?? [])][0]),
         warnings: Number(counted?.get("w")),
         zeros: zeros.sort(),
-      }).to.deep.equal({ values: 2, warnings: 0, zeros: ["0", "1"] });
+      }).to.deep.equal({ values: 3, warnings: 0, zeros: ["0", "1"] });
     } finally {
       held.release();
     }
