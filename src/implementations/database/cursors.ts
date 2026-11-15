@@ -105,7 +105,7 @@ function Exhausted(): RowValue[] {
 
 function Reclaimed(reqId: number, state: CursorState): never {
   throw new Error(
-    `cursor ${reqId} was reclaimed after ${state.idleTimeoutMs} ms without a read (cursorIdleTimeoutMs) and cannot be resumed; a read hands over up to cursorBatchSize rows, so a loop slower than that per batch needs a larger cursorIdleTimeoutMs or a smaller cursorBatchSize; re-run the query`,
+    `cursor ${reqId} was reclaimed after ${state.idleTimeoutMs} ms idle (cursorIdleTimeoutMs) and cannot be resumed; re-run the query`,
   );
 }
 
