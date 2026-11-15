@@ -72,7 +72,8 @@ export interface FakeServer {
   close: () => Promise<void>;
 }
 
-async function Serve(
+/** A local server that hands each connection to `greet`, on `where` when given, else on a local TCP port. */
+export async function Serve(
   greet: (socket: net.Socket) => void,
   where?: string,
   allowHalfOpen = false,
@@ -123,6 +124,19 @@ export function RefusingServer(
   }, where);
 }
 
+/** The payload of an error packet: what a server answers a client it refuses. */
+export function ErrorPayload(
+  errno: number,
+  message: string,
+  sqlState?: string,
+): Buffer {
+  return Buffer.concat([
+    Buffer.from([ERROR_PACKET, errno & 0xff, errno >> 8]),
+    Buffer.from(sqlState === undefined ? "" : `#${sqlState}`, "ascii"),
+    Buffer.from(message, "utf8"),
+  ]);
+}
+
 /**
  * An error packet with sequence id `sequence`. A server answers a command with one that carries a
  * SQL state after a `#`, and refuses a connection with one that carries none.
@@ -133,11 +147,11 @@ function ErrorPacket(
   message: string,
   sqlState?: string,
 ): Buffer {
-  const payload = Buffer.concat([
-    Buffer.from([ERROR_PACKET, errno & 0xff, errno >> 8]),
-    Buffer.from(sqlState === undefined ? "" : `#${sqlState}`, "ascii"),
-    Buffer.from(message, "utf8"),
-  ]);
+  return Frame(sequence, ErrorPayload(errno, message, sqlState));
+}
+
+/** A packet of the MySQL protocol: its length, its sequence id and its payload. */
+export function Frame(sequence: number, payload: Buffer): Buffer {
   const header = Buffer.alloc(HEADER_BYTES);
   header.writeUIntLE(payload.length, 0, 3);
   header[SEQUENCE_BYTE] = sequence;
@@ -158,6 +172,10 @@ const COMMAND_BYTE = 4;
 export const QUIT_COMMAND = 0x01;
 /** COM_STMT_PREPARE, which every statement of the probe starts with. */
 export const PREPARE_COMMAND = 0x16;
+/** COM_QUERY, which the probe's session pin is sent as. */
+export const QUERY_COMMAND = 0x03;
+/** COM_STMT_EXECUTE, which runs a statement the probe prepared. */
+export const EXECUTE_COMMAND = 0x17;
 
 /** Whether a chunk from the client starts the command `command`. */
 export function Commands(command: number): Stall {
@@ -168,22 +186,54 @@ export function Commands(command: number): Stall {
 /** The reply a relay sends a client chunk in place of the server's, if any. */
 export type Answer = (chunk: Buffer) => Buffer | undefined;
 
+/** A relay's {@link Answer} that counts packets, and the count so far. */
+export interface CommandCount {
+  answer: Answer;
+  count: () => number;
+}
+
+/** Counts the `command` packets a client sends through a relay, however its chunks split them. */
+export function CommandCounter(command: number): CommandCount {
+  let pending = Buffer.alloc(0);
+  let count = 0;
+  return {
+    answer: (chunk) => {
+      pending = Buffer.concat([pending, chunk]);
+      while (pending.length >= HEADER_BYTES) {
+        const end = HEADER_BYTES + pending.readUIntLE(0, 3);
+        if (pending.length < end) {
+          break;
+        }
+        count += Commands(command)(pending.subarray(0, end), true) ? 1 : 0;
+        pending = pending.subarray(end);
+      }
+      return undefined;
+    },
+    count: () => count,
+  };
+}
+
 /** Answers the `nth` statement a client prepares with the server error `errno`, as a server refusing it would. */
 export function RefuseNthPrepare(
   nth: number,
   errno: number,
   message: string,
 ): Answer {
+  const isNth = NthPrepare(nth);
+  return (chunk) =>
+    isNth(chunk, true) ? ErrorPacket(1, errno, message, "42000") : undefined;
+}
+
+/** Whether a client chunk starts the `nth` statement the client prepares on its connection. */
+export function NthPrepare(nth: number): Stall {
   const isPrepare = Commands(PREPARE_COMMAND);
   let prepared = 0;
-  return (chunk) => {
-    if (!isPrepare(chunk, true)) {
-      return undefined;
+  return (chunk, fromClient) => {
+    if (!isPrepare(chunk, fromClient)) {
+      return false;
     }
     prepared += 1;
-    return prepared === nth
-      ? ErrorPacket(1, errno, message, "42000")
-      : undefined;
+    return prepared === nth;
   };
 }
 
@@ -194,6 +244,8 @@ interface RelayBehaviour {
   ignoresGoodbye?: boolean;
   /** Replies to a client chunk in place of the server, which never sees it. */
   answer?: Answer;
+  /** Once it answers `true` of a client chunk, the relay drops the connection, as a server that crashes does. */
+  cut?: Stall;
 }
 
 /** Forwards each connection to the server on `host:port`, behaving as `behaviour` says. */
@@ -204,6 +256,7 @@ export async function Relay(
     stall = () => false,
     ignoresGoodbye = false,
     answer = () => undefined,
+    cut = () => false,
   }: RelayBehaviour = {},
 ): Promise<FakeServer> {
   const upstreams = new Set<net.Socket>();
@@ -225,6 +278,10 @@ export async function Relay(
       };
       client.on("data", (data) => {
         const chunk = Buffer.from(data);
+        if (cut(chunk, true)) {
+          client.destroy();
+          return;
+        }
         const reply = answer(chunk);
         if (reply === undefined) {
           forward(chunk, true);

@@ -12,21 +12,28 @@ import type { Session } from "./session";
 import { DIALECTS, DetectDialect } from "./dialect";
 import { IsString } from "./implementations/database/guards";
 import {
-  ReadRelationRows,
-  WritesOf,
+  Confirmed,
+  Deletes,
+  ReadRelationAccess,
 } from "./implementations/database/external-catalog";
-import type { RelationRow } from "./dialect/external";
+import type { RelationAccess } from "./dialect/external";
+import { ProbeTarget } from "./probe-options";
 import { Bind, sql } from "./statement";
+
+const ACCESS_DENIED = "ER_ACCESS_DENIED_ERROR";
 
 /** The refusal of each server error a person can act on, by the code `mysql2` gives it; any other `ER_*` is `other`. */
 const REFUSALS: ReadonlyMap<string, ProbeRefusal> = new Map([
-  ["ER_ACCESS_DENIED_ERROR", "credentials"],
+  [ACCESS_DENIED, "credentials"],
   ["ER_HOST_NOT_PRIVILEGED", "host"],
   ["ER_BAD_DB_ERROR", "database"],
   ["ER_DBACCESS_DENIED_ERROR", "database-denied"],
 ]);
 
 const SERVER_ERROR = "ER_";
+
+/** What `mysql2` throws when the server asks for the password in clear, which the probe never sends. */
+const CLEARTEXT_REFUSED = "MYSQL_CLEAR_PASSWORD_NOT_ENABLED";
 
 const ACCOUNT = sql`SELECT CURRENT_USER() AS account, DATABASE() AS current_database, VERSION() AS version`;
 
@@ -62,7 +69,14 @@ function Text(row: Row | undefined, column: string): string | undefined {
 
 /** What `mysql2` passes its stream factory: where to connect, as it read the URL. */
 interface StreamRequest {
-  config: { host: string; port: number; socketPath?: string };
+  config: {
+    host: string;
+    port: number;
+    socketPath?: string;
+    localAddress?: string;
+    enableKeepAlive: boolean;
+    keepAliveInitialDelay: number;
+  };
 }
 
 type SignedIn = Extract<ProbeAnswer, { outcome: "signed-in" }>;
@@ -78,23 +92,32 @@ class Line {
   private shut = false;
 
   constructor(
-    url: string,
+    uri: string,
     private readonly timeoutMs: number,
     private readonly signal: AbortSignal,
   ) {
-    this.connection = createConnection({
+    const options = {
       ...MODULE_POOL_OPTIONS,
       flags: [...MODULE_POOL_OPTIONS.flags],
-      uri: url,
       connectTimeout: timeoutMs,
+      enableCleartextPlugin: false,
       stream: ({ config }: StreamRequest) => {
         const socket = config.socketPath
           ? net.connect(config.socketPath)
-          : net.connect(config.port, config.host);
+          : net.connect({
+              port: config.port,
+              host: config.host,
+              localAddress: config.localAddress,
+            });
+        socket.setNoDelay(true);
+        if (config.enableKeepAlive) {
+          socket.setKeepAlive(true, config.keepAliveInitialDelay);
+        }
         this.sockets.push(socket);
         return socket;
       },
-    });
+    };
+    this.connection = createConnection({ ...options, uri });
     this.connection.on("error", () => undefined);
     signal.addEventListener("abort", this.destroy, { once: true });
   }
@@ -153,11 +176,32 @@ class Line {
 /** Whether the account may insert, update or delete in any of the relations, as the catalog decides each. */
 async function AnyWrite(
   session: Session,
-  rows: readonly RelationRow[],
+  rows: readonly RelationAccess[],
 ): Promise<boolean> {
+  for (const row of rows.filter((listed) => listed.insert || listed.update)) {
+    const confirmed = await Confirmed(session, row);
+    if (confirmed.insert || confirmed.update) {
+      return true;
+    }
+  }
   for (const row of rows) {
-    const writes = await WritesOf(session, row);
-    if (writes.insert || writes.update || writes.delete) {
+    if (await Deletes(session, row)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Whether the account may read any of the relations, as the catalog confirms each, or sees none. */
+async function AnyRead(
+  session: Session,
+  rows: readonly RelationAccess[],
+): Promise<boolean> {
+  if (rows.length === 0) {
+    return true;
+  }
+  for (const row of rows.filter((listed) => listed.readable)) {
+    if ((await Confirmed(session, row)).readable) {
       return true;
     }
   }
@@ -188,10 +232,10 @@ async function Inspect(line: Line): Promise<ProbeAnswer> {
   try {
     await line.answer(client.query(Bind(dialect.session.pin({})).sql));
     const session = line.session(dialect);
-    const rows = await ReadRelationRows(session, [database]);
+    const rows = await ReadRelationAccess(session, [database]);
     return {
       ...signedIn,
-      canRead: rows.length === 0 || rows.some((row) => row.readable),
+      canRead: await AnyRead(session, rows),
       canWrite: await AnyWrite(session, rows),
     };
   } catch (error) {
@@ -207,14 +251,25 @@ async function Inspect(line: Line): Promise<ProbeAnswer> {
   }
 }
 
+/**
+ * Why the server refused the sign-in. A refused account the URL gives no password for is
+ * `sign-in-required`, as the server wants a password the URL does not give.
+ */
+function RefusalOf(code: string, passwordGiven: boolean): ProbeRefusal {
+  if (code === ACCESS_DENIED && !passwordGiven) {
+    return "sign-in-required";
+  }
+  return REFUSALS.get(code) ?? "other";
+}
+
 /** A failure before the account signed in: a refusal the server answered, else no answer at all. */
-function Failed(error: unknown): ProbeAnswer {
+function Failed(error: unknown, passwordGiven: boolean): ProbeAnswer {
   const code = CodeOf(error);
   const message = MessageOf(error);
-  if (code?.startsWith(SERVER_ERROR)) {
+  if (code?.startsWith(SERVER_ERROR) || code === CLEARTEXT_REFUSED) {
     return {
       outcome: "refused",
-      refusal: REFUSALS.get(code) ?? "other",
+      refusal: RefusalOf(code, passwordGiven),
       message,
     };
   }
@@ -235,15 +290,23 @@ export const probe: Probe = async ({ url, timeoutMs, signal }) => {
   }
   let line: Line;
   try {
-    line = new Line(url, timeoutMs, signal);
+    const target = ProbeTarget(url);
+    if ("refused" in target) {
+      return {
+        outcome: "refused",
+        refusal: "other",
+        message: `The probe does not take the URL option ${target.refused}.`,
+      };
+    }
+    line = new Line(target.uri, timeoutMs, signal);
   } catch (error) {
-    return Failed(error);
+    return Failed(error, true);
   }
   let answer: ProbeAnswer;
   try {
     answer = await Inspect(line);
   } catch (error) {
-    answer = Failed(error);
+    answer = Failed(error, Boolean(line.connection.config.password));
   }
   if (signal.aborted) {
     line.destroy();

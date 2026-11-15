@@ -7,12 +7,16 @@ import {
   Commands,
   PREPARE_COMMAND,
   QUIT_COMMAND,
+  NthPrepare,
   RefuseNthPrepare,
   Relay,
   TIMEOUT_MS,
   Unaborted,
   WatchClientSockets,
 } from "./unit/probe-fixture";
+
+/** The statement the probe prepares second, after the account's: the listing of the relations. */
+const LISTING = 2;
 
 /** `ER_TABLEACCESS_DENIED_ERROR`. */
 const TABLE_ACCESS_DENIED = 1142;
@@ -37,17 +41,46 @@ describe("probe, through a relay to a live server", function () {
   /** Fails on a probe that answers a server error after the sign-in as a refused sign-in. */
   it("answers that it cannot list the relations when the server refuses the listing after the sign-in", async () => {
     const relay = await Relay(host, port, {
-      answer: RefuseNthPrepare(2, TABLE_ACCESS_DENIED, "SELECT command denied"),
+      answer: RefuseNthPrepare(
+        LISTING,
+        TABLE_ACCESS_DENIED,
+        "SELECT command denied",
+      ),
     });
     try {
-      expect(await Probe(Through(relay.port))).to.deep.include({
+      const answer = await Probe(Through(relay.port));
+      expect(answer).to.deep.include({
         outcome: "signed-in",
         canRead: false,
         canWrite: false,
         unreadable: "cannot-list",
       });
+      expect(answer).to.have.property("latencyMs").that.is.above(0);
+      expect(answer)
+        .to.have.property("user")
+        .that.satisfies((user: string) =>
+          user.startsWith(`${decodeURIComponent(admin.username)}@`),
+        );
     } finally {
       await relay.close();
+    }
+  });
+
+  /** Fails on a probe that answers a listing no server answered as one the server refused. */
+  it("answers unreachable when the listing is cut off or times out after the sign-in", async () => {
+    for (const behaviour of [
+      { cut: NthPrepare(LISTING) },
+      { stall: NthPrepare(LISTING) },
+    ]) {
+      const relay = await Relay(host, port, behaviour);
+      try {
+        expect(await Probe(Through(relay.port))).to.have.property(
+          "outcome",
+          "unreachable",
+        );
+      } finally {
+        await relay.close();
+      }
     }
   });
 

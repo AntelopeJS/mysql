@@ -149,6 +149,14 @@ describe("probe, against a live server", function () {
     expect(JSON.stringify(answer)).to.not.include(WRONG_SECRET);
   });
 
+  /** Fails on a probe that answers a URL without the password the account needs as a wrong password. */
+  it("answers a URL that gives no password for an account that has one as a sign-in it requires", async () => {
+    expect(await Probe(Url("probe_reader", ""))).to.include({
+      outcome: "refused",
+      refusal: "sign-in-required",
+    });
+  });
+
   it("answers a database the server does not have, and one the account may not use", async () => {
     const missing = new URL(admin);
     missing.pathname = "/probe_missing";
