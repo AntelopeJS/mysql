@@ -510,7 +510,8 @@ export async function Read(
 /**
  * Whether the server would take a statement from the account on `connection`. It prepares the
  * statement and forgets it, never running it, which checks the account's privileges on what the
- * statement names however they reached it. A refusal answers false; a lost connection still fails.
+ * statement names however they reached it. A refusal answers false; a lost connection, or a server
+ * that could not take the statement up at all, still fails.
  */
 export async function PreparesOn(
   connection: Connection,
@@ -525,7 +526,8 @@ export async function PreparesOn(
   } catch (error) {
     if (
       error instanceof Error &&
-      engine.errors.classify(error).kind !== "connection"
+      engine.errors.classify(error).kind !== "connection" &&
+      !engine.errors.unanswered(error)
     ) {
       return false;
     }

@@ -6,6 +6,7 @@ import { probe } from "../probe";
 import {
   NthCommand,
   PREPARE_COMMAND,
+  RefuseNthPrepare,
   QUERY_COMMAND,
   Relay,
   TIMEOUT_MS,
@@ -15,6 +16,9 @@ import {
 
 /** A database of one table, so the probe confirms a relation. */
 const DATABASE = "probe_steps";
+
+/** `ER_MAX_PREPARED_STMT_COUNT_REACHED`: the server's cap on prepared statements, whatever the account may do. */
+const MAX_PREPARED_STATEMENTS = 1461;
 
 /** How long the relay holds each chunk from the server, so a round trip takes at least that. */
 const DELAY_MS = 100;
@@ -86,6 +90,32 @@ describe("probe, at each step of a live server", function () {
       });
     }
   }
+
+  /** Fails on a probe that reads a server that cannot take up a relation's check as an account without the privilege. */
+  it("answers that it cannot list the relations when the server cannot take up a relation's check", async () => {
+    const relay = await Relay(host, port, {
+      answer: RefuseNthPrepare(
+        2,
+        MAX_PREPARED_STATEMENTS,
+        "Can't create more than max_prepared_stmt_count statements",
+      ),
+    });
+    try {
+      const answer = await probe({
+        url: Through(relay.port),
+        timeoutMs: TIMEOUT_MS,
+        signal: Unaborted(),
+      });
+      expect(answer).to.deep.include({
+        outcome: "signed-in",
+        canRead: false,
+        canWrite: false,
+        unreadable: "cannot-list",
+      });
+    } finally {
+      await relay.close();
+    }
+  });
 
   /** Fails on a probe whose latency counts more than one round trip of its first query. */
   it("answers the first query's single round trip as the latency", async () => {

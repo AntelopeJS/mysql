@@ -7,6 +7,24 @@ const LOCK_WAIT_TIMEOUT = 1205;
 const DEADLOCK = 1213;
 /** `ER_BINLOG_STMT_MODE_AND_ROW_ENGINE`, on MySQL and MariaDB alike. */
 const STATEMENT_BINLOG = 1665;
+const OUT_OF_MEMORY = 1037;
+const OUT_OF_SORT_MEMORY = 1038;
+const OUT_OF_RESOURCES = 1041;
+const USER_LIMIT_REACHED = 1226;
+const QUERY_INTERRUPTED = 1317;
+const MAX_PREPARED_STATEMENTS = 1461;
+
+/** The errors by which the server says it could not take a statement up, whatever the account may do. */
+const UNANSWERED: ReadonlySet<number> = new Set([
+  OUT_OF_MEMORY,
+  OUT_OF_SORT_MEMORY,
+  OUT_OF_RESOURCES,
+  USER_LIMIT_REACHED,
+  QUERY_INTERRUPTED,
+  MAX_PREPARED_STATEMENTS,
+  LOCK_WAIT_TIMEOUT,
+  DEADLOCK,
+]);
 
 const BARE: ReadonlyMap<number, Failure> = new Map([
   [LOCK_WAIT_TIMEOUT, { kind: "lockWait" }],
@@ -62,4 +80,12 @@ function Classify(error: Error): Failure {
   return BARE.get(server.errno) ?? { kind: "server" };
 }
 
-export const errors: ErrorSyntax = { classify: Classify };
+function Unanswered(error: Error): boolean {
+  const server = ServerErrorOf(error);
+  return server !== undefined && UNANSWERED.has(server.errno);
+}
+
+export const errors: ErrorSyntax = {
+  classify: Classify,
+  unanswered: Unanswered,
+};

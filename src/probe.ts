@@ -36,12 +36,29 @@ const REFUSALS: ReadonlyMap<string, ProbeRefusal> = new Map([
 
 const SERVER_ERROR = "ER_";
 
-/** What `mysql2` throws when the server asks for the password in clear, which the probe never sends. */
-const CLEARTEXT_REFUSED = "MYSQL_CLEAR_PASSWORD_NOT_ENABLED";
+/** The codes of a connection that ended under the probe: no server answer follows them. */
+const LOST: ReadonlySet<string> = new Set([
+  "PROTOCOL_CONNECTION_LOST",
+  "ECONNRESET",
+  "ECONNABORTED",
+  "EPIPE",
+  "ETIMEDOUT",
+]);
+
+/**
+ * How far the sign-in went: no word from a server yet, a server's greeting, or the account signed
+ * in. A sign-in that fails after the greeting, short of a lost connection or a timeout, is one the
+ * server answered in a way the probe cannot complete: an authentication plugin `mysql2` lacks, a
+ * password in clear, TLS the server does not offer or a certificate that fails.
+ */
+type Stage = "connecting" | "greeted" | "signed-in";
 
 const ACCOUNT = sql`SELECT CURRENT_USER() AS account, DATABASE() AS current_database, VERSION() AS version`;
 
 const ABORTED = "The probe was aborted.";
+
+/** The message of a failure that says nothing and carries no code. */
+const UNSAID = "the connection failed without a message";
 
 const MS_PER_SECOND = 1000;
 
@@ -71,14 +88,17 @@ function CodeOf(error: unknown): string | undefined {
 }
 
 /**
- * What a failure says. Node fails a host name with several addresses, such as `localhost`, with an
- * `AggregateError` whose own message is empty, so its errors speak for it.
+ * What a failure says, never empty. Node fails a host name with several addresses, such as
+ * `localhost`, with an `AggregateError` whose own message is empty, so its errors speak for it.
  */
 function MessageOf(error: unknown): string {
-  if (error instanceof AggregateError && error.message === "") {
-    return error.errors.map(MessageOf).join("; ");
-  }
-  return error instanceof Error ? error.message : String(error);
+  const message =
+    error instanceof AggregateError && error.message === ""
+      ? error.errors.map(MessageOf).join("; ")
+      : error instanceof Error
+        ? error.message
+        : String(error);
+  return message === "" ? (CodeOf(error) ?? UNSAID) : message;
 }
 
 function Text(row: Row | undefined, column: string): string | undefined {
@@ -112,6 +132,7 @@ class Line {
   readonly connection: DriverConnection;
   private readonly sockets: net.Socket[] = [];
   private shut = false;
+  stage: Stage = "connecting";
 
   constructor(
     uri: string,
@@ -135,6 +156,9 @@ class Line {
         if (config.enableKeepAlive) {
           socket.setKeepAlive(true, config.keepAliveInitialDelay);
         }
+        socket.once("data", () => {
+          this.stage = this.stage === "connecting" ? "greeted" : this.stage;
+        });
         this.sockets.push(socket);
         return socket;
       },
@@ -240,6 +264,7 @@ async function AnyRead(
 async function Inspect(line: Line): Promise<ProbeAnswer> {
   const client = line.connection.promise();
   await line.answer(client.connect());
+  line.stage = "signed-in";
   const started = performance.now();
   const [cells] = await line.answer(
     client.query<RowDataPacket[]>(Bind(ACCOUNT).sql),
@@ -294,16 +319,25 @@ function RefusalOf(code: string, passwordGiven: boolean): ProbeRefusal {
   return REFUSALS.get(code) ?? "other";
 }
 
-/** A failure before the account signed in: a refusal the server answered, else no answer at all. */
-function Failed(error: unknown, passwordGiven: boolean): ProbeAnswer {
+/** A failure, given how far the sign-in went: a refusal the server answered, one it made by how it answered, else no answer at all. */
+function Failed(
+  error: unknown,
+  passwordGiven: boolean,
+  stage: Stage,
+): ProbeAnswer {
   const code = CodeOf(error);
   const message = MessageOf(error);
-  if (code?.startsWith(SERVER_ERROR) || code === CLEARTEXT_REFUSED) {
+  if (code?.startsWith(SERVER_ERROR)) {
     return {
       outcome: "refused",
       refusal: RefusalOf(code, passwordGiven),
       message,
     };
+  }
+  const lost =
+    error instanceof Unanswered || (code !== undefined && LOST.has(code));
+  if (stage === "greeted" && !lost) {
+    return { outcome: "refused", refusal: "other", message };
   }
   return { outcome: "unreachable", message };
 }
@@ -332,13 +366,17 @@ export const probe: Probe = async ({ url, timeoutMs, signal }) => {
     }
     line = new Line(target.uri, timeoutMs, signal);
   } catch (error) {
-    return Failed(error, true);
+    return Failed(error, true, "connecting");
   }
   let answer: ProbeAnswer;
   try {
     answer = await Inspect(line);
   } catch (error) {
-    answer = Failed(error, Boolean(line.connection.config.password));
+    answer = Failed(
+      error,
+      Boolean(line.connection.config.password),
+      line.stage,
+    );
   }
   if (answer.outcome === "unreachable") {
     line.destroy();
