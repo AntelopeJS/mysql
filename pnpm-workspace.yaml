@@ -4,4 +4,3 @@ allowBuilds:
   lefthook: false
 overrides:
   "@antelopejs/postgres>@antelopejs/interface-database-catalog": ">=0.1.0 <0.2.0"
-  "@antelopejs/interface-database": "file:.tgz-deps/antelopejs-interface-database-14a9c93.tgz"
