@@ -1,8 +1,9 @@
 import { expect } from "chai";
 import { Schema } from "@antelopejs/interface-database/schema";
 
-import { GetDialect } from "../connection";
+import { AcquireConnection, GetDialect, Read } from "../connection";
 import { type Sql, ident, join, param, sql } from "../statement";
+import { Compiled } from "./compiled";
 import { PhysicalTable, Run } from "./tables";
 
 const SCHEMA_ID = "equal_numbers";
@@ -322,5 +323,40 @@ describe("eq on JSON numbers beyond the doubles", function () {
       OVERFLOW_PAIRS,
       OVERFLOW_PAIRS,
     ]);
+  });
+
+  /**
+   * MariaDB's cast of such a number to a double warns that it truncated it, once for each row a
+   * read compares, so a read over enough rows raises more warnings than MariaDB lists and a cut
+   * aggregate or a too-deep document among them goes unseen.
+   */
+  it("compares them without a warning", async () => {
+    const overflows = () => schema.instance().table("overflows");
+    const pairs = () => schema.instance().table("overflowPairs");
+    const reads = [
+      overflows().joinInner(
+        overflows(),
+        (left, right) => left.key("n").eq(right.key("n")),
+        (left) => left.key("_id"),
+      ),
+      overflows().distinct("n"),
+      overflows().distinct("na"),
+      overflows().group("n", (rows) => ({ size: rows.count() })),
+      pairs().filter((row) => row.key("l").eq(row.key("r"))),
+      pairs().filter((row) => row.key("la").eq(row.key("ra"))),
+      pairs().filter((row) => row.key("la").includes(row.key("r"))),
+    ];
+    const held = await AcquireConnection();
+    const warnings: number[] = [];
+    try {
+      for (const read of reads) {
+        await Read(Compiled(read), held);
+        const [counted] = await Read(sql`SELECT @@warning_count AS w`, held);
+        warnings.push(Number(counted?.get("w")));
+      }
+    } finally {
+      held.release();
+    }
+    expect(warnings).to.deep.equal(reads.map(() => 0));
   });
 });
