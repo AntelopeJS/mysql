@@ -23,7 +23,7 @@ const SAMPLES: ReadonlyMap<string, readonly [string, Expected]> = new Map([
   ["socketPath", ["/nonexistent/mysqld.sock", "not signed in"]],
   ["ssl", ["{}", "not signed in"]],
   ["compress", ["true", "same answer"]],
-  ["connectAttributes", ['{"program_name":"probe"}', "same answer"]],
+  ["connectAttributes", ['{"x":1}', "same answer"]],
   ["enableKeepAlive", ["true", "same answer"]],
   ["keepAliveInitialDelay", ["1000", "same answer"]],
   ["localAddress", ["127.0.0.1", "same answer"]],
@@ -75,6 +75,21 @@ const SAMPLES: ReadonlyMap<string, readonly [string, Expected]> = new Map([
   ["Promise", ["1", "refused before connecting"]],
   ["queryFormat", ["1", "refused before connecting"]],
 ]);
+
+/** Values of kept options outside what the probe passes on, which it refuses before connecting. */
+const MALFORMED: readonly (readonly [string, string])[] = [
+  ["socketPath", "1"],
+  ["socketPath", "{}"],
+  ["localAddress", "nowhere.invalid"],
+  ["localAddress", "{}"],
+  ["ssl", "[1]"],
+  ["ssl", "1"],
+  ["ssl", '{"ca":1}'],
+  ["ssl", '{"rejectUnauthorized":"no"}'],
+  ["ssl", '{"servername":"db"}'],
+  ["ssl", '{"cert":"x"}'],
+  ["ssl", "__proto__"],
+];
 
 const EXPECTED_BY_USE = {
   keep: ["same answer", "not signed in"],
@@ -131,6 +146,10 @@ describe("probe, with each option a URL's query may set", function () {
   for (const [option, [value, expected]] of [
     ...SAMPLES,
     ["notAnOption", ["1", "refused before connecting"]] as const,
+    ...MALFORMED.map(
+      ([option, value]) =>
+        [option, [value, "refused before connecting"]] as const,
+    ),
   ]) {
     /** Fails on a probe that lets the option reach `mysql2` when it overrides or refuses it, or drops one it keeps. */
     it(`answers ${expected} with ${option}=${value}`, async () => {
