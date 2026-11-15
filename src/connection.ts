@@ -1,5 +1,6 @@
 import type { EventEmitter } from "node:events";
 import {
+  type Connection,
   type Pool,
   type PoolConnection,
   type ResultSetHeader,
@@ -166,15 +167,20 @@ export function Uncapped(statement: Sql): Sql {
   return dialect.session.uncapped(statement);
 }
 
-async function ReadOn(
-  connection: PoolConnection,
+/** Runs a statement as written on `connection`, through the prepared-statement protocol, and answers its rows. */
+export async function ReadRows(
+  connection: Connection,
   statement: Sql,
 ): Promise<Row[]> {
-  const bound = Bind(Uncapped(statement));
+  const bound = Bind(statement);
   const [rows] = await connection.execute<RowDataPacket[]>(bound.sql, [
     ...bound.args,
   ]);
   return rows.map((row) => ParseRow(Object.entries(row)));
+}
+
+function ReadOn(connection: PoolConnection, statement: Sql): Promise<Row[]> {
+  return ReadRows(connection, Uncapped(statement));
 }
 
 async function DetectedDialect(
@@ -502,13 +508,16 @@ export async function Read(
 }
 
 /**
- * Whether the server would take a statement from the account. It prepares the statement and
- * forgets it, never running it, which checks the account's privileges on what the statement names
- * however they reached it. A refusal answers false; a lost connection still fails.
+ * Whether the server would take a statement from the account on `connection`. It prepares the
+ * statement and forgets it, never running it, which checks the account's privileges on what the
+ * statement names however they reached it. A refusal answers false; a lost connection still fails.
  */
-export async function Prepares(statement: Sql): Promise<boolean> {
+export async function PreparesOn(
+  connection: Connection,
+  engine: Dialect,
+  statement: Sql,
+): Promise<boolean> {
   const bound = Bind(statement);
-  const connection = await AcquireConnection();
   try {
     await connection.prepare(bound.sql);
     connection.unprepare(bound.sql);
@@ -516,11 +525,19 @@ export async function Prepares(statement: Sql): Promise<boolean> {
   } catch (error) {
     if (
       error instanceof Error &&
-      GetDialect().errors.classify(error).kind !== "connection"
+      engine.errors.classify(error).kind !== "connection"
     ) {
       return false;
     }
     throw error;
+  }
+}
+
+/** {@link PreparesOn} a pooled connection taken for this statement alone. */
+export async function Prepares(statement: Sql): Promise<boolean> {
+  const connection = await AcquireConnection();
+  try {
+    return await PreparesOn(connection, GetDialect(), statement);
   } finally {
     connection.release();
   }

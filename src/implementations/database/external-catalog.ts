@@ -1,4 +1,7 @@
-import { GetDialect, Prepares, Read } from "../../connection";
+import type { RelationWrites } from "@antelopejs/interface-database-catalog";
+
+import { GetDialect, Read } from "../../connection";
+import { PoolSession, type Session } from "../../session";
 import type { Sql } from "../../statement";
 import type {
   CatalogColumn,
@@ -48,13 +51,17 @@ export function KeyOf(indexes: CatalogIndex[]): CatalogIndex | undefined {
  * touch at all. Only then are its listed columns all of its columns, so INSERT and UPDATE on every
  * listed column count only on a readable relation.
  */
-async function ParseRelations(statement: Sql): Promise<RelationRow[]> {
-  const catalog = GetDialect().external.catalog;
+async function ParseRelations(
+  session: Session,
+  statement: Sql,
+): Promise<RelationRow[]> {
+  const catalog = session.dialect.external.catalog;
   const parsed: RelationRow[] = [];
-  for (const cells of await Read(statement)) {
+  for (const cells of await session.read(statement)) {
     const row = catalog.parseRelation(cells);
     const readable =
-      row.readable && (await Prepares(catalog.selection(row.schema, row.name)));
+      row.readable &&
+      (await session.prepares(catalog.selection(row.schema, row.name)));
     parsed.push({
       ...row,
       readable,
@@ -69,13 +76,39 @@ async function ParseRelations(statement: Sql): Promise<RelationRow[]> {
 export function ReadNamedRelationRows(
   names: readonly string[],
 ): Promise<RelationRow[]> {
-  return ParseRelations(GetDialect().external.catalog.namedRelations(names));
+  const session = PoolSession();
+  return ParseRelations(
+    session,
+    session.dialect.external.catalog.namedRelations(names),
+  );
 }
 
+/** The relations of `schemas`, every schema when absent, that the account `session` reads on sees. */
 export function ReadRelationRows(
+  session: Session,
   schemas: readonly string[] | undefined,
 ): Promise<RelationRow[]> {
-  return ParseRelations(GetDialect().external.catalog.relations(schemas));
+  return ParseRelations(
+    session,
+    session.dialect.external.catalog.relations(schemas),
+  );
+}
+
+/**
+ * What the account may write to a relation it sees: INSERT and UPDATE as the listing read them, and
+ * DELETE once the server prepares one, since no column privilege tells it.
+ */
+export async function WritesOf(
+  session: Session,
+  row: RelationRow,
+): Promise<RelationWrites> {
+  return {
+    insert: row.insert,
+    update: row.update,
+    delete: await session.prepares(
+      session.dialect.external.catalog.deletion(row.schema, row.name),
+    ),
+  };
 }
 
 export async function ReadColumns(row: RelationRow): Promise<CatalogColumn[]> {

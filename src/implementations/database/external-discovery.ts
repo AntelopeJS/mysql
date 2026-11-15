@@ -9,7 +9,8 @@ import type {
   RelationSummary,
 } from "@antelopejs/interface-database-catalog";
 
-import { GetDialect, Prepares, Read } from "../../connection";
+import { GetDialect, Read } from "../../connection";
+import { PoolSession } from "../../session";
 import type {
   CatalogColumn,
   CatalogIndex,
@@ -21,6 +22,7 @@ import {
   ReadColumns,
   ReadIndexes,
   ReadReferences,
+  WritesOf,
 } from "./external-catalog";
 import {
   AcceptedDeclarations,
@@ -119,13 +121,7 @@ async function SummaryOf(
     kind: row.kind,
     ...(await EstimateOf(row)),
     key,
-    writes: {
-      insert: row.insert,
-      update: row.update,
-      delete: await Prepares(
-        GetDialect().external.catalog.deletion(row.schema, row.name),
-      ),
-    },
+    writes: await WritesOf(PoolSession(), row),
     comment: row.comment,
   };
   const unmappable = UnmappableReason(row);
