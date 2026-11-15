@@ -1,5 +1,43 @@
 # Changelog
 
+## v0.2.2
+
+[compare changes](https://github.com/AntelopeJS/mysql/compare/v0.2.1...v0.2.2)
+
+### 🔥 Performance
+
+- **mariadb:** Respell a dedup key's numbers over its bytes, in linear time ([#77](https://github.com/AntelopeJS/mysql/pull/77))
+
+### 🩹 Fixes
+
+- **feeds:** Deliver the new document of an update that leaves a filter before two maps ([#78](https://github.com/AntelopeJS/mysql/pull/78))
+- **mysql:** Dedup a group's collected values by the engine's own comparison ([#80](https://github.com/AntelopeJS/mysql/pull/80))
+- **mariadb:** Fail a cursor whose walk was cut or nested too deep instead of reading it ([#79](https://github.com/AntelopeJS/mysql/pull/79))
+- **mariadb:** Refuse an 11.8 merge of a deep operand that repeats a key, through reads, cursors and writes ([#84](https://github.com/AntelopeJS/mysql/pull/84))
+- **mariadb:** Compare two JSON numbers in eq as MySQL's JSON = does ([#81](https://github.com/AntelopeJS/mysql/pull/81))
+- **mysql:** Grow the sort buffer only for a statement that runs out of it ([#82](https://github.com/AntelopeJS/mysql/pull/82))
+- **mysql:** Name binlog_format when a statement-format binary log refuses a write ([#85](https://github.com/AntelopeJS/mysql/pull/85))
+- **mariadb:** Dedup an object holding a number spelled with an exponent as one value ([#83](https://github.com/AntelopeJS/mysql/pull/83))
+- **mariadb:** Fail a cursor before it hands over a row read wrong ([#87](https://github.com/AntelopeJS/mysql/pull/87))
+- **mysql:** Read a group's rows again where a nested query's row is read by its stream ([#86](https://github.com/AntelopeJS/mysql/pull/86))
+- **mysql:** Log no failed connection for a cursor closed before its first read ([#92](https://github.com/AntelopeJS/mysql/pull/92))
+- **mariadb:** List every warning a read raises, up to 65,535 ([#91](https://github.com/AntelopeJS/mysql/pull/91))
+- **mariadb:** Compare a nested JSON number by its value as MySQL reads it ([#89](https://github.com/AntelopeJS/mysql/pull/89))
+- **mariadb:** Tolerate a cursor's warnings only within one snapshot ([#90](https://github.com/AntelopeJS/mysql/pull/90))
+
+### 📖 Documentation
+
+- **mysql:** List the group callback shapes that answer wrong rows or fail ([#95](https://github.com/AntelopeJS/mysql/pull/95))
+
+### ✅ Tests
+
+- **mysql:** Pin that a change feed on a statement-format binary log names binlog_format ([#88](https://github.com/AntelopeJS/mysql/pull/88))
+- **mysql:** Hold a group's distinct to twice the top-level budget, and pin a 0 and -0 key's distinct ([#94](https://github.com/AntelopeJS/mysql/pull/94))
+
+### ❤️ Contributors
+
+- Antony Rizzitelli ([@Upd4ting](http://github.com/Upd4ting))
+
 ## v0.2.1
 
 [compare changes](https://github.com/AntelopeJS/mysql/compare/v0.2.0...v0.2.1)
