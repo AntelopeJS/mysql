@@ -123,16 +123,29 @@ function MayPassDoubles(text: Sql): Sql {
 }
 
 /**
- * Whether a number's normalized text is at least {@link GREATEST_SIGNIFICAND} times 10^308 in
- * magnitude, for which MariaDB's cast answers the greatest double, signed, and warns that it
- * truncated the text, as it does up to the first number that overflows. The significand's leading
- * digits are read as a decimal, which holds them exactly.
+ * A normalized exponent past which `JSON_NORMALIZE` may have wrapped the exponent around a 64-bit
+ * integer, as `0.5e-9223372036854775808` normalizes to `5.0E9223372036854775807`. A significand's
+ * digits shift an exponent by fewer than 2^32, so a written exponent that wraps leaves the
+ * normalized one past this in magnitude, and one that stays below it never wraps.
  */
-function PastDoubles(normalized: Sql): Sql {
-  const text = sql`CAST(${normalized} AS BINARY)`;
-  const exponent = sql`CAST(SUBSTRING_INDEX(${text}, 'E', -1) AS DECIMAL(65, 0))`;
-  const significand = sql`CAST(LEFT(TRIM(LEADING '-' FROM SUBSTRING_INDEX(${text}, 'E', 1)), ${int(SIGNIFICAND_CHARS)}) AS DECIMAL(20, 17))`;
-  return sql`(${exponent} > ${int(GREATEST_EXPONENT)} OR (${exponent} = ${int(GREATEST_EXPONENT)} AND ${significand} >= ${GREATEST_SIGNIFICAND}))`;
+const HUGE_EXPONENT = sql`9000000000000000000`;
+
+/**
+ * Whether a number is at least {@link GREATEST_SIGNIFICAND} times 10^308 in magnitude, for which
+ * MariaDB's cast answers the greatest double, signed, and warns that it truncated the text, as it
+ * does up to the first number that overflows. The normalized significand's leading digits are read
+ * as a decimal, which holds them exactly. Where the normalized exponent passes
+ * {@link HUGE_EXPONENT} and may have wrapped, the exponent `text` writes decides instead: a nonzero
+ * number with a positive one is past the doubles, and one with a negative one casts to 0.
+ */
+function PastDoubles(normalized: Sql, text: Sql): Sql {
+  const spelled = sql`CAST(${normalized} AS BINARY)`;
+  const exponent = sql`CAST(SUBSTRING_INDEX(${spelled}, 'E', -1) AS DECIMAL(65, 0))`;
+  const significand = sql`CAST(LEFT(TRIM(LEADING '-' FROM SUBSTRING_INDEX(${spelled}, 'E', 1)), ${int(SIGNIFICAND_CHARS)}) AS DECIMAL(20, 17))`;
+  const written = sql`CAST(SUBSTRING_INDEX(LOWER(${text}), 'e', -1) AS DECIMAL(65, 0))`;
+  const huge = sql`ABS(${exponent}) > ${HUGE_EXPONENT}`;
+  const past = sql`(${exponent} > ${int(GREATEST_EXPONENT)} OR (${exponent} = ${int(GREATEST_EXPONENT)} AND ${significand} >= ${GREATEST_SIGNIFICAND}))`;
+  return sql`(CASE WHEN ${huge} THEN ${written} > 0 AND ${significand} > 0 ELSE ${past} END)`;
 }
 
 /**
@@ -165,6 +178,6 @@ function NumberKey(value: Sql): Sql {
   };
   const greatestSigned = sql`IF(CAST(${normalized} AS BINARY) LIKE '-%', -${GREATEST_DOUBLE}, ${GREATEST_DOUBLE})`;
   return Json(
-    sql`(CASE WHEN ${exact} THEN REGEXP_REPLACE(${text}, '^-0$', '0') WHEN ${MayPassDoubles(text)} AND ${PastDoubles(normalized)} THEN ${keyed(greatestSigned)} ELSE ${keyed(sql`CAST(JSON_VALUE(${value}, '$') AS DOUBLE)`)} END)`,
+    sql`(CASE WHEN ${exact} THEN REGEXP_REPLACE(${text}, '^-0$', '0') WHEN ${MayPassDoubles(text)} AND ${PastDoubles(normalized, text)} THEN ${keyed(greatestSigned)} ELSE ${keyed(sql`CAST(JSON_VALUE(${value}, '$') AS DOUBLE)`)} END)`,
   );
 }
