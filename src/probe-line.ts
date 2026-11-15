@@ -34,20 +34,51 @@ const REFUSALS: ReadonlyMap<string, ProbeRefusal> = new Map([
 
 const SERVER_ERROR = "ER_";
 
-/** The codes of a connection that ended under the probe: no server answer follows them. */
-const LOST: ReadonlySet<string> = new Set([
-  "PROTOCOL_CONNECTION_LOST",
-  "ECONNRESET",
-  "ECONNABORTED",
-  "EPIPE",
-  "ETIMEDOUT",
+/**
+ * The codes of a sign-in the server answered in a way the probe cannot complete: the password in
+ * clear, an authentication step `mysql2` cannot take, TLS the server does not offer, packets out
+ * of the protocol, a TLS handshake the server failed, or a certificate that fails.
+ */
+const SERVER_ANSWERED: ReadonlySet<string> = new Set([
+  "MYSQL_CLEAR_PASSWORD_NOT_ENABLED",
+  "AUTH_SWITCH_PLUGIN_ERROR",
+  "HANDSHAKE_NO_SSL_SUPPORT",
+  "PROTOCOL_PACKETS_OUT_OF_ORDER",
+  "PROTOCOL_INCORRECT_PACKET_SEQUENCE",
+  "PROTOCOL_UNEXPECTED_PACKET",
+  "ERR_TLS_CERT_ALTNAME_INVALID",
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "UNABLE_TO_GET_ISSUER_CERT",
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  "CERT_HAS_EXPIRED",
+  "CERT_NOT_YET_VALID",
+  "CERT_UNTRUSTED",
+  "CERT_REJECTED",
+  "HOSTNAME_MISMATCH",
 ]);
+
+/** The code prefix of an alert or a protocol error the server's side of a TLS handshake raised. */
+const TLS_HANDSHAKE = "ERR_SSL_";
+
+/** What `mysql2` says, with no code, when the server asks for an authentication plugin it lacks. */
+const UNKNOWN_PLUGIN = "Server requests authentication using unknown plugin";
+
+/**
+ * Whether a failure comes from how the server answered, as opposed to the network, a timeout or
+ * this host: a full file table, memory, a module that failed to load.
+ */
+function IsServerAnswer(message: string, code: string | undefined): boolean {
+  if (code === undefined) {
+    return message.startsWith(UNKNOWN_PLUGIN);
+  }
+  return SERVER_ANSWERED.has(code) || code.startsWith(TLS_HANDSHAKE);
+}
 
 /**
  * How far the sign-in went: no word from a server yet, a server's greeting, or the account signed
- * in. A sign-in that fails after the greeting, short of a lost connection or a timeout, is one the
- * server answered in a way the probe cannot complete: an authentication plugin `mysql2` lacks, a
- * password in clear, TLS the server does not offer or a certificate that fails.
+ * in. A sign-in that fails after the greeting because of how the server answered is refused.
  */
 export type Stage = "connecting" | "greeted" | "signed-in";
 
@@ -81,9 +112,6 @@ const MS_PER_SECOND = 1000;
 function LockWait(timeoutMs: number): Sql {
   return sql`SET SESSION lock_wait_timeout = ${int(Math.ceil(timeoutMs / MS_PER_SECOND) + 1)}`;
 }
-
-/** A step the server did not answer within the timeout. */
-class Unanswered extends Error {}
 
 /** The code `mysql2` gives an error: `ER_*` for one the server answered, a Node code for one of the network. */
 function CodeOf(error: unknown): string | undefined {
@@ -185,9 +213,7 @@ class Line {
   answer<T>(work: Promise<T>): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
-        reject(
-          new Unanswered(`timed out: no answer within ${this.timeoutMs} ms`),
-        );
+        reject(new Error(`timed out: no answer within ${this.timeoutMs} ms`));
       }, this.timeoutMs);
       work.then(resolve, reject).finally(() => clearTimeout(timer));
     });
@@ -342,9 +368,7 @@ export function Failed(
       message,
     };
   }
-  const lost =
-    error instanceof Unanswered || (code !== undefined && LOST.has(code));
-  if (stage === "greeted" && !lost) {
+  if (stage === "greeted" && IsServerAnswer(message, code)) {
     return { outcome: "refused", refusal: "other", message };
   }
   return {

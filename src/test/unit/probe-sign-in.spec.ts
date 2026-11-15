@@ -1,6 +1,7 @@
 import { expect } from "chai";
 
 import { probe } from "../../probe";
+import { Failed } from "../../probe-line";
 import { TIMEOUT_MS, Unaborted } from "./probe-fixture";
 import {
   AuthSwitch,
@@ -82,10 +83,7 @@ describe("probe, against a server that greets and asks for what the probe cannot
       },
     );
     try {
-      expect(await Probe(server.port)).to.include({
-        outcome: "refused",
-        refusal: "other",
-      });
+      expect((await Probe(server.port)).outcome).to.equal("unreachable");
     } finally {
       await server.close();
     }
@@ -102,4 +100,47 @@ describe("probe, against a server that greets and asks for what the probe cannot
       await server.close();
     }
   });
+});
+
+function Coded(code: string | undefined, message: string): Error {
+  return Object.assign(new Error(message), code === undefined ? {} : { code });
+}
+
+describe("probe, telling the server's answer from this host's failure", function () {
+  for (const [code, message] of [
+    ["HANDSHAKE_NO_SSL_SUPPORT", "Server does not support secure connection"],
+    [
+      "SELF_SIGNED_CERT_IN_CHAIN",
+      "self-signed certificate in certificate chain",
+    ],
+    ["ERR_SSL_WRONG_VERSION_NUMBER", "wrong version number"],
+    [
+      undefined,
+      "Server requests authentication using unknown plugin client_ed25519.",
+    ],
+  ] as const) {
+    /** Fails on a probe that answers a server that answered as if none had. */
+    it(`answers ${code ?? message} after the greeting as a refusal`, () => {
+      expect(Failed(Coded(code, message), true, "greeted")).to.include({
+        outcome: "refused",
+        refusal: "other",
+      });
+    });
+  }
+
+  for (const [code, message] of [
+    ["EMFILE", "EMFILE: too many open files"],
+    [
+      "ERR_WORKER_OUT_OF_MEMORY",
+      "Worker terminated due to reaching memory limit",
+    ],
+    ["ERR_INVALID_PACKAGE_CONFIG", "Cannot read package config"],
+  ] as const) {
+    /** Fails on a probe that blames the server for a failure of the probing host. */
+    it(`answers ${code} after the greeting as no answer, not a refusal`, () => {
+      expect(Failed(Coded(code, message), true, "greeted").outcome).to.equal(
+        "unreachable",
+      );
+    });
+  }
 });

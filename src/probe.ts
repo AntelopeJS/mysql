@@ -26,9 +26,10 @@ function Aborted(): ProbeAnswer {
 }
 
 /**
- * Runs a probe's task in a worker of its own and answers what the worker answers. A worker that
- * fails before it answers, which is `mysql2` throwing outside any promise, is answered as the
- * failure it is at the stage the sign-in had reached. When `signal` aborts first, the answer is
+ * Runs a probe's task in a worker of its own and answers what the worker answers. A host that
+ * forbids worker threads answers the reason as no server answered. A worker that fails before it
+ * answers, which is `mysql2` throwing outside any promise, is answered as the failure it is at the
+ * stage the sign-in had reached. When `signal` aborts first, the answer is
  * {@link Aborted} at once and the worker, with every socket it opened, is ended.
  */
 function InWorker(
@@ -36,9 +37,14 @@ function InWorker(
   passwordGiven: boolean,
   signal: AbortSignal,
 ): Promise<ProbeAnswer> {
+  let worker: Worker;
+  try {
+    worker = new Worker(WORKER);
+  } catch (error) {
+    return Promise.resolve(Failed(error, passwordGiven, "connecting"));
+  }
   return new Promise((resolve) => {
     let stage: Stage = "connecting";
-    const worker = new Worker(WORKER);
     worker.unref();
     const settle = (answer: ProbeAnswer) => {
       signal.removeEventListener("abort", abort);

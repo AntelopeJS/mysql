@@ -26,16 +26,26 @@ const HOSTILE: readonly (readonly [string, string])[] = [
 /** Runs the probe in a process of its own, which prints its answer, and gives that process's exit code. */
 function ProbeInProcess(
   url: string,
+  flags: readonly string[] = [],
 ): Promise<{ code: number; output: string }> {
   const script = `require(${JSON.stringify(path.join(__dirname, "..", "probe"))})
     .probe({ url: process.argv[1], timeoutMs: ${TIMEOUT_MS}, signal: new AbortController().signal })
     .then((answer) => console.log(JSON.stringify(answer)));`;
   return new Promise((resolve) => {
-    execFile(process.execPath, ["-e", script, url], (error, stdout) => {
-      resolve({ code: error ? Number(error.code ?? 1) : 0, output: stdout });
-    });
+    execFile(
+      process.execPath,
+      [...flags, "-e", script, url],
+      (error, stdout) => {
+        resolve({ code: error ? Number(error.code ?? 1) : 0, output: stdout });
+      },
+    );
   });
 }
+
+/** Node's permission model, which forbids worker threads unless `--allow-worker` grants them. */
+const PERMISSION = process.allowedNodeEnvironmentFlags.has("--permission")
+  ? "--permission"
+  : "--experimental-permission";
 
 describe("probe, with values mysql2 uses only on a socket event", function () {
   this.timeout(60_000);
@@ -51,4 +61,14 @@ describe("probe, with values mysql2 uses only on a socket event", function () {
       expect(output).to.match(/"outcome":"(?:signed-in|refused|unreachable)"/);
     });
   }
+
+  /** Fails on a probe that rejects when the host forbids the worker thread it runs the driver in. */
+  it("answers, and its process exits normally, where the host forbids worker threads", async () => {
+    const { code, output } = await ProbeInProcess(admin.toString(), [
+      PERMISSION,
+      "--allow-fs-read=*",
+    ]);
+    expect(code, output).to.equal(0);
+    expect(output).to.match(/"outcome":"unreachable"/);
+  });
 });
