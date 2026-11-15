@@ -1,0 +1,496 @@
+import { expect } from "chai";
+import { ValueProxy } from "@antelopejs/interface-database";
+import {
+  OWNERS,
+  Owners,
+  Items,
+  Seed,
+  Unseed,
+  Viewed,
+} from "./outer-row-fixture";
+
+const CODE = "ANTELOPEJS_MYSQL_NESTED_GROUP_READ";
+const VIEWS = [0, 1, 2, 3];
+const TAKES = OWNERS.map((owner) => owner.take);
+
+function ByNumber(left: number, right: number): number {
+  return left - right;
+}
+
+/** Runs a query the module refuses as it builds it, and checks the refusal's code. */
+async function ExpectRefused(run: () => Promise<object>): Promise<void> {
+  try {
+    await run();
+  } catch (error) {
+    if (!(error instanceof Error)) {
+      throw error;
+    }
+    expect(error).to.have.property("code", CODE);
+    return;
+  }
+  expect.fail("the query was run, not refused");
+}
+
+/** The group's key read alone in a query nested in the mapper. */
+async function KeyBelow(): Promise<void> {
+  await ExpectRefused(() =>
+    Items()
+      .group("views", (_stream, views) => ({
+        views,
+        value: Owners().map(() => views),
+      }))
+      .run(),
+  );
+}
+
+/** The group's key filtering a query nested in the mapper. */
+async function KeyInNestedFilter(): Promise<void> {
+  await ExpectRefused(() =>
+    Items()
+      .group("views", (_stream, views) => ({
+        views,
+        value: Items()
+          .filter((item) => item.key("views").eq(views))
+          .count(),
+      }))
+      .run(),
+  );
+}
+
+/** The group's key read two queries below, under a nested query of one row. */
+async function KeyTwoBelow(): Promise<void> {
+  await ExpectRefused(() =>
+    Items()
+      .group("views", (_stream, views) => ({
+        views,
+        value: Owners()
+          .filter((owner) => owner.key("take").eq(2))
+          .map(() =>
+            Items()
+              .filter((item) => item.key("views").eq(views))
+              .map((item) => item.key("slug")),
+          ),
+      }))
+      .run(),
+  );
+}
+
+/** The group's stream deduplicated in a query nested in the mapper, by values reading its row. */
+async function StreamDedupBelow(): Promise<void> {
+  await ExpectRefused(() =>
+    Items()
+      .group("kind", (stream, kind) => ({
+        kind,
+        owners: Owners().map((owner) =>
+          stream
+            .map((item) => [item.key("views"), owner.key("take")])
+            .distinct(),
+        ),
+      }))
+      .run(),
+  );
+}
+
+/** The group's stream collected in a query nested in the mapper, reading none of its row. */
+async function StreamBelow(): Promise<void> {
+  await ExpectRefused(() =>
+    Items()
+      .group("views", (stream, views) => ({
+        views,
+        owners: Owners().map((owner) => ({
+          take: owner.key("take"),
+          slugs: stream.map((item) => item.key("slug")),
+        })),
+      }))
+      .run(),
+  );
+}
+
+/** The group's stream counted in a query nested in the mapper. */
+async function StreamCountBelow(): Promise<void> {
+  await ExpectRefused(() =>
+    Items()
+      .group("views", (stream, views) => ({
+        views,
+        counts: Owners().map(() => stream.count()),
+      }))
+      .run(),
+  );
+}
+
+/** A group nested in a map, whose mapper reads the map's row in a query nested in it. */
+async function OuterRowBelowNestedGroup(): Promise<void> {
+  await ExpectRefused(() =>
+    Owners()
+      .map((owner) =>
+        Items().group("views", (_stream, views) => ({
+          views,
+          count: Owners()
+            .filter((other) => other.key("take").eq(owner.key("take")))
+            .count(),
+        })),
+      )
+      .run(),
+  );
+}
+
+/** A nested group's stream summing a value that reads only the outer row. */
+async function OuterOnlySum(): Promise<void> {
+  await ExpectRefused(() =>
+    Owners()
+      .map((owner) => ({
+        take: owner.key("take"),
+        groups: Items().group("views", (stream, views) => ({
+          views,
+          sum: stream.map(() => owner.key("take")).sum(),
+        })),
+      }))
+      .run(),
+  );
+}
+
+/** A nested group's stream collecting a value that reads only the outer row. */
+async function OuterOnlyCollect(): Promise<void> {
+  await ExpectRefused(() =>
+    Owners()
+      .map((owner) =>
+        Items().group("views", (stream, views) => ({
+          views,
+          takes: stream.map(() => owner.key("take")),
+        })),
+      )
+      .run(),
+  );
+}
+
+/** A nested group's stream mapping an outer-only value again before summing it. */
+async function OuterOnlyMappedAgain(): Promise<void> {
+  await ExpectRefused(() =>
+    Owners()
+      .map((owner) =>
+        Items().group("views", (stream, views) => ({
+          views,
+          sum: stream
+            .map(() => owner.key("take"))
+            .map((take) => take.add(1))
+            .sum(),
+        })),
+      )
+      .run(),
+  );
+}
+
+/** A nested group's stream summing a value an array stage computes from the outer row. */
+async function OuterOnlyThroughArray(): Promise<void> {
+  await ExpectRefused(() =>
+    Owners()
+      .map((owner) =>
+        Items().group("views", (stream, views) => ({
+          views,
+          sum: stream
+            .map(() =>
+              ValueProxy.constant([1, 2])
+                .filter((value) => value.gt(owner.key("take")))
+                .count(),
+            )
+            .sum(),
+        })),
+      )
+      .run(),
+  );
+}
+
+/** An array stage in a nested group's select whose callback reads the outer row beside the key. */
+async function OuterRowInArrayStageOfSelect(): Promise<void> {
+  await ExpectRefused(() =>
+    Owners()
+      .map((owner) =>
+        Items().group("views", (_stream, views) => ({
+          views,
+          sum: ValueProxy.constant([1, 2])
+            .map((value) => value.add(views).add(owner.key("take")))
+            .sum(),
+        })),
+      )
+      .run(),
+  );
+}
+
+/** An array stage in a nested group's stream whose callback reads the outer row. */
+async function OuterRowInArrayStageOfStream(): Promise<void> {
+  await ExpectRefused(() =>
+    Owners()
+      .map((owner) =>
+        Items().group("views", (stream, views) => ({
+          views,
+          sum: stream
+            .map((item) =>
+              ValueProxy.constant([1, 2])
+                .filter((value) => value.gt(owner.key("take")))
+                .map((value) => value.add(item.key("views")))
+                .sum(),
+            )
+            .sum(),
+        })),
+      )
+      .run(),
+  );
+}
+
+/** An array stage in a nested group's select whose callback reads the key, beside the outer row. */
+async function KeyInArrayStageBesideOuterRow(): Promise<void> {
+  await ExpectRefused(() =>
+    Owners()
+      .map((owner) =>
+        Items().group("views", (_stream, views) => ({
+          views,
+          sum: ValueProxy.constant([1, 2])
+            .map((value) => value.add(views))
+            .sum()
+            .add(owner.key("take")),
+        })),
+      )
+      .run(),
+  );
+}
+
+/** An array stage in a nested group's stream that reads the stream's row, beside the outer row. */
+async function StreamRowInArrayStage(): Promise<void> {
+  const read = await Owners()
+    .map((owner) => ({
+      take: owner.key("take"),
+      groups: Items().group("views", (stream, views) => ({
+        views,
+        take: owner.key("take"),
+        sum: stream
+          .map((item) =>
+            ValueProxy.constant([1, 2])
+              .filter((value) => value.gt(item.key("views")))
+              .map((value) => value.add(item.key("views")))
+              .sum(),
+          )
+          .sum(),
+      })),
+    }))
+    .run();
+  const ARRAY = [1, 2];
+  expect(
+    read
+      .map((owner) => ({
+        take: owner.take,
+        groups: [...owner.groups].sort(
+          (left, right) => left.views - right.views,
+        ),
+      }))
+      .sort((left, right) => left.take - right.take),
+  ).to.deep.equal(
+    [...TAKES].sort(ByNumber).map((take) => ({
+      take,
+      groups: VIEWS.map((views) => ({
+        views,
+        take,
+        sum:
+          Viewed(views).length *
+          ARRAY.filter((value) => value > views).reduce(
+            (total, value) => total + value + views,
+            0,
+          ),
+      })),
+    })),
+  );
+}
+
+/** An array stage reading the key in a group no query holds stays answered. */
+async function KeyInArrayStageOfTopGroup(): Promise<void> {
+  const read = await Items()
+    .group("views", (_stream, views) => ({
+      views,
+      sum: ValueProxy.constant([1, 2])
+        .map((value) => value.add(views))
+        .sum(),
+      owners: Owners().count(),
+    }))
+    .run();
+  expect(
+    [...read].sort((left, right) => left.views - right.views),
+  ).to.deep.equal(
+    VIEWS.map((views) => ({
+      views,
+      sum: 3 + 2 * views,
+      owners: OWNERS.length,
+    })),
+  );
+}
+
+/** A nested group's stream summing its key beside the outer row stays answered. */
+async function KeyBesideOuterRowInStream(): Promise<void> {
+  const read = await Owners()
+    .map((owner) => ({
+      take: owner.key("take"),
+      groups: Items().group("views", (stream, views) => ({
+        views,
+        sum: stream.map(() => views.add(owner.key("take"))).sum(),
+      })),
+    }))
+    .run();
+  expect(
+    read
+      .map((owner) => ({
+        take: owner.take,
+        groups: [...owner.groups].sort(
+          (left, right) => left.views - right.views,
+        ),
+      }))
+      .sort((left, right) => left.take - right.take),
+  ).to.deep.equal(
+    [...TAKES].sort(ByNumber).map((take) => ({
+      take,
+      groups: VIEWS.map((views) => ({
+        views,
+        sum: Viewed(views).length * (views + take),
+      })),
+    })),
+  );
+}
+
+/** A value bound in the group's select, such as an array element, read in a nested query. */
+async function SelectValueBelow(): Promise<void> {
+  await ExpectRefused(() =>
+    Items()
+      .group("views", (_stream, views) => ({
+        views,
+        counts: ValueProxy.constant([0, 2]).map((take) =>
+          Owners()
+            .filter((owner) => owner.key("take").eq(take))
+            .count(),
+        ),
+      }))
+      .run(),
+  );
+}
+
+/** A query nested in the mapper that reads its own rows and constants only stays answered. */
+async function OwnRowsBelow(): Promise<void> {
+  const read = await Items()
+    .group("views", (stream, views) => ({
+      views,
+      count: stream.count(),
+      takes: Owners().map((owner) => owner.key("take")),
+      over: Owners()
+        .filter((owner) => owner.key("take").gt(1))
+        .count(),
+    }))
+    .run();
+  expect(
+    read
+      .map((group) => ({ ...group, takes: [...group.takes].sort(ByNumber) }))
+      .sort((left, right) => left.views - right.views),
+  ).to.deep.equal(
+    VIEWS.map((views) => ({
+      views,
+      count: Viewed(views).length,
+      takes: [...TAKES].sort(ByNumber),
+      over: TAKES.filter((take) => take > 1).length,
+    })),
+  );
+}
+
+/** A group nested in a map reads the map's row in its own select and stream. */
+async function OuterRowInNestedGroupSelect(): Promise<void> {
+  const read = await Owners()
+    .map((owner) => ({
+      take: owner.key("take"),
+      groups: Items().group("views", (stream, views) => ({
+        views,
+        take: owner.key("take"),
+        sum: stream
+          .map((item) => item.key("views").add(owner.key("take")))
+          .sum(),
+      })),
+    }))
+    .run();
+  expect(
+    read
+      .map((owner) => ({
+        take: owner.take,
+        groups: [...owner.groups].sort(
+          (left, right) => left.views - right.views,
+        ),
+      }))
+      .sort((left, right) => left.take - right.take),
+  ).to.deep.equal(
+    [...TAKES].sort(ByNumber).map((take) => ({
+      take,
+      groups: VIEWS.map((views) => ({
+        views,
+        take,
+        sum: Viewed(views).length * (views + take),
+      })),
+    })),
+  );
+}
+
+describe("a query nested in a group's mapper", function () {
+  this.timeout(30_000);
+
+  before(Seed);
+
+  after(Unseed);
+
+  it("refuses the group's key read in it", KeyBelow);
+  it("refuses the group's key filtering it", KeyInNestedFilter);
+  it("refuses the group's key read two queries below", KeyTwoBelow);
+  it("refuses the group's stream deduplicated in it", StreamDedupBelow);
+  it("refuses the group's stream collected in it", StreamBelow);
+  it("refuses the group's stream counted in it", StreamCountBelow);
+  it(
+    "refuses a row from outside a nested group read in it",
+    OuterRowBelowNestedGroup,
+  );
+  it(
+    "refuses a nested group's stream summing only the outer row",
+    OuterOnlySum,
+  );
+  it(
+    "refuses a nested group's stream collecting only the outer row",
+    OuterOnlyCollect,
+  );
+  it(
+    "refuses a value bound in the group's select read in it",
+    SelectValueBelow,
+  );
+  it("refuses an outer-only stream value mapped again", OuterOnlyMappedAgain);
+  it(
+    "refuses an outer-only stream value computed by an array stage",
+    OuterOnlyThroughArray,
+  );
+  it(
+    "refuses an array stage in a nested group's select reading the outer row",
+    OuterRowInArrayStageOfSelect,
+  );
+  it(
+    "refuses an array stage in a nested group's stream reading the outer row",
+    OuterRowInArrayStageOfStream,
+  );
+  it(
+    "refuses an array stage in a nested group reading the key beside the outer row",
+    KeyInArrayStageBesideOuterRow,
+  );
+  it(
+    "answers an array stage in a nested group's stream reading the stream's row",
+    StreamRowInArrayStage,
+  );
+  it(
+    "answers an array stage reading the key in a group no query holds",
+    KeyInArrayStageOfTopGroup,
+  );
+  it(
+    "answers a nested group's key summed beside the outer row",
+    KeyBesideOuterRowInStream,
+  );
+  it("answers one that reads its own rows and constants", OwnRowsBelow);
+  it(
+    "leaves a nested group reading its outer row in its own select",
+    OuterRowInNestedGroupSelect,
+  );
+});

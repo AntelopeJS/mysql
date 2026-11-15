@@ -152,9 +152,9 @@ function ElementBody(
   context: DecodingContext,
 ): Compiled {
   const element = Element(context.dialect, walk, ElementType(value.type));
-  const body = DecodeFunction(RecordedLambda(stage, FIRST_OPERAND), context, [
-    element,
-  ]);
+  const body = context.inArrayCallback(() =>
+    DecodeFunction(RecordedLambda(stage, FIRST_OPERAND), context, [element]),
+  );
   return RequireOperand(body, stage, FIRST_OPERAND);
 }
 

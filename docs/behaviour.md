@@ -38,30 +38,24 @@ These queries answer instead of throwing, and the answer may not be the one you 
 | `union` never deduplicates                                                      | The interface asserts that a stream unioned with itself is twice as long                                                                                                    |
 | `distinct` discards the ordering ahead of it                                    | MySQL refuses `SELECT DISTINCT … ORDER BY` a term outside the select list, and neither engine keeps the order of a derived table a dedup reads, so the dedup drops the sort |
 | `group` discards the ordering ahead of it                                       | Neither engine keeps the order of a derived table a `GROUP BY` reads, and a group collects its rows unordered, so the group drops the sort                                  |
+| A query nested in a `group` callback reads its own rows and constants only      | Reading the group's key, its stream or a row from outside the group there is refused. See [Errors and refusals](./errors.md#grouping)                                       |
 
 ## Group callbacks that hold nested queries
 
-A `group` callback can hold a query of its own, such as `Owners().map(...)` inside it, and a `group` can sit inside another query. The module compiles both into one statement. MySQL and MariaDB decide which select runs an aggregate from the columns it reads, and in the shapes below they run it in the wrong select. The query then fails with an engine error, or answers another group's rows. Read the group's key and stream in the group's own select, let a query nested in the callback read its own rows and constants only, or run a second query per group.
+A `group` callback can hold a query of its own, such as `Owners().map(...)` inside it, and a `group` can sit inside another query. The module compiles both into one statement. MySQL and MariaDB decide which select runs an aggregate from the columns it reads, and in the shapes below they ran it in the wrong select: the query failed with an engine error, or answered another group's rows. The module refuses these shapes while it builds the statement, with the code `ANTELOPEJS_MYSQL_NESTED_GROUP_READ`. See [Errors and refusals](./errors.md#grouping).
 
-In the table, `s` is the group's stream, `k` the group's key, and `o` the row of an `Owners()` query around or inside the callback.
+In the list, `s` is the group's stream, `k` the group's key, and `o` the row of an `Owners()` query around or inside the callback. Each shape is refused:
 
-| Shape                                                                                                                                                                                           | What the servers answer                                                                     |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| A nested query of one row that reads `k` in a query nested in it, such as `Owners().filter(...).map(() => Items().filter((i) => i.key("views").eq(k)))`                                         | Another group's rows, on MySQL and MariaDB                                                  |
-| In a group nested in `Owners().map((o) => ...)`, `s` aggregates or collects a value that reads `o` and no row of the group, such as `s.map(() => o.key("take")).sum()`                          | One outer row for all, with the same value in every group, on MySQL and MariaDB             |
-| In a group nested in `Owners().map((o) => ...)`, an array stage reads `o` beside `k`, such as `ValueProxy.constant([1, 2]).map((x) => x.add(k).add(o.key("take"))).sum()` in the group's select | Another group's value on MySQL                                                              |
-| The same array stage inside `s.map(...)`, such as `s.map((i) => ValueProxy.constant([1, 2]).filter((x) => x.gt(o.key("take"))).map((x) => x.add(i.key("views"))).sum()).sum()`                  | One outer row for all, on MySQL and MariaDB                                                 |
-| `s` read in a nested query that is ordered, sliced or deduplicated, such as `Owners().orderBy("take").slice(0, 2).map((o) => ({ t: o.key("take"), r: s.map(...) }))`                            | One owner's row repeated on MariaDB                                                         |
-| `s` read in a nested query beside `k`, such as `Owners().map((o) => ({ t: o.key("take"), e: s.map((i) => [k, i.key("slug")]) }))`                                                               | Another group's rows on MariaDB                                                             |
-| A group inside the callback that reads the outer `s`, such as `Owners().group("take", (os, take) => ({ take, c: s.count() }))`                                                                  | The last group's key for every group on MariaDB                                             |
-| A group nested in `Owners().map((o) => ...)` after a filter on `o`, with a nested query that reads `k`, such as `Items().filter((i) => i.key("kind").eq(k)).count()`                            | Another group's count on MySQL                                                              |
-| `k` read in a query nested in the callback, alone or in its filter, such as `Owners().map(() => k)` or `Items().filter((i) => i.key("views").eq(k))` inside `Owners().map(...)`                 | `Subquery returns more than 1 row` or `Invalid use of group function`, on MySQL and MariaDB |
+- a query nested in the callback that reads `k`, `s` or `o`, such as `Owners().map(() => k)`, `Items().filter((i) => i.key("views").eq(k))` or `Owners().map((o) => s.map((i) => [i.key("x"), o.key("take")]).distinct())`;
+- in a group nested in `Owners().map((o) => ...)`, `s` aggregating or collecting a value that reads `o` and no row of the group, such as `s.map(() => o.key("take")).sum()`;
+- in a group nested in another query, an array stage's callback that reads `k` or `o`, such as `ValueProxy.constant([1, 2]).map((x) => x.add(k).add(o.key("take"))).sum()` in the group's select, or `s.map((i) => ValueProxy.constant([1, 2]).filter((x) => x.gt(o.key("take"))).map((x) => x.add(i.key("views"))).sum()).sum()`.
 
-These shapes answer right on both engines:
+These shapes answer right on both engines and compile as before:
 
 - `k` and aggregates of `s` in the group's own select;
 - a query nested in the callback that reads its own rows and constants;
-- a group nested in another query that reads that query's row in its own select, or in `s.map(...)` beside a column of the group's rows.
+- a group nested in another query that reads that query's row in its own select, or in `s.map(...)` beside a column of the group's rows;
+- an array stage's callback that reads its element, the row of `s` and constants, and in a group no query holds, also `k`.
 
 ## Storing a value
 

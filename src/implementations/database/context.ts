@@ -80,20 +80,47 @@ interface OpenSubquery {
   readonly rows: Set<Relation | undefined>;
 }
 
-/** What {@link DecodingContext.readingNestedRow} built, and whether building it read a nested row. */
-export interface NestedRowRead<T> {
-  readonly value: T;
-  readonly readsNestedRow: boolean;
+/**
+ * A query nested in a group's mapper that reads the group's key, its stream or a row from outside
+ * the group. MySQL and MariaDB run such a query's aggregate in the group's select, where it fails
+ * or answers another group's rows, so the module refuses it while it builds the statement.
+ */
+export class NestedGroupRead extends Error {
+  public readonly code = "ANTELOPEJS_MYSQL_NESTED_GROUP_READ";
+
+  public constructor(refused: string) {
+    super(
+      `${refused}, which MySQL and MariaDB cannot run as one statement. Read the group's key and stream in the group's own select, outside any nested query, aggregate values that read the group's rows, or run two queries`,
+    );
+  }
 }
 
-/**
- * One build watching for reads of a row nested deeper than `depth` subqueries, through a parameter
- * bound before the build began.
- */
-interface NestedRowWatch {
-  readonly depth: number;
+/** What a lambda of the innermost group's stream read, beside what it built. */
+export interface StreamLambdaRead<T> {
+  readonly value: T;
+  /** A row from outside the group. */
+  readonly outside: boolean;
+  /** The lambda's own parameter, the value the stream held before it. */
+  readonly parameter: boolean;
+  /** A value bound in the group's select before the lambda, such as the group's key. */
+  readonly group: boolean;
+}
+
+/** What a build read so far, by where the parameters it read were bound. */
+interface StreamLambdaWatch {
+  outside: boolean;
+  parameter: boolean;
+  group: boolean;
   readonly before: number;
-  reads: boolean;
+  readonly depth: number;
+}
+
+/** An array stage's callback compiling in a group nested in another query. */
+interface ArrayCallback {
+  /** The subquery depth of the innermost group. */
+  readonly group: number;
+  /** How many parameters were bound before the callback began. */
+  readonly before: number;
 }
 
 /**
@@ -109,10 +136,13 @@ export class DecodingContext {
   private readonly bindingDepths = new Map<string, number>();
   /** The rows each lambda parameter ranges over, where the stage that bound it named them. */
   private readonly bindingRows = new Map<string, Relation>();
+  /** The subquery depth of each group whose mapper is compiling now. */
+  private readonly groups: number[] = [];
   /** The order each lambda parameter was bound in. */
   private readonly bindingOrder = new Map<string, number>();
   private bindCount = 0;
-  private readonly nestedRowWatches: NestedRowWatch[] = [];
+  private readonly streamLambdaWatches: StreamLambdaWatch[] = [];
+  private readonly arrayCallbacks: ArrayCallback[] = [];
   /** Per open subquery, outermost first. */
   private readonly open: OpenSubquery[] = [];
   /** Fragments built while the subquery they are in read no parameter bound outside it. */
@@ -172,7 +202,10 @@ export class DecodingContext {
     this.bindingOrder.delete(String(id));
   }
 
-  /** A parameter's binding; every subquery opened since it was bound now reads its outer row. */
+  /**
+   * A parameter's binding; every subquery opened since it was bound now reads its outer row. A read
+   * from a query nested in a group's mapper of anything bound at or outside the group is refused.
+   */
   public arg(id: ParameterId): ArgumentBinding {
     const key = String(id);
     const binding = this.bindings.get(key);
@@ -182,11 +215,31 @@ export class DecodingContext {
       subquery.reads++;
       subquery.rows.add(this.bindingRows.get(key));
     }
+    const reading = this.open.length;
+    if (this.groups.some((group) => depth <= group && reading > group)) {
+      throw new NestedGroupRead(
+        "A query nested in a group's mapper reads a value bound in the group's select or outside it, such as the group's key, the group's stream or a row from outside the group",
+      );
+    }
     const order = this.bindingOrder.get(key) ?? 0;
-    for (const watch of this.nestedRowWatches) {
-      if (depth > watch.depth && order < watch.before) {
-        watch.reads = true;
-      }
+    const streamRow = this.streamLambdaWatches.some(
+      (watch) => watch.before === order,
+    );
+    if (
+      this.arrayCallbacks.some(
+        (callback) =>
+          depth < callback.group ||
+          (depth === callback.group && order < callback.before && !streamRow),
+      )
+    ) {
+      throw new NestedGroupRead(
+        "An array stage's callback in a group nested in another query reads the group's key or a row from outside the group",
+      );
+    }
+    for (const watch of this.streamLambdaWatches) {
+      watch.outside ||= depth < watch.depth;
+      watch.parameter ||= order === watch.before;
+      watch.group ||= depth === watch.depth && order < watch.before;
     }
     return binding;
   }
@@ -219,27 +272,60 @@ export class DecodingContext {
     }
   }
 
-  /** How many subqueries are open, which a parameter bound now is nested in. */
-  public get depth(): number {
-    return this.open.length;
+  /**
+   * Builds a one-parameter lambda of the innermost group's stream, and tells what it read: a row
+   * from outside the group, its own parameter, or a value bound in the group's select before it.
+   */
+  public readingStreamLambda<T>(build: () => T): StreamLambdaRead<T> {
+    const watch: StreamLambdaWatch = {
+      outside: false,
+      parameter: false,
+      group: false,
+      before: this.bindCount,
+      depth: this.groups.at(-1) ?? 0,
+    };
+    this.streamLambdaWatches.push(watch);
+    try {
+      const value = build();
+      const { outside, parameter, group } = watch;
+      return { value, outside, parameter, group };
+    } finally {
+      this.streamLambdaWatches.splice(
+        this.streamLambdaWatches.indexOf(watch),
+        1,
+      );
+    }
   }
 
   /**
-   * Builds part of a query, and tells whether it read the row of a query nested deeper than `depth`
-   * subqueries through a parameter bound before the build began, a row a select at `depth` cannot
-   * read.
+   * Builds a group's mapper. A query nested in it may read its own rows and constants only: a read
+   * of anything bound at or outside the group's select is refused.
    */
-  public readingNestedRow<T>(depth: number, build: () => T): NestedRowRead<T> {
-    const watch: NestedRowWatch = {
-      depth,
-      before: this.bindCount,
-      reads: false,
-    };
-    this.nestedRowWatches.push(watch);
+  public inGroup<T>(build: () => T): T {
+    this.groups.push(this.open.length);
     try {
-      return { value: build(), readsNestedRow: watch.reads };
+      return build();
     } finally {
-      this.nestedRowWatches.splice(this.nestedRowWatches.indexOf(watch), 1);
+      this.groups.pop();
+    }
+  }
+
+  /**
+   * Builds the callback of an array stage. In a group nested in another query, the callback may read
+   * its element, the group's stream rows and constants only: a read of the group's key, of another
+   * value bound in the group's select, or of a row from outside the group is refused.
+   */
+  public inArrayCallback<T>(build: () => T): T {
+    const group = this.groups.at(-1);
+    if (group === undefined || group === 0) {
+      return build();
+    }
+    const callback: ArrayCallback = { group, before: this.bindCount };
+    this.arrayCallbacks.push(callback);
+    try {
+      return build();
+    } finally {
+      this.arrayCallbacks.splice(this.arrayCallbacks.indexOf(callback), 1);
     }
   }
 

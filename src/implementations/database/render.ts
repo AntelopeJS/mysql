@@ -158,11 +158,6 @@ export function AbsorbOrder(relation: Relation): void {
   relation.orderBy = [];
 }
 
-function HavingClause(relation: Relation): Sql | undefined {
-  const having = relation.having ?? [];
-  return having.length === 0 ? undefined : sql`HAVING ${join(having, AND)}`;
-}
-
 /** The row count that makes a relation answer at most one row, which `nth` and a lookup take. */
 export const SINGLE_ROW = 1;
 
@@ -176,7 +171,6 @@ const BODY: ClauseBuilder[] = [
   JoinClauses,
   WhereClause,
   GroupByClause,
-  HavingClause,
 ];
 
 function LockClause(relation: Relation): Sql | undefined {
@@ -260,48 +254,21 @@ export function NestedInOrder(
   if (relation.orderBy.length === 0) {
     return Nested(relation, context);
   }
-  const { relation: wrapped, columns } = NestedBeside(
-    relation,
-    relation.orderBy.map((term) => term.sql),
-    "_order",
-    context,
-  );
-  wrapped.orderBy = relation.orderBy.map((term, index) => ({
-    sql: columns[index],
-    descending: term.descending,
+  const columns = relation.orderBy.map((term, index) => ({
+    term,
+    name: FreeColumn(relation, `_order${index}`),
   }));
-  return wrapped;
-}
-
-/** A relation over another one's rows, and the columns it selects beside each row. */
-export interface RowsBeside {
-  relation: Relation;
-  columns: Sql[];
-}
-
-/**
- * Wraps the relation as {@link Nested} does, with each of `terms` selected beside the row under a
- * free name starting with `base`, and answers the columns of the fresh relation that hold them.
- */
-export function NestedBeside(
-  relation: Relation,
-  terms: readonly Sql[],
-  base: string,
-  context: DecodingContext,
-): RowsBeside {
-  const names = terms.map((_, index) =>
-    FreeColumn(relation, `${base}${index}`),
-  );
-  const selected = terms.map(
-    (term, index) => sql`${term} AS ${ident(names[index])}`,
+  const selected = columns.map(
+    ({ term, name }) => sql`${term.sql} AS ${ident(name)}`,
   );
   const select = sql`${SelectClause(relation)}, ${join(selected, COMMA)}`;
   const rest = RenderClauses(relation, TAIL);
   const wrapped = Wrapped(relation, sql`(${select} ${rest})`, context);
-  return {
-    relation: wrapped,
-    columns: names.map((name) => QualifiedColumn(wrapped.alias, name)),
-  };
+  wrapped.orderBy = columns.map(({ term, name }) => ({
+    sql: QualifiedColumn(wrapped.alias, name),
+    descending: term.descending,
+  }));
+  return wrapped;
 }
 
 /** A relation whose rows are numbered in the order they had, and the column holding the number. */
