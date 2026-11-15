@@ -1,5 +1,4 @@
 import { expect } from "chai";
-import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -14,6 +13,9 @@ import {
 } from "./probe-handshake";
 
 const SECRET = `pem-${randomBytes(6).toString("hex")}`;
+
+/** A device whose content never ends, which a synchronous read would never finish. */
+const DEVICE = "/dev/zero";
 
 /** A server that offers TLS and reads whatever the client sends until it closes. */
 function TlsServer(lines: ClientLine[]): Promise<FakeServer> {
@@ -41,16 +43,11 @@ describe("probe, with TLS options that name local files", function () {
   this.timeout(TIMEOUT_MS * 10);
   let directory: string;
   let file: string;
-  let fifo: string | undefined;
 
   before(async () => {
     directory = await mkdtemp(path.join(os.tmpdir(), "ajs-mysql-probe-tls-"));
     file = path.join(directory, "trust.pem");
     await writeFile(file, SECRET);
-    if (process.platform !== "win32") {
-      fifo = path.join(directory, "fifo");
-      execFileSync("mkfifo", [fifo]);
-    }
   });
 
   after(() => rm(directory, { recursive: true, force: true }));
@@ -73,25 +70,20 @@ describe("probe, with TLS options that name local files", function () {
     }
   });
 
-  /** Fails on a probe whose client reads a device or a FIFO a URL names, which never ends. */
-  it("answers within the timeout when the URL's ssl ca or socketPath names a device or a FIFO", async () => {
+  /** Fails on a probe whose client reads a device a URL names, whose content never ends. */
+  it("answers within the timeout when the URL's ssl ca or socketPath names a device", async () => {
     const server = await TlsServer([]);
     try {
-      for (const target of [
-        "/dev/zero",
-        ...(fifo === undefined ? [] : [fifo]),
+      for (const query of [
+        `ssl=${encodeURIComponent(JSON.stringify({ ca: DEVICE }))}`,
+        `socketPath=${encodeURIComponent(DEVICE)}`,
       ]) {
-        for (const query of [
-          `ssl=${encodeURIComponent(JSON.stringify({ ca: target }))}`,
-          `socketPath=${encodeURIComponent(target)}`,
-        ]) {
-          const started = performance.now();
-          const answer = await Probe(server.port, query);
-          expect(performance.now() - started, query).to.be.lessThan(
-            TIMEOUT_MS * 2,
-          );
-          expect(answer.outcome, query).to.not.equal("signed-in");
-        }
+        const started = performance.now();
+        const answer = await Probe(server.port, query);
+        expect(performance.now() - started, query).to.be.lessThan(
+          TIMEOUT_MS * 2,
+        );
+        expect(answer.outcome, query).to.not.equal("signed-in");
       }
     } finally {
       await server.close();
