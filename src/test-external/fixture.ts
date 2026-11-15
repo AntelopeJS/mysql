@@ -22,6 +22,13 @@ const ACCESS_ROLE = "dms_access";
 /** Rows of the table above the sampling threshold, which the server's statistics only estimate. */
 export const BIG_EVENTS_ROWS = 1_100_000;
 
+/**
+ * A `big_events` row whose key hashes to a multiple of this is a `refund`. Every key the sample keeps
+ * hashes to a multiple of its bucket count, which divides this for any count up to 15, so the sample
+ * keeps every `refund`, too few to name.
+ */
+const BIG_EVENTS_REFUND_EVERY = 360_360;
+
 /** The row numbers `1..n`, which every generated table derives its values from. */
 function Series(n: number): string {
   return `WITH RECURSIVE seq (g) AS (SELECT 1 UNION ALL SELECT g + 1 FROM seq WHERE g < ${n})`;
@@ -130,6 +137,10 @@ const READ_TABLES: readonly string[] = [
   )`,
   `INSERT INTO sales.big_events (kind, at) ${Series(BIG_EVENTS_ROWS)}
     SELECT ELT(1 + g % 3, 'click', 'view', 'buy'), TIMESTAMPADD(SECOND, g, '2025-01-01 00:00:00') FROM seq`,
+  `UPDATE sales.big_events SET kind = 'refund' WHERE CRC32(id) % ${BIG_EVENTS_REFUND_EVERY} = 0`,
+  "CREATE TABLE sales.tallies (id INT PRIMARY KEY, label VARCHAR(10) NOT NULL)",
+  `INSERT INTO sales.tallies ${Series(29)}
+    SELECT g, CASE WHEN g <= 4 THEN 'four' WHEN g <= 9 THEN 'five' ELSE 'many' END FROM seq`,
 ];
 
 /** The accent- and case-insensitive collation each engine's `w_names.name` is declared in. */
@@ -221,6 +232,7 @@ const READABLE: readonly string[] = [
   "attachments",
   "invoices",
   "big_events",
+  "tallies",
   "w_accounts",
   "w_items",
   "w_serial",
