@@ -31,7 +31,7 @@ The same message ends a registration that has to swap the triggers of a table th
 | Opened a cursor past `maxOpenCursors`                       | `cannot open another cursor: {n} are open, which is the maxOpenCursors limit of {max}; read one to its end or close it, or raise maxOpenCursors (it defaults to half of pool.connectionLimit)` |
 | Read a cursor whose connection the server or network ended  | The driver's error, such as `Connection lost: The server closed the connection.` The cursor ends and gives its place under `maxOpenCursors` back                                               |
 
-A cursor holds a pooled connection for as long as it is open, and a streaming `SELECT` holds a shared metadata lock that makes DDL on its tables wait. So the module reclaims a cursor that stops being read instead of letting it keep both. Both reclaim errors leave the whole query to be run again, where an exhausted or explicitly closed cursor reports that it is done. Answering `done` for a reclaimed cursor would cut your results short without a signal.
+A cursor holds a pooled connection for as long as it is open, and a streaming `SELECT` holds a shared metadata lock that makes DDL on its tables wait. So the module reclaims a cursor that stops being read instead of letting it keep both. Both reclaim errors leave the whole query to be run again, where an exhausted or explicitly closed cursor answers an empty batch, which ends the iteration. Answering an empty batch for a reclaimed cursor would cut your results short without a signal.
 
 ## Declaring a schema
 

@@ -8,7 +8,7 @@ import {
   CloseOneCursor,
   CountOpenCursors,
   type CursorOpener,
-  ReadCursorRow,
+  ReadCursorBatch,
 } from "../../implementations/database/cursors";
 import type { RowSource } from "../../implementations/database/row-stream";
 
@@ -52,7 +52,7 @@ export const PROBING: Options = {
 };
 
 export const STUB_FAILURE = "the stub source refused this call";
-export const NEVER_ENDED = "the cursor never answered done";
+export const NEVER_ENDED = "the cursor never answered an empty batch";
 export const NEVER_REJECTED = "the read was expected to reject";
 export const NEVER_ARRIVED = "no read arrived while the sweep was running";
 export const NEVER_HELD = "the stub never reached the call it was told to hold";
@@ -231,7 +231,7 @@ export function Read(
   open: CursorOpener,
   options: Options = OPTIONS,
 ) {
-  return WithOptions(options, () => ReadCursorRow(reqId, open));
+  return WithOptions(options, () => ReadCursorBatch(reqId, open));
 }
 
 export async function Drain(
@@ -239,12 +239,12 @@ export async function Drain(
   open: CursorOpener,
 ): Promise<unknown[]> {
   const values: unknown[] = [];
-  while (values.length < DRAIN_LIMIT) {
-    const next = await Read(reqId, open);
-    if (next.done) {
+  for (let reads = 0; reads < DRAIN_LIMIT; reads += 1) {
+    const batch = await Read(reqId, open);
+    if (batch.length === 0) {
       return values;
     }
-    values.push(next.value);
+    values.push(...batch);
   }
   throw new Error(NEVER_ENDED);
 }

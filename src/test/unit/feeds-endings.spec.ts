@@ -22,8 +22,6 @@ import {
   WhileConfigured,
 } from "./feeds-fixture";
 
-const DONE = { done: true, value: undefined };
-
 /** How long a woken feed may take to deliver: far below its fallback wait of seconds. */
 const WOKEN_WITHIN_MS = 500;
 
@@ -56,8 +54,8 @@ describe("the ways a change feed ends", () => {
       ],
       9,
     );
-    const step = await Feed((reqId) => Step(reqId, env));
-    expect(step.done).to.equal(false);
+    const events = await Feed((reqId) => Step(reqId, env));
+    expect(events).to.have.length(1);
   });
 
   it("rejects when the log was recreated under it, since its events went with the old one", async () => {
@@ -67,13 +65,13 @@ describe("the ways a change feed ends", () => {
     expect(message).to.contain(`${SCHEMA_ID}.${TABLE_ID}`);
   });
 
-  it("answers done rather than rejecting when it was closed, and stops its wakes", async () => {
+  it("answers an empty batch rather than rejecting when it was closed, and stops its wakes", async () => {
     const { env, unsubscribed } = Reader([{}]);
     const reqId = NewReqId();
     const pending = WhileConfigured(() => Step(reqId, env));
     await Settled(pending);
     await CloseOneFeed(reqId);
-    expect(await pending).to.deep.equal(DONE);
+    expect(await pending).to.deep.equal([]);
     expect(unsubscribed()).to.equal(1);
   });
 
@@ -83,7 +81,7 @@ describe("the ways a change feed ends", () => {
     const pending = WhileConfigured(() => Step(reqId, env));
     await Settled(pending);
     await CloseAllFeeds();
-    expect(await pending).to.deep.equal(DONE);
+    expect(await pending).to.deep.equal([]);
   });
 });
 
@@ -99,8 +97,9 @@ describe("waking a change feed", () => {
       expect(wakes).to.have.length(1);
       const started = Date.now();
       wakes[0]();
-      const step = await pending;
-      expect(step.value).to.have.nested.property("newValue._id", "a");
+      const events = await pending;
+      expect(events).to.have.length(1);
+      expect(events[0]).to.have.nested.property("newValue._id", "a");
       expect(Date.now() - started).to.be.lessThan(WOKEN_WITHIN_MS);
     });
   });
@@ -125,7 +124,8 @@ describe("waking a change feed", () => {
       await Step(reqId, env);
       const started = Date.now();
       const second = await Step(reqId, env);
-      expect(second.value).to.have.nested.property("newValue._id", "b");
+      expect(second).to.have.length(1);
+      expect(second[0]).to.have.nested.property("newValue._id", "b");
       expect(Date.now() - started).to.be.lessThan(WOKEN_WITHIN_MS);
     });
   });
@@ -142,11 +142,11 @@ describe("the change feed registry", () => {
     await pending;
   });
 
-  it("closes a reqId it has never seen, so a read arriving after it answers done", async () => {
+  it("closes a reqId it has never seen, so a read arriving after it answers an empty batch", async () => {
     const reqId = NewReqId();
     await CloseOneFeed(reqId);
     const { env } = Reader([{}]);
-    expect(await WhileConfigured(() => Step(reqId, env))).to.deep.equal(DONE);
+    expect(await WhileConfigured(() => Step(reqId, env))).to.deep.equal([]);
   });
 });
 
@@ -181,7 +181,7 @@ describe("dispatching an iteration between a cursor and a feed", () => {
     const reqId = NewReqId();
     const opened = WhileConfigured(() => Step(reqId, env));
     await CloseCursor(reqId);
-    expect(await opened).to.deep.equal(DONE);
-    expect(await WhileConfigured(() => Step(reqId, env))).to.deep.equal(DONE);
+    expect(await opened).to.deep.equal([]);
+    expect(await WhileConfigured(() => Step(reqId, env))).to.deep.equal([]);
   });
 });

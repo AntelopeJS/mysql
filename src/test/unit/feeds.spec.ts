@@ -3,7 +3,8 @@ import { QueryStage } from "@antelopejs/interface-database/common";
 import { CROSS_INSTANCE } from "@antelopejs/interface-database/schema";
 
 import { GetOptions } from "../../config";
-import { ReadFeedEvent } from "../../implementations/database/feeds";
+import { ReadFeedEvents } from "../../implementations/database/feeds";
+import type { RowObject } from "../../implementations/database/result";
 import {
   After,
   type Answer,
@@ -96,21 +97,26 @@ describe("a change feed's watermark", () => {
     });
     const across = Reader([{}]);
     await Feed(async (reqId) => {
-      await Settled(ReadFeedEvent(reqId, Stages(CROSS_INSTANCE), across.env));
+      await Settled(ReadFeedEvents(reqId, Stages(CROSS_INSTANCE), across.env));
       expect(across.asked[0].args).to.not.include("default");
       expect(across.asked[0].sql).to.not.contain("`inst` =");
     });
   });
 });
 
-async function First(answer: Answer, ...between: QueryStage[]) {
+async function First(
+  answer: Answer,
+  ...between: QueryStage[]
+): Promise<RowObject> {
   const { env } = Reader([answer, {}]);
-  return Feed((reqId) => Step(reqId, env, ...between));
+  const events = await Feed((reqId) => Step(reqId, env, ...between));
+  expect(events).to.have.length(1);
+  return events[0];
 }
 
 describe("a change feed's events", () => {
   it("delivers an insert as an added event carrying only the new value", async () => {
-    const step = await First({
+    const event = await First({
       events: [
         {
           seq: 1,
@@ -120,25 +126,25 @@ describe("a change feed's events", () => {
         },
       ],
     });
-    expect(step.value).to.have.property("changeType", "added");
-    expect(step.value).to.not.have.property("oldValue");
-    expect(step.value).to.have.deep.property("newValue", {
+    expect(event).to.have.property("changeType", "added");
+    expect(event).to.not.have.property("oldValue");
+    expect(event).to.have.deep.property("newValue", {
       _id: "a",
       car: "Renault",
     });
   });
 
   it("delivers a delete as a removed event carrying only the old value", async () => {
-    const step = await First({
+    const event = await First({
       events: [{ seq: 1, op: "removed", old: Matched({ _id: "a" }) }],
     });
-    expect(step.value).to.have.property("changeType", "removed");
-    expect(step.value).to.not.have.property("newValue");
-    expect(step.value).to.have.deep.property("oldValue", { _id: "a" });
+    expect(event).to.have.property("changeType", "removed");
+    expect(event).to.not.have.property("newValue");
+    expect(event).to.have.deep.property("oldValue", { _id: "a" });
   });
 
   it("delivers an update as a modified event carrying both sides", async () => {
-    const step = await First({
+    const event = await First({
       events: [
         {
           seq: 1,
@@ -148,7 +154,7 @@ describe("a change feed's events", () => {
         },
       ],
     });
-    expect(step.value).to.deep.equal({
+    expect(event).to.deep.equal({
       changeType: "modified",
       oldValue: { _id: "a", price: 1 },
       newValue: { _id: "a", price: 2 },
@@ -156,7 +162,7 @@ describe("a change feed's events", () => {
   });
 
   it("delivers a row leaving the filter, with both sides", async () => {
-    const step = await First({
+    const event = await First({
       events: [
         {
           seq: 1,
@@ -166,7 +172,7 @@ describe("a change feed's events", () => {
         },
       ],
     });
-    expect(step.value).to.deep.equal({
+    expect(event).to.deep.equal({
       changeType: "modified",
       oldValue: { _id: "a", price: 50 },
       newValue: { _id: "a", price: 200 },
@@ -174,7 +180,7 @@ describe("a change feed's events", () => {
   });
 
   it("delivers a row entering the filter, with both sides", async () => {
-    const step = await First({
+    const event = await First({
       events: [
         {
           seq: 1,
@@ -184,12 +190,12 @@ describe("a change feed's events", () => {
         },
       ],
     });
-    expect(step.value).to.have.nested.property("oldValue.price", 200);
-    expect(step.value).to.have.nested.property("newValue.price", 50);
+    expect(event).to.have.nested.property("oldValue.price", 200);
+    expect(event).to.have.nested.property("newValue.price", 50);
   });
 
   it("skips a row that matched on neither side, and delivers the next", async () => {
-    const step = await First({
+    const event = await First({
       events: [
         {
           seq: 1,
@@ -200,23 +206,28 @@ describe("a change feed's events", () => {
         { seq: 2, op: "added", new: Matched({ _id: "b" }) },
       ],
     });
-    expect(step.value).to.have.nested.property("newValue._id", "b");
+    expect(event).to.have.nested.property("newValue._id", "b");
   });
 
-  it("buffers a batch and answers it one event per read, in order", async () => {
+  /**
+   * A driver that hands over one event per read answers `first` alone; one that waits for a full
+   * `changeBatchSize` before answering never answers, since the poll scanned three.
+   */
+  it("answers the events one poll admitted in a single read, in order", async () => {
     const { env } = Reader([
       {
         events: [
           { seq: 1, op: "added", new: Matched({ _id: "first" }) },
           { seq: 2, op: "added", new: Matched({ _id: "second" }) },
+          { seq: 3, op: "added", new: Matched({ _id: "third" }) },
         ],
       },
     ]);
-    await Feed(async (reqId) => {
-      const one = await Step(reqId, env);
-      const two = await Step(reqId, env);
-      expect(one.value).to.have.nested.property("newValue._id", "first");
-      expect(two.value).to.have.nested.property("newValue._id", "second");
-    });
+    const events = await Feed((reqId) => Step(reqId, env));
+    expect(events.map((event) => event.newValue)).to.deep.equal([
+      { _id: "first" },
+      { _id: "second" },
+      { _id: "third" },
+    ]);
   });
 });

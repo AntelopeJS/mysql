@@ -1,6 +1,6 @@
 /**
  * Checks that a change feed delivers every change committed after it opened, once and in per-row
- * order, or ends with a loss (see SKILL.md). Drives the real `ReadFeedEvent`, `Sequence` and
+ * order, or ends with a loss (see SKILL.md). Drives the real `ReadFeedEvents`, `Sequence` and
  * `ReapOnce` of `src/`, compiled with this folder by `check.mjs`, against the fake server of
  * `server.ts`. fast-check draws the scenarios and `explore.ts` runs each under every order of its
  * steps. Exits 0 when every rule matches the record in SKILL.md, 1 when a rule changed, and 2 when
@@ -14,7 +14,7 @@ import { QueryStage } from "@antelopejs/interface-database/common";
 
 import { SetOptions } from "../../../src/config";
 import { DIALECTS } from "../../../src/dialect";
-import { CloseOneFeed, ReadFeedEvent } from "../../../src/implementations/database/feeds";
+import { CloseOneFeed, ReadFeedEvents } from "../../../src/implementations/database/feeds";
 import { ReapOnce } from "../../../src/implementations/database/reaper";
 import { ReadFrontier, Sequence } from "../../../src/implementations/database/sequencer";
 import type { RowValue } from "../../../src/implementations/database/result";
@@ -160,13 +160,15 @@ async function runScenario(schedule: Schedule, scenario: Scenario): Promise<Run 
     });
     try {
       for (;;) {
-        const next = await ReadFeedEvent(reqId, STAGES, env);
-        if (next.done) {
+        const batch = await ReadFeedEvents(reqId, STAGES, env);
+        if (batch.length === 0) {
           break;
         }
-        const label = changeOf(next.value.newValue ?? next.value.oldValue);
-        delivered.push(label);
-        schedule.trace.push(`feed: delivered ${label}`);
+        for (const event of batch) {
+          const label = changeOf(event.newValue ?? event.oldValue);
+          delivered.push(label);
+          schedule.trace.push(`feed: delivered ${label}`);
+        }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

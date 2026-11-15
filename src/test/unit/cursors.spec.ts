@@ -65,6 +65,36 @@ describe("the cursor registry", () => {
     expect(CountOpenCursors()).to.equal(baseline);
   });
 
+  /**
+   * A per-row driver answers `[0]` to the first read; one that fetches again after a short batch
+   * makes a fourth `next` call and its fourth read finds nothing left to close.
+   */
+  it("hands over each fetched batch whole, ends on `[]` after a short one, and closes the source then", async () => {
+    const log = Recorder();
+    const reqId = NextReqId();
+    const open = Requesting(log, [Rows(0, 1, 2), Rows(3, 4, 5), Rows(6)]);
+    expect(await Read(reqId, open)).to.deep.equal([0, 1, 2]);
+    expect(await Read(reqId, open)).to.deep.equal([3, 4, 5]);
+    expect(await Read(reqId, open)).to.deep.equal([6]);
+    expect(log.closes).to.equal(0);
+    expect(await Read(reqId, open)).to.deep.equal([]);
+    expect(Count(log, NEXT)).to.equal(3);
+    expect(log.statements).to.deep.equal([OPEN, NEXT, NEXT, NEXT, CLOSE]);
+    expect(log.closes).to.equal(1);
+    expect(CountOpenCursors()).to.equal(baseline);
+  });
+
+  /** A driver that answers an empty selection with `[[]]` or leaves the source open fails this. */
+  it("answers `[]` to the first read of an empty selection and releases the source", async () => {
+    const log = Recorder();
+    const reqId = NextReqId();
+    const open = Requesting(log, [Rows()]);
+    expect(await Read(reqId, open)).to.deep.equal([]);
+    expect(log.statements).to.deep.equal([OPEN, NEXT, CLOSE]);
+    expect(log.closes).to.equal(1);
+    expect(CountOpenCursors()).to.equal(baseline);
+  });
+
   it("yields a full batch and then a short one, in order, and then ends", async () => {
     const log = Recorder();
     const open = Requesting(log, [Rows(1, 2, 3), Rows(4, 5)]);
@@ -78,16 +108,6 @@ describe("the cursor registry", () => {
     const open = Requesting(log, [Rows(1, 2)]);
     expect(await Drain(NextReqId(), open)).to.deep.equal([1, 2]);
     expect(log.statements).to.deep.equal([OPEN, NEXT, CLOSE]);
-  });
-
-  it("ends immediately over a cursor that read no rows", async () => {
-    const log = Recorder();
-    const open = Requesting(log, [Rows()]);
-    const next = await Read(NextReqId(), open);
-    expect(next.done).to.equal(true);
-    expect(next.value).to.equal(undefined);
-    expect(log.statements).to.deep.equal([OPEN, NEXT, CLOSE]);
-    expect(log.closes).to.equal(1);
   });
 
   it("pulls again after a batch that filled exactly, and ends on the empty one", async () => {
@@ -105,11 +125,9 @@ describe("the cursor registry", () => {
     const log = Recorder();
     const reqId = NextReqId();
     const open = Requesting(log, [Rows(1, 2)]);
-    await Read(reqId, open);
+    expect(await Read(reqId, open)).to.deep.equal([1, 2]);
     expect(CountOpenCursors()).to.equal(baseline + 1);
-    await Read(reqId, open);
-    expect(CountOpenCursors()).to.equal(baseline + 1);
-    expect((await Read(reqId, open)).done).to.equal(true);
+    expect(await Read(reqId, open)).to.deep.equal([]);
     expect(CountOpenCursors()).to.equal(baseline);
     expect(log.closes).to.equal(1);
   });
@@ -119,9 +137,7 @@ describe("the cursor registry", () => {
     const reqId = NextReqId();
     const open = Requesting(log, [Rows(1)]);
     expect(await Drain(reqId, open)).to.deep.equal([1]);
-    const after = await Read(reqId, open);
-    expect(after.done).to.equal(true);
-    expect(after.value).to.equal(undefined);
+    expect(await Read(reqId, open)).to.deep.equal([]);
     expect(log.opens).to.equal(1);
     expect(log.closes).to.equal(1);
   });
@@ -130,10 +146,9 @@ describe("the cursor registry", () => {
     const log = Recorder();
     const reqId = NextReqId();
     const open = Requesting(log, [Rows(1, 2, 3), Rows(4)]);
-    expect((await Read(reqId, open)).value).to.equal(1);
+    expect(await Read(reqId, open)).to.deep.equal([1, 2, 3]);
     await CloseOneCursor(reqId);
-    const after = await Read(reqId, open);
-    expect(after.done).to.equal(true);
+    expect(await Read(reqId, open)).to.deep.equal([]);
     expect(log.opens).to.equal(1);
     expect(log.closes).to.equal(1);
     expect(Count(log, NEXT)).to.equal(1);
@@ -149,18 +164,7 @@ describe("the cursor registry", () => {
       Read(reqId, open),
       Read(reqId, open),
     ]);
-    expect(answers.map((answer) => answer.value)).to.deep.equal([
-      1,
-      2,
-      undefined,
-      undefined,
-    ]);
-    expect(answers.map((answer) => answer.done)).to.deep.equal([
-      false,
-      false,
-      true,
-      true,
-    ]);
+    expect(answers).to.deep.equal([[1, 2], [], [], []]);
     expect(log.opens).to.equal(1);
     expect(log.closes).to.equal(1);
     expect(CountOpenCursors()).to.equal(baseline);
@@ -170,7 +174,7 @@ describe("the cursor registry", () => {
     const log = Recorder();
     const reqId = NextReqId();
     const open = Requesting(log, [Rows(1, 2, 3), Rows(4)]);
-    expect((await Read(reqId, open, REAPING)).value).to.equal(1);
+    expect(await Read(reqId, open, REAPING)).to.deep.equal([1, 2, 3]);
     await Delay(REAP_WINDOW_MS);
     await CloseOneCursor(reqId);
     const err = await Rejection(Read(reqId, open));
@@ -185,7 +189,7 @@ describe("the cursor registry", () => {
     const log = Recorder();
     const reqId = NextReqId();
     const open = Requesting(log, [Rows(1, 2, 3), Rows(4)]);
-    expect((await Read(reqId, open)).value).to.equal(1);
+    expect(await Read(reqId, open)).to.deep.equal([1, 2, 3]);
     await CloseOneCursor(reqId);
     expect(log.statements).to.deep.equal([OPEN, NEXT, CLOSE]);
     expect(log.closes).to.equal(1);
@@ -204,7 +208,7 @@ describe("the cursor registry", () => {
     const closing = CloseOneCursor(reqId);
     const first = await reading;
     await closing;
-    expect(first.value).to.equal(1);
+    expect(first).to.deep.equal([1, 2, 3]);
     expect(log.statements).to.deep.equal([OPEN, NEXT, CLOSE]);
     expect(log.closes).to.equal(1);
     expect(CountOpenCursors()).to.equal(baseline);
@@ -240,9 +244,7 @@ describe("the cursor registry", () => {
     const reqId = NextReqId();
     const open = Reopening(log, 1, 2);
     await CloseOneCursor(reqId);
-    const after = await Read(reqId, open);
-    expect(after.done).to.equal(true);
-    expect(after.value).to.equal(undefined);
+    expect(await Read(reqId, open)).to.deep.equal([]);
     expect(log.opens).to.equal(0);
     expect(log.statements).to.deep.equal([]);
     expect(CountOpenCursors()).to.equal(baseline);
