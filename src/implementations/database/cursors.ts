@@ -58,8 +58,13 @@ const FORGOTTEN: EndReason = "forgotten";
 interface OpenCursor {
   readonly source: RowSource;
   readonly decode: RowDecoder;
-  isDrained: boolean;
   timer?: NodeJS.Timeout;
+}
+
+/** The decoded rows of one fetch, and whether it was the cursor's last: shorter than the count asked for. */
+interface Batch {
+  readonly values: RowValue[];
+  readonly isLast: boolean;
 }
 
 interface CursorState {
@@ -283,14 +288,15 @@ function ArmReaper(
   state.idleTimeoutMs = idleTimeoutMs;
 }
 
-/** One batch, decoded; a batch shorter than the count asked for is the end of the cursor. */
 async function FetchBatch(
   cursor: OpenCursor,
   batchSize: number,
-): Promise<RowValue[]> {
+): Promise<Batch> {
   const fetched = await cursor.source.next(batchSize);
-  cursor.isDrained = fetched.length < batchSize;
-  return cursor.decode(fetched);
+  return {
+    values: cursor.decode(fetched),
+    isLast: fetched.length < batchSize,
+  };
 }
 
 async function Refill(
@@ -298,7 +304,7 @@ async function Refill(
   state: CursorState,
   cursor: OpenCursor,
   batchSize: number,
-): Promise<RowValue[]> {
+): Promise<Batch> {
   try {
     return await FetchBatch(cursor, batchSize);
   } catch (err) {
@@ -321,7 +327,7 @@ async function Opened(
       request.statement,
       options.cursorBatchSize,
     );
-    return { source, decode: request.decode, isDrained: false };
+    return { source, decode: request.decode };
   } finally {
     state.isOpening = false;
   }
@@ -360,15 +366,13 @@ async function Advance(
   }
   const cursor = await Established(reqId, state, open, options);
   ClearReaper(cursor);
-  const batch = cursor.isDrained
-    ? []
-    : await Refill(reqId, state, cursor, options.cursorBatchSize);
-  if (batch.length === EMPTY) {
+  const batch = await Refill(reqId, state, cursor, options.cursorBatchSize);
+  if (batch.isLast) {
     await Teardown(reqId, state, EXHAUSTED);
-    return batch;
+  } else {
+    ArmReaper(reqId, state, cursor, options.cursorIdleTimeoutMs);
   }
-  ArmReaper(reqId, state, cursor, options.cursorIdleTimeoutMs);
-  return batch;
+  return batch.values;
 }
 
 /**
@@ -388,11 +392,11 @@ async function Advance(
  * `EndReason` carries which answer and why, and the two that throw are the reclaimed cursor and the
  * forgotten one.
  *
- * A batch shorter than the configured count means the cursor is exhausted, so that batch is
- * answered whole without a further pull and the read after it tears the cursor down and answers an
- * empty batch. Nothing asks for that: the contract's own suite iterates to completion and never
- * closes, so self-reclaim is the only thing between this adapter and one leaked connection per
- * iteration.
+ * A batch shorter than the configured count means the cursor is exhausted, so the read that fetched
+ * it tears the cursor down before answering it, and the read after it answers an empty batch from
+ * how the cursor ended. No connection or reaper waits on a consumer still working through that last
+ * batch. Nothing asks for that: the contract's own suite iterates to completion and never closes, so
+ * self-reclaim is the only thing between this adapter and one leaked connection per iteration.
  *
  * The options are read here, synchronously, rather than inside the machinery, so that a spec can
  * drive a cursor through a temporary configuration without the set outliving the call.

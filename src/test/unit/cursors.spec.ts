@@ -67,21 +67,36 @@ describe("the cursor registry", () => {
 
   /**
    * A per-row driver answers `[0]` to the first read; one that fetches again after a short batch
-   * makes a fourth `next` call and its fourth read finds nothing left to close.
+   * makes a fourth `next` call; one that holds the source until the read after the short batch
+   * keeps a connection out while the consumer works through its last rows.
    */
-  it("hands over each fetched batch whole, ends on `[]` after a short one, and closes the source then", async () => {
+  it("hands over each fetched batch whole, closes the source with the short one, then answers `[]`", async () => {
     const log = Recorder();
     const reqId = NextReqId();
     const open = Requesting(log, [Rows(0, 1, 2), Rows(3, 4, 5), Rows(6)]);
     expect(await Read(reqId, open)).to.deep.equal([0, 1, 2]);
     expect(await Read(reqId, open)).to.deep.equal([3, 4, 5]);
-    expect(await Read(reqId, open)).to.deep.equal([6]);
     expect(log.closes).to.equal(0);
+    expect(await Read(reqId, open)).to.deep.equal([6]);
+    expect(log.closes).to.equal(1);
+    expect(CountOpenCursors()).to.equal(baseline);
     expect(await Read(reqId, open)).to.deep.equal([]);
     expect(Count(log, NEXT)).to.equal(3);
     expect(log.statements).to.deep.equal([OPEN, NEXT, NEXT, NEXT, CLOSE]);
+  });
+
+  /**
+   * A driver that arms the idle reaper after the short batch reclaims a cursor whose every row was
+   * handed over, and its last read rejects in place of answering `[]`.
+   */
+  it("answers `[]` after a short batch however long the consumer took over it", async () => {
+    const log = Recorder();
+    const reqId = NextReqId();
+    const open = Requesting(log, [Rows(1, 2)]);
+    expect(await Read(reqId, open, REAPING)).to.deep.equal([1, 2]);
+    await Delay(REAP_WINDOW_MS);
+    expect(await Read(reqId, open, REAPING)).to.deep.equal([]);
     expect(log.closes).to.equal(1);
-    expect(CountOpenCursors()).to.equal(baseline);
   });
 
   /** A driver that answers an empty selection with `[[]]` or leaves the source open fails this. */
@@ -124,8 +139,8 @@ describe("the cursor registry", () => {
   it("holds one registration while iterating and none once exhausted", async () => {
     const log = Recorder();
     const reqId = NextReqId();
-    const open = Requesting(log, [Rows(1, 2)]);
-    expect(await Read(reqId, open)).to.deep.equal([1, 2]);
+    const open = Requesting(log, [Rows(1, 2, 3), Rows()]);
+    expect(await Read(reqId, open)).to.deep.equal([1, 2, 3]);
     expect(CountOpenCursors()).to.equal(baseline + 1);
     expect(await Read(reqId, open)).to.deep.equal([]);
     expect(CountOpenCursors()).to.equal(baseline);
