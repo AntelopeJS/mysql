@@ -41,7 +41,13 @@ function InWorker(
   try {
     worker = new Worker(WORKER);
   } catch (error) {
-    return Promise.resolve(Failed(error, passwordGiven, "connecting"));
+    return Promise.resolve(
+      Failed(
+        error instanceof Error ? error : new Error(String(error)),
+        passwordGiven,
+        "connecting",
+      ),
+    );
   }
   return new Promise((resolve) => {
     let stage: Stage = "connecting";
@@ -96,7 +102,11 @@ export const probe: Probe = async ({ url, timeoutMs, signal }) => {
     uri = target.uri;
     passwordGiven = decodeURIComponent(new URL(uri).password) !== "";
   } catch (error) {
-    return Failed(error, true, "connecting");
+    return Failed(
+      error instanceof Error ? error : new Error(String(error)),
+      true,
+      "connecting",
+    );
   }
   return InWorker({ uri, timeoutMs }, passwordGiven, signal);
 };

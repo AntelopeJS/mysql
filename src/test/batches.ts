@@ -6,7 +6,7 @@ import { Reconnect } from "./tables";
 /** The rows a cursor handed over, in order, and what it ended with: nothing, or its failure. */
 export interface HandedOver<T> {
   readonly rows: readonly T[];
-  readonly failure?: unknown;
+  readonly failure?: Error;
 }
 
 /** Reads `query` through a cursor to its end or its failure, keeping each row it handed over. */
@@ -18,6 +18,9 @@ export async function HandedOver<T>(query: Stream<T>): Promise<HandedOver<T>> {
     }
     return { rows };
   } catch (failure) {
+    if (!(failure instanceof Error)) {
+      throw failure;
+    }
     return { rows, failure };
   }
 }

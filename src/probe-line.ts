@@ -114,8 +114,8 @@ function LockWait(timeoutMs: number): Sql {
 }
 
 /** The code `mysql2` gives an error: `ER_*` for one the server answered, a Node code for one of the network. */
-function CodeOf(error: unknown): string | undefined {
-  if (!(error instanceof Error) || !("code" in error)) {
+function CodeOf(error: Error): string | undefined {
+  if (!("code" in error)) {
     return undefined;
   }
   return IsString(error.code) ? error.code : undefined;
@@ -125,13 +125,15 @@ function CodeOf(error: unknown): string | undefined {
  * What a failure says, never empty. Node fails a host name with several addresses, such as
  * `localhost`, with an `AggregateError` whose own message is empty, so its errors speak for it.
  */
-function MessageOf(error: unknown): string {
+function MessageOf(error: Error): string {
   const message =
     error instanceof AggregateError && error.message === ""
-      ? error.errors.map(MessageOf).join("; ")
-      : error instanceof Error
-        ? error.message
-        : String(error);
+      ? error.errors
+          .map((each) =>
+            MessageOf(each instanceof Error ? each : new Error(String(each))),
+          )
+          .join("; ")
+      : error.message;
   return message === "" ? (CodeOf(error) ?? UNSAID) : message;
 }
 
@@ -329,7 +331,7 @@ async function Inspect(line: Line): Promise<ProbeAnswer> {
       canWrite: await AnyWrite(session, rows),
     };
   } catch (error) {
-    if (!CodeOf(error)?.startsWith(SERVER_ERROR)) {
+    if (!(error instanceof Error) || !CodeOf(error)?.startsWith(SERVER_ERROR)) {
       throw error;
     }
     return {
@@ -354,7 +356,7 @@ function RefusalOf(code: string, passwordGiven: boolean): ProbeRefusal {
 
 /** A failure, given how far the sign-in went: a refusal the server answered, one it made by how it answered, else no answer at all. */
 export function Failed(
-  error: unknown,
+  error: Error,
   passwordGiven: boolean,
   stage: Stage,
   throughSocket = false,
@@ -393,14 +395,18 @@ export async function RunProbe(
   try {
     line = new Line(uri, timeoutMs, onStage);
   } catch (error) {
-    return Failed(error, true, "connecting");
+    return Failed(
+      error instanceof Error ? error : new Error(String(error)),
+      true,
+      "connecting",
+    );
   }
   let answer: ProbeAnswer;
   try {
     answer = await Inspect(line);
   } catch (error) {
     answer = Failed(
-      error,
+      error instanceof Error ? error : new Error(String(error)),
       Boolean(line.connection.config.password),
       line.stage,
       Boolean(line.connection.config.socketPath),
