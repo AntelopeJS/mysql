@@ -13,7 +13,6 @@ import type {
 
 import { IsCatalogEnabled, IsExternal } from "../../config";
 import { AssertConnected } from "../../connection";
-import { PoolSession } from "../../session";
 import {
   ReadNamedRelationRows,
   ReadRelationRows,
@@ -57,10 +56,7 @@ export async function ListRelations(
   schemas?: string[],
 ): Promise<RelationSummary[]> {
   await Guard();
-  return Sequentially(
-    await ReadRelationRows(PoolSession(), schemas),
-    Summarize,
-  );
+  return Sequentially(await ReadRelationRows(schemas), Summarize);
 }
 
 export async function DescribeRelations(

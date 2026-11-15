@@ -61,10 +61,10 @@ export interface CatalogIndex {
 export type ExternalRelationKind = "table" | "partitioned" | "view";
 
 /** One relation as a listing reads it: its kind, what the connected account may do, its estimate. */
-export interface RelationRow {
+/** What the account may do with a relation, however the privileges reached it. */
+export interface RelationAccess {
   readonly schema: string;
   readonly name: string;
-  readonly kind: ExternalRelationKind;
   /** The account may SELECT every column, however the privilege reached it. */
   readonly readable: boolean;
   /** The account may SELECT some of its columns, which does not make it readable. */
@@ -73,6 +73,10 @@ export interface RelationRow {
   readonly insert: boolean;
   /** The account may UPDATE every column; false on a relation it cannot read. */
   readonly update: boolean;
+}
+
+export interface RelationRow extends RelationAccess {
+  readonly kind: ExternalRelationKind;
   /** The engine's own row estimate, absent for a relation that keeps none. */
   readonly statistics: number | null;
   readonly comment: string | null;
@@ -94,6 +98,12 @@ export interface ExternalCatalogSyntax {
   /** The relations named `schema.name`. */
   namedRelations(names: readonly string[]): Sql;
   readonly parseRelation: (row: Row) => RelationRow;
+  /**
+   * The relations in `schemas`, as `relations` lists them, with what the account may do and
+   * nothing else: no kind, row estimate or comment, which MariaDB opens every table to read.
+   */
+  access(schemas: readonly string[]): Sql;
+  readonly parseAccess: (row: Row) => RelationAccess;
   columns(schema: string, table: string): Sql;
   readonly parseColumn: (row: Row) => CatalogColumn;
   /**

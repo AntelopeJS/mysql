@@ -18,11 +18,11 @@ import type {
   RelationRow,
 } from "../../dialect/external";
 import {
+  Deletes,
   KeyOf,
   ReadColumns,
   ReadIndexes,
   ReadReferences,
-  WritesOf,
 } from "./external-catalog";
 import {
   AcceptedDeclarations,
@@ -121,7 +121,11 @@ async function SummaryOf(
     kind: row.kind,
     ...(await EstimateOf(row)),
     key,
-    writes: await WritesOf(PoolSession(), row),
+    writes: {
+      insert: row.insert,
+      update: row.update,
+      delete: await Deletes(PoolSession(), row),
+    },
     comment: row.comment,
   };
   const unmappable = UnmappableReason(row);
