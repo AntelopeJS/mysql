@@ -6,6 +6,7 @@ settings:
 
 overrides:
   '@antelopejs/postgres>@antelopejs/interface-database-catalog': '>=0.1.0 <0.2.0'
+  '@antelopejs/interface-database': file:.tgz-deps/antelopejs-interface-database-14a9c93.tgz
 
 importers:
 
@@ -15,8 +16,8 @@ importers:
         specifier: '>=0.5.1 <0.6.0'
         version: 0.5.1
       '@antelopejs/interface-database':
-        specifier: '>=0.4.0 <0.5.0'
-        version: 0.4.0(@antelopejs/interface-core@0.5.1)
+        specifier: file:.tgz-deps/antelopejs-interface-database-14a9c93.tgz
+        version: file:.tgz-deps/antelopejs-interface-database-14a9c93.tgz(@antelopejs/interface-core@0.5.1)
       '@antelopejs/interface-database-catalog':
         specifier: '>=0.1.0 <0.2.0'
         version: 0.1.0(@antelopejs/interface-core@0.5.1)
@@ -35,7 +36,7 @@ importers:
         version: 0.3.3(@antelopejs/interface-core@0.5.1)
       '@antelopejs/interface-database-decorators':
         specifier: '>=0.5.2 <0.6.0'
-        version: 0.5.2(@antelopejs/interface-api@0.3.3(@antelopejs/interface-core@0.5.1))(@antelopejs/interface-core@0.5.1)(@antelopejs/interface-database@0.4.0(@antelopejs/interface-core@0.5.1))
+        version: 0.5.2(@antelopejs/interface-api@0.3.3(@antelopejs/interface-core@0.5.1))(@antelopejs/interface-core@0.5.1)(@antelopejs/interface-database@file:.tgz-deps/antelopejs-interface-database-14a9c93.tgz(@antelopejs/interface-core@0.5.1))
       '@antelopejs/postgres':
         specifier: '>=0.4.0 <0.5.0'
         version: 0.4.0
@@ -127,15 +128,17 @@ packages:
 
   '@antelopejs/interface-database-decorators@0.5.2':
     resolution: {integrity: sha512-o89zRhY8MT6nXNLz+8G/Yj4f/hQsYqrVPZCMyTrttnQuMjGVEqbIANf9t/KmgNSUVagf34LZDpsfQ2LgeeQa9Q==}
+    version: 0.5.2
     peerDependencies:
       '@antelopejs/interface-api': '>=0.0.15 <1.0.0'
       '@antelopejs/interface-core': '>=0.2.4 <1.0.0'
       '@antelopejs/interface-database': '>=0.3.0 <1.0.0'
 
-  '@antelopejs/interface-database@0.4.0':
-    resolution: {integrity: sha512-cdVGd0qdHwkS3PHdbV9IJUyL3OoGjnmXoVbXdHPNmbwzmjUDkZQHFN2Y3b58SGsH11k3nS1EJLq0sTbKVhaKdQ==}
+  '@antelopejs/interface-database@file:.tgz-deps/antelopejs-interface-database-14a9c93.tgz':
+    resolution: {integrity: sha512-B9E471ocHmSDNB4mlSMY9zNANvc+BA5bxNsDNFtgkTd1+KDZ1XhRcHS55to7jxMNj5KAucHe2H7gabtg+tD1lA==, tarball: file:.tgz-deps/antelopejs-interface-database-14a9c93.tgz}
+    version: 0.4.0
     peerDependencies:
-      '@antelopejs/interface-core': '>=0.2.4 <1.0.0'
+      '@antelopejs/interface-core': '>=0.5.1 <0.6.0'
 
   '@antelopejs/postgres@0.4.0':
     resolution: {integrity: sha512-6GBLRMiTmEodm+VcfgVJuJIOKni6OqqStAyAdKRePDzIc7dcPaduruizIsNLoUtOsPrzIubiXvXWCVCnUDBKEw==}
@@ -2863,22 +2866,22 @@ snapshots:
     dependencies:
       '@antelopejs/interface-core': 0.5.1
 
-  '@antelopejs/interface-database-decorators@0.5.2(@antelopejs/interface-api@0.3.3(@antelopejs/interface-core@0.5.1))(@antelopejs/interface-core@0.5.1)(@antelopejs/interface-database@0.4.0(@antelopejs/interface-core@0.5.1))':
+  '@antelopejs/interface-database-decorators@0.5.2(@antelopejs/interface-api@0.3.3(@antelopejs/interface-core@0.5.1))(@antelopejs/interface-core@0.5.1)(@antelopejs/interface-database@file:.tgz-deps/antelopejs-interface-database-14a9c93.tgz(@antelopejs/interface-core@0.5.1))':
     dependencies:
       '@antelopejs/interface-api': 0.3.3(@antelopejs/interface-core@0.5.1)
       '@antelopejs/interface-core': 0.5.1
-      '@antelopejs/interface-database': 0.4.0(@antelopejs/interface-core@0.5.1)
+      '@antelopejs/interface-database': file:.tgz-deps/antelopejs-interface-database-14a9c93.tgz(@antelopejs/interface-core@0.5.1)
       randomstring: 1.3.2
       reflect-metadata: 0.2.2
 
-  '@antelopejs/interface-database@0.4.0(@antelopejs/interface-core@0.5.1)':
+  '@antelopejs/interface-database@file:.tgz-deps/antelopejs-interface-database-14a9c93.tgz(@antelopejs/interface-core@0.5.1)':
     dependencies:
       '@antelopejs/interface-core': 0.5.1
 
   '@antelopejs/postgres@0.4.0':
     dependencies:
       '@antelopejs/interface-core': 0.5.1
-      '@antelopejs/interface-database': 0.4.0(@antelopejs/interface-core@0.5.1)
+      '@antelopejs/interface-database': file:.tgz-deps/antelopejs-interface-database-14a9c93.tgz(@antelopejs/interface-core@0.5.1)
       '@antelopejs/interface-database-catalog': 0.1.0(@antelopejs/interface-core@0.5.1)
       pg: 8.23.1
     transitivePeerDependencies:
