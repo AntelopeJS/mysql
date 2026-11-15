@@ -62,6 +62,12 @@ export type WorkerMessage = { stage: Stage } | { answer: ProbeAnswer };
 
 const ACCOUNT = sql`SELECT CURRENT_USER() AS account, DATABASE() AS current_database, VERSION() AS version`;
 
+/**
+ * What a socket path answers that nothing answered at: the same whether the path is missing, is no
+ * socket or refuses, so the answer tells nothing about the files of the probing host.
+ */
+const NO_SOCKET = "Nothing answered at the socket path.";
+
 /** The message of a failure that says nothing and carries no code. */
 const UNSAID = "the connection failed without a message";
 
@@ -325,6 +331,7 @@ export function Failed(
   error: unknown,
   passwordGiven: boolean,
   stage: Stage,
+  throughSocket = false,
 ): ProbeAnswer {
   const code = CodeOf(error);
   const message = MessageOf(error);
@@ -340,7 +347,10 @@ export function Failed(
   if (stage === "greeted" && !lost) {
     return { outcome: "refused", refusal: "other", message };
   }
-  return { outcome: "unreachable", message };
+  return {
+    outcome: "unreachable",
+    message: throughSocket && stage === "connecting" ? NO_SOCKET : message,
+  };
 }
 
 /**
@@ -369,6 +379,7 @@ export async function RunProbe(
       error,
       Boolean(line.connection.config.password),
       line.stage,
+      Boolean(line.connection.config.socketPath),
     );
   }
   if (answer.outcome === "unreachable") {
