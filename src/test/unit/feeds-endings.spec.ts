@@ -44,6 +44,29 @@ describe("the ways a change feed ends", () => {
     expect(message).to.contain(`${SCHEMA_ID}.${TABLE_ID}`);
   });
 
+  /**
+   * A driver that leaves the state of a failed open live opens the feed again on the next read, and
+   * keeps the state in its registry with no ending to evict it by.
+   */
+  it("releases a feed whose open rejected, so a later read answers an empty batch without opening again", async () => {
+    const { env } = Reader([{}]);
+    let opens = 0;
+    const failing: FeedEnvironment = {
+      ...env,
+      open: () => {
+        opens += 1;
+        return Promise.reject(new Error("the log cannot be read"));
+      },
+    };
+    const reqId = NewReqId();
+    const message = await WhileConfigured(() =>
+      Rejection(Step(reqId, failing)),
+    );
+    expect(message).to.equal("the log cannot be read");
+    expect(await WhileConfigured(() => Step(reqId, failing))).to.deep.equal([]);
+    expect(opens).to.equal(1);
+  });
+
   it("does not reject on a high-water it is still at", async () => {
     const { env } = Reader(
       [

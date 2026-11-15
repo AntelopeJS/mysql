@@ -408,6 +408,23 @@ async function Open(state: FeedState, stages: QueryStage[]): Promise<void> {
 }
 
 /**
+ * Opens the feed, and ends it when the open fails: a read that rejects has released its feed, and
+ * the consumer never reads it again nor closes it.
+ */
+async function Opened(
+  reqId: number,
+  state: FeedState,
+  stages: QueryStage[],
+): Promise<void> {
+  try {
+    await Open(state, stages);
+  } catch (err) {
+    Retire(reqId, state, CLOSED);
+    throw err;
+  }
+}
+
+/**
  * Answers a poll that failed on a document deeper than the server builds. A poll of a batch says
  * only that some event in it is too deep, so the feed reads on one event at a time, at once, and
  * delivers every event before that one. A poll of one event names it, and ends the feed after the
@@ -462,7 +479,7 @@ async function Advance(
       return state.buffer.splice(EMPTY);
     }
     if (!IsOpen(state)) {
-      await Open(state, stages);
+      await Opened(reqId, state, stages);
       continue;
     }
     state.woken = false;
