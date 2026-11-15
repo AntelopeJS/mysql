@@ -71,6 +71,8 @@ interface CursorState {
   chain: Promise<unknown>;
   cursor?: OpenCursor;
   isOpening: boolean;
+  /** Its last batch was handed over and its connection given back; the read after it ends it. */
+  isSpent: boolean;
   idleTimeoutMs: number;
   reason?: EndReason;
 }
@@ -199,6 +201,7 @@ function Registered(reqId: number): CursorState {
   const state: CursorState = {
     chain: Promise.resolve(),
     isOpening: false,
+    isSpent: false,
     idleTimeoutMs: UNARMED,
   };
   cursors.set(reqId, state);
@@ -254,6 +257,16 @@ async function Teardown(
   await Quietly(() => cursor.source.close());
   state.cursor = undefined;
   Forget(reqId);
+}
+
+/**
+ * Gives back the connection of a cursor whose last batch is being handed over, and leaves its
+ * ending to the read after it, so no other cursor's ending can evict it while that batch is read.
+ */
+async function Spend(state: CursorState, cursor: OpenCursor): Promise<void> {
+  await Quietly(() => cursor.source.close());
+  state.cursor = undefined;
+  state.isSpent = true;
 }
 
 /** Reclaims the cursor only if the timer that fired is still its current one; a read may have re-armed it. */
@@ -364,13 +377,19 @@ async function Advance(
   if (state.reason) {
     return ENDED_ANSWERS[state.reason](reqId, state);
   }
+  if (state.isSpent) {
+    Retire(reqId, state, EXHAUSTED);
+    return Exhausted();
+  }
   const cursor = await Established(reqId, state, open, options);
   ClearReaper(cursor);
   const batch = await Refill(reqId, state, cursor, options.cursorBatchSize);
-  if (batch.isLast) {
-    await Teardown(reqId, state, EXHAUSTED);
-  } else {
+  if (!batch.isLast) {
     ArmReaper(reqId, state, cursor, options.cursorIdleTimeoutMs);
+  } else if (batch.values.length > EMPTY) {
+    await Spend(state, cursor);
+  } else {
+    await Teardown(reqId, state, EXHAUSTED);
   }
   return batch.values;
 }
@@ -393,9 +412,9 @@ async function Advance(
  * forgotten one.
  *
  * A batch shorter than the configured count means the cursor is exhausted, so the read that fetched
- * it tears the cursor down before answering it, and the read after it answers an empty batch from
- * how the cursor ended. No connection or reaper waits on a consumer still working through that last
- * batch. Nothing asks for that: the contract's own suite iterates to completion and never closes, so
+ * it gives the connection back before answering it, and the read after it ends the cursor and
+ * answers an empty batch. No connection, reaper or remembered ending waits on a consumer still
+ * working through that last batch. Nothing asks for that: the contract's own suite iterates to completion and never closes, so
  * self-reclaim is the only thing between this adapter and one leaked connection per iteration.
  *
  * The options are read here, synchronously, rather than inside the machinery, so that a spec can

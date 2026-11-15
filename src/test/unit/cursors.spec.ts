@@ -99,6 +99,21 @@ describe("the cursor registry", () => {
     expect(log.closes).to.equal(1);
   });
 
+  /**
+   * A driver that records the ending with the short batch lets the endings of other cursors evict
+   * it before the read after, which then rejects as forgotten in place of answering `[]`.
+   */
+  it("answers `[]` after a short batch however many cursors ended in between", async () => {
+    const log = Recorder();
+    const reqId = NextReqId();
+    const open = Requesting(log, [Rows(1, 2)]);
+    expect(await Read(reqId, open)).to.deep.equal([1, 2]);
+    expect(log.closes).to.equal(1);
+    await OverflowEndings();
+    expect(await Read(reqId, open)).to.deep.equal([]);
+    expect(log.opens).to.equal(1);
+  });
+
   /** A driver that answers an empty selection with `[[]]` or leaves the source open fails this. */
   it("answers `[]` to the first read of an empty selection and releases the source", async () => {
     const log = Recorder();

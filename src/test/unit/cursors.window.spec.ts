@@ -56,8 +56,8 @@ describe("the cursor registry", () => {
   it("refuses a reqId whose reaping it has forgotten, rather than re-serving its rows", async () => {
     const log = Recorder();
     const reqId = NextReqId();
-    const open = Reopening(log, 1, 2);
-    expect(await Read(reqId, open, REAPING)).to.deep.equal([1, 2]);
+    const open = Reopening(log, 1, 2, 3);
+    expect(await Read(reqId, open, REAPING)).to.deep.equal([1, 2, 3]);
     await Delay(REAP_WINDOW_MS);
     expect(log.closes).to.equal(1);
     await OverflowEndings();
