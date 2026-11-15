@@ -214,14 +214,31 @@ function CategoryOf(column: ProfiledColumn, row: Row): CategoryCount {
   return { value: String(cell), rows };
 }
 
-/** Values counted often enough to be categories; every rarer value only adds to `other`. */
-function AsCategories(counts: CategoryCount[]): Categories {
-  return {
-    values: counts.filter((count) => count.rows >= CATEGORY_MIN_ROWS),
-    other: counts
-      .filter((count) => count.rows < CATEGORY_MIN_ROWS)
-      .reduce((total, count) => total + count.rows, 0),
-  };
+/**
+ * The most frequent values, at most one more than {@link CATEGORY_LIMIT}, with every value counted
+ * fewer than {@link CATEGORY_MIN_ROWS} times folded into one row of `NULL` category inside the
+ * statement, so a rare value never leaves the database.
+ */
+function CategoriesSql(column: ProfiledColumn, source: Source): Sql {
+  return sql`SELECT CASE WHEN top.category_rows >= ${int(CATEGORY_MIN_ROWS)} THEN top.category END AS category,
+      SUM(top.category_rows) AS category_rows
+    FROM (SELECT ${CategoryValue(column)} AS category, COUNT(*) AS category_rows FROM ${source.from}
+      WHERE ${column.quoted} IS NOT NULL GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT ${int(CATEGORY_LIMIT + 1)}) AS top
+    GROUP BY 1 ORDER BY 2 DESC, 1`;
+}
+
+/** Each named row as a category; the `NULL` row, when there is one, is `other`. */
+function AsCategories(column: ProfiledColumn, rows: Row[]): Categories {
+  const values: CategoryCount[] = [];
+  let other = 0;
+  for (const row of rows) {
+    if ((row.get("category") ?? null) === null) {
+      other = NumberOf(row, "category_rows") ?? 0;
+    } else {
+      values.push(CategoryOf(column, row));
+    }
+  }
+  return { values, other };
 }
 
 async function MeasureCategories(
@@ -235,13 +252,8 @@ async function MeasureCategories(
   if (!CATEGORY_FAMILIES.includes(column.family) || !isCategorical) {
     return undefined;
   }
-  const measured = await session.measure(
-    sql`SELECT ${CategoryValue(column)} AS category, COUNT(*) AS category_rows FROM ${source.from}
-      WHERE ${column.quoted} IS NOT NULL GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT ${int(CATEGORY_LIMIT + 1)}`,
-  );
-  return Mapped(measured, (rows) =>
-    AsCategories(rows.map((row) => CategoryOf(column, row))),
-  );
+  const measured = await session.measure(CategoriesSql(column, source));
+  return Mapped(measured, (rows) => AsCategories(column, rows));
 }
 
 async function MeasureMonths(
