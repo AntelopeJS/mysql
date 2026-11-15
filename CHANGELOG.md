@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.2.3
+
+[compare changes](https://github.com/AntelopeJS/mysql/compare/v0.2.2...v0.2.3)
+
+### 🚀 Enhancements
+
+- **probe:** Export the connection probe the DMS connect flow calls ([#97](https://github.com/AntelopeJS/mysql/pull/97))
+
+### 🩹 Fixes
+
+- **mariadb:** Read a JSON number past the doubles as the greatest double without a cast ([#96](https://github.com/AntelopeJS/mysql/pull/96))
+
+### ❤️ Contributors
+
+- Antony Rizzitelli ([@Upd4ting](http://github.com/Upd4ting))
+
 ## v0.2.2
 
 [compare changes](https://github.com/AntelopeJS/mysql/compare/v0.2.1...v0.2.2)
