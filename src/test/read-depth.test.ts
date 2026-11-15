@@ -60,12 +60,9 @@ async function Answer(read: Promise<Row[]>): Promise<Answered> {
  * How a cursor ended: `whole`, `short` where it ended without a failure before its last row, `too
  * deep` for the engine's too-deep error, or another error's text.
  */
-function Ending(failure: unknown, isWhole: boolean): string {
+function Ending(failure: Error | undefined, isWhole: boolean): string {
   if (failure === undefined) {
     return isWhole ? "whole" : "short";
-  }
-  if (!(failure instanceof Error)) {
-    return "a failure that is no Error";
   }
   return GetDialect().capture.tooDeep(failure) ? "too deep" : failure.message;
 }
