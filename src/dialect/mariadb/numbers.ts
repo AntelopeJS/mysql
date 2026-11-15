@@ -65,6 +65,12 @@ const GREATEST_DOUBLE = sql`1.7976931348623157e308`;
 /** The greatest double's decimal exponent. */
 const GREATEST_EXPONENT = 308;
 
+/** The greatest double's significand, as a normalized text's leading 17 significant digits read it. */
+const GREATEST_SIGNIFICAND = sql`1.7976931348623157`;
+
+/** The characters of a normalized significand that hold 17 significant digits: a digit, `.`, 16 more. */
+const SIGNIFICAND_CHARS = 18;
+
 /**
  * The JSON syntax's `canonicalNumber` on MariaDB, which stores JSON as text and dedups by it. An
  * array or an object is its {@link ContainerKey} text, each nested number spelled as its
@@ -106,6 +112,21 @@ function Short(value: Sql): Sql {
 }
 
 /**
+ * A JSON number's double as MariaDB's cast reads it, without the warning the cast raises for a
+ * number beyond the doubles. The cast answers the greatest double, signed, for a number whose
+ * normalized text is at least {@link GREATEST_SIGNIFICAND} times 10^308, as for every number from
+ * there up to the first that overflows, so such a number is that double rather than cast. The
+ * significand's leading digits are read as a decimal, which holds them exactly.
+ */
+function Double(value: Sql): Sql {
+  const normalized = sql`CAST(${Normalized(value)} AS BINARY)`;
+  const exponent = sql`CAST(SUBSTRING_INDEX(${normalized}, 'E', -1) AS DECIMAL(65, 0))`;
+  const significand = sql`CAST(LEFT(TRIM(LEADING '-' FROM SUBSTRING_INDEX(${normalized}, 'E', 1)), ${int(SIGNIFICAND_CHARS)}) AS DECIMAL(20, 17))`;
+  const beyond = sql`(${exponent} > ${int(GREATEST_EXPONENT)} OR (${exponent} = ${int(GREATEST_EXPONENT)} AND ${significand} >= ${GREATEST_SIGNIFICAND}))`;
+  return sql`(CASE WHEN ${beyond} THEN IF(${normalized} LIKE '-%', -${GREATEST_DOUBLE}, ${GREATEST_DOUBLE}) ELSE CAST(JSON_VALUE(${value}, '$') AS DOUBLE) END)`;
+}
+
+/**
  * A JSON number's text in the one spelling of every number MySQL's JSON `=` finds it equal to. A
  * number's text is as written, `-0`, `0.0` and `1.0` included, and `JSON_TYPE` calls `15e-1` an
  * integer, so the text decides. An integer literal from -2^63 to 2^64 - 1 keeps its digits, which a
@@ -122,7 +143,7 @@ function Short(value: Sql): Sql {
  */
 function NumberKey(value: Sql): Sql {
   const text = sql`JSON_COMPACT(${value})`;
-  const double = sql`CAST(JSON_VALUE(${value}, '$') AS DOUBLE)`;
+  const double = Double(value);
   const integral = sql`${double} = FLOOR(${double}) AND ABS(${double}) < ${UNSIGNED_BOUND}`;
   const normalized = Normalized(value);
   const exponent = sql`CAST(SUBSTRING_INDEX(CAST(${normalized} AS BINARY), 'E', -1) AS DECIMAL(65, 0))`;
