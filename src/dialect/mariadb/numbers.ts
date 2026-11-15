@@ -111,19 +111,28 @@ function Short(value: Sql): Sql {
   return sql`(CHAR_LENGTH(${value}) <= ${int(SHORT_TEXT)} AND ${value} NOT REGEXP '[eE]' AND (ABS(CAST(JSON_VALUE(${value}, '$') AS DOUBLE)) >= ${LEAST_NORMAL} OR ${value} NOT REGEXP '[1-9]'))`;
 }
 
+/** The most digits a number spelled without an exponent holds below 10^308. */
+const DIGITS_BELOW_GREATEST = 308;
+
 /**
- * A JSON number's double as MariaDB's cast reads it, without the warning the cast raises for a
- * number beyond the doubles. The cast answers the greatest double, signed, for a number whose
- * normalized text is at least {@link GREATEST_SIGNIFICAND} times 10^308, as for every number from
- * there up to the first that overflows, so such a number is that double rather than cast. The
- * significand's leading digits are read as a decimal, which holds them exactly.
+ * Whether a number's text can reach {@link PastDoubles}: it has an exponent, or more characters than
+ * a number below 10^308 spelled without one holds. It spares the normalizing of every other text.
  */
-function Double(value: Sql): Sql {
-  const normalized = sql`CAST(${Normalized(value)} AS BINARY)`;
-  const exponent = sql`CAST(SUBSTRING_INDEX(${normalized}, 'E', -1) AS DECIMAL(65, 0))`;
-  const significand = sql`CAST(LEFT(TRIM(LEADING '-' FROM SUBSTRING_INDEX(${normalized}, 'E', 1)), ${int(SIGNIFICAND_CHARS)}) AS DECIMAL(20, 17))`;
-  const beyond = sql`(${exponent} > ${int(GREATEST_EXPONENT)} OR (${exponent} = ${int(GREATEST_EXPONENT)} AND ${significand} >= ${GREATEST_SIGNIFICAND}))`;
-  return sql`(CASE WHEN ${beyond} THEN IF(${normalized} LIKE '-%', -${GREATEST_DOUBLE}, ${GREATEST_DOUBLE}) ELSE CAST(JSON_VALUE(${value}, '$') AS DOUBLE) END)`;
+function MayPassDoubles(text: Sql): Sql {
+  return sql`(${text} REGEXP '[eE]' OR CHAR_LENGTH(${text}) > ${int(DIGITS_BELOW_GREATEST)})`;
+}
+
+/**
+ * Whether a number's normalized text is at least {@link GREATEST_SIGNIFICAND} times 10^308 in
+ * magnitude, for which MariaDB's cast answers the greatest double, signed, and warns that it
+ * truncated the text, as it does up to the first number that overflows. The significand's leading
+ * digits are read as a decimal, which holds them exactly.
+ */
+function PastDoubles(normalized: Sql): Sql {
+  const text = sql`CAST(${normalized} AS BINARY)`;
+  const exponent = sql`CAST(SUBSTRING_INDEX(${text}, 'E', -1) AS DECIMAL(65, 0))`;
+  const significand = sql`CAST(LEFT(TRIM(LEADING '-' FROM SUBSTRING_INDEX(${text}, 'E', 1)), ${int(SIGNIFICAND_CHARS)}) AS DECIMAL(20, 17))`;
+  return sql`(${exponent} > ${int(GREATEST_EXPONENT)} OR (${exponent} = ${int(GREATEST_EXPONENT)} AND ${significand} >= ${GREATEST_SIGNIFICAND}))`;
 }
 
 /**
@@ -139,19 +148,23 @@ function Double(value: Sql): Sql {
  * integer literal of 309 digits or more, is that text, as `JSON_EQUALS` compares it, so `1e309`
  * meets `1E309` and `10e308`; a spelling of the greatest double itself with such an exponent, as
  * `0.17976931348623157e309`, is that double. The exponent is read as a decimal, which caps one past
- * a `SIGNED` above 308.
+ * a `SIGNED` above 308. A number {@link PastDoubles} is keyed with the greatest double, signed, which
+ * the cast answers for it, so the cast never runs on it and never warns.
  */
 function NumberKey(value: Sql): Sql {
   const text = sql`JSON_COMPACT(${value})`;
-  const double = Double(value);
-  const integral = sql`${double} = FLOOR(${double}) AND ABS(${double}) < ${UNSIGNED_BOUND}`;
   const normalized = Normalized(value);
   const exponent = sql`CAST(SUBSTRING_INDEX(CAST(${normalized} AS BINARY), 'E', -1) AS DECIMAL(65, 0))`;
-  const finite = sql`(ABS(${double}) < ${GREATEST_DOUBLE} OR ${exponent} <= ${int(GREATEST_EXPONENT)})`;
   const exact = sql`${text} REGEXP '^-?[0-9]{1,20}$' AND CAST(${text} AS DECIMAL(65, 0)) BETWEEN ${SIGNED_MIN} AND ${UNSIGNED_MAX}`;
-  const greatest = sql`${normalized} = ${Normalized(sql`CAST(${double} AS CHAR)`)}`;
-  const beyond = sql`CONVERT(IF(${greatest}, ${double}, ${normalized}) USING utf8mb4) COLLATE ${ident(BINARY_COLLATION)}`;
+  const keyed = (double: Sql) => {
+    const integral = sql`${double} = FLOOR(${double}) AND ABS(${double}) < ${UNSIGNED_BOUND}`;
+    const finite = sql`(ABS(${double}) < ${GREATEST_DOUBLE} OR ${exponent} <= ${int(GREATEST_EXPONENT)})`;
+    const greatest = sql`${normalized} = ${Normalized(sql`CAST(${double} AS CHAR)`)}`;
+    const beyond = sql`CONVERT(IF(${greatest}, ${double}, ${normalized}) USING utf8mb4) COLLATE ${ident(BINARY_COLLATION)}`;
+    return sql`(CASE WHEN ${text} REGEXP '^-?[0-9]{309,}$' THEN ${beyond} WHEN ${integral} THEN CAST(${double} AS DECIMAL(20, 0)) WHEN ${finite} THEN ${double} ELSE ${beyond} END)`;
+  };
+  const greatestSigned = sql`IF(CAST(${normalized} AS BINARY) LIKE '-%', -${GREATEST_DOUBLE}, ${GREATEST_DOUBLE})`;
   return Json(
-    sql`(CASE WHEN ${exact} THEN REGEXP_REPLACE(${text}, '^-0$', '0') WHEN ${text} REGEXP '^-?[0-9]{309,}$' THEN ${beyond} WHEN ${integral} THEN CAST(${double} AS DECIMAL(20, 0)) WHEN ${finite} THEN ${double} ELSE ${beyond} END)`,
+    sql`(CASE WHEN ${exact} THEN REGEXP_REPLACE(${text}, '^-0$', '0') WHEN ${MayPassDoubles(text)} AND ${PastDoubles(normalized)} THEN ${keyed(greatestSigned)} ELSE ${keyed(sql`CAST(JSON_VALUE(${value}, '$') AS DOUBLE)`)} END)`,
   );
 }
