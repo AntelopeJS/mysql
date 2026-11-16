@@ -1,7 +1,7 @@
 import type { Journey, VerifyConfig } from "@antelopejs/tooling-configs/verify";
 
-import { CLIENT, READER } from "./client.ts";
-import { catalogDescribe, catalogRefused } from "./journeys-catalog.ts";
+import { CLIENT, READER, ROLE, ROLE_ACCOUNT } from "./client.ts";
+import { catalogDescribe, catalogRefused, catalogRoleWrites } from "./journeys-catalog.ts";
 import { externalReadWrite, externalRegistration } from "./journeys-external.ts";
 import { changeFeeds } from "./journeys-feeds.ts";
 import { configOptions, configRefused } from "./journeys-module.ts";
@@ -16,7 +16,8 @@ import { DATABASE, ENGINES, MYSQL, ownedConfig, type Engine } from "./session.ts
 const RESET = [
   `DROP DATABASE IF EXISTS \`${DATABASE}\``,
   `DROP DATABASE IF EXISTS \`${CLIENT}\``,
-  `DROP USER IF EXISTS '${READER}'@'%'`,
+  `DROP USER IF EXISTS '${READER}'@'%', '${ROLE_ACCOUNT}'@'%'`,
+  `DROP ROLE IF EXISTS ${ROLE}`,
   ...PROBE_USERS.map((user) => `DROP USER IF EXISTS '${user}'@'%'`),
   "DROP DATABASE IF EXISTS `probe_shop`",
   `CREATE DATABASE \`${DATABASE}\``,
@@ -35,6 +36,7 @@ const ON_EVERY_ENGINE = {
   "external-read-write": externalReadWrite,
   "external-registration": externalRegistration,
   "catalog-describe": catalogDescribe,
+  "catalog-role-writes": catalogRoleWrites,
   "catalog-refused": catalogRefused,
   "probe-access": probeAccess,
 } satisfies Record<string, (engine: Engine) => Journey>;
@@ -50,6 +52,8 @@ const FORMAL_MERGE_REPEATED_KEYS = ".agents/skills/formal-merge-repeated-keys";
 const FORMAL_MARIADB_READ_WARNINGS = ".agents/skills/formal-mariadb-read-warnings";
 
 const FORMAL_UNIQUE_INDEX_GATE = ".agents/skills/formal-unique-index-gate";
+
+const FORMAL_PIPELINE_CHAINS = ".agents/skills/formal-pipeline-chains";
 
 const config: VerifyConfig = {
   doors: {
@@ -217,6 +221,29 @@ const config: VerifyConfig = {
       files: [`${FORMAL_UNIQUE_INDEX_GATE}/**`],
       command: ["node", `${FORMAL_UNIQUE_INDEX_GATE}/check.mjs`, "--full"],
       violation: /^(?:finding|BROKEN|HOLDS) +(\w+)/gm,
+    },
+    {
+      name: "formal-pipeline-chains",
+      covers: [
+        "src/dialect/**",
+        "src/implementations/database/context.ts",
+        "src/implementations/database/expression.ts",
+        "src/implementations/database/feed-pipeline.ts",
+        "src/implementations/database/grouped.ts",
+        "src/implementations/database/pipeline.ts",
+        "src/implementations/database/plan.ts",
+        "src/implementations/database/query.ts",
+        "src/implementations/database/relation.ts",
+        "src/implementations/database/render.ts",
+        "src/implementations/database/selection.ts",
+        "src/implementations/database/stage.ts",
+        "src/implementations/database/stages-*.ts",
+        "src/implementations/database/subquery.ts",
+        "src/implementations/database/wrap.ts",
+      ],
+      files: [`${FORMAL_PIPELINE_CHAINS}/**`],
+      command: ["node", `${FORMAL_PIPELINE_CHAINS}/check.mjs`, "--full"],
+      violation: /^BROKEN +(\w+)/gm,
     },
   ],
 };

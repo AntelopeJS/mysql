@@ -1,6 +1,6 @@
 import { has, type Journey } from "@antelopejs/tooling-configs/verify";
 
-import { CLIENT, externalConfig, READER, seedClient } from "./client.ts";
+import { CLIENT, externalConfig, READER, ROLE, ROLE_ACCOUNT, roleConfig, seedClient, seedRoleClient } from "./client.ts";
 import { pick } from "./json.ts";
 import { answered, close, open, ownedConfig, part, same, sees, server, sql, type Engine } from "./session.ts";
 
@@ -98,5 +98,37 @@ return out;`;
       has("a query refuses with the same reason", JSON.stringify(pick(downResult.value, "query") ?? null), /MySQL or MariaDB adapter is not connected: the server is not answering/u),
     ]);
     await close(down);
+  },
+});
+
+export const catalogRoleWrites = (engine: Engine): Journey => ({
+  title: "the catalog lists the write privileges an account holds through a default role, on an account whose name holds @, and none on the table the role does not write",
+  entryPoint: "`ListRelations` of @antelopejs/interface-database-catalog under `ajs project dev`, on an external instance connected as an account that holds its privileges only through a default role",
+  async run(context) {
+    await seedRoleClient(context, engine);
+    const session = await open(context, roleConfig(context, engine));
+    const result = await session.run(
+      "list the relations as the account that holds a role",
+      `const relations = await catalog.ListRelations(["${CLIENT}"]);
+return relations.map((r) => ({ name: r.name, key: r.key, writes: r.writes, unmappable: r.unmappable ?? null })).sort((a, b) => a.name.localeCompare(b.name));`,
+    );
+    context.expect(result.folder, [answered(result)], { critical: true });
+    context.expect(result.folder, [
+      sees("ListRelations answers writes on the table the role may write and none on the table it only reads, both mappable", result, [
+        { key: { columns: ["id"], source: "primary" }, name: "ledger", unmappable: null, writes: { delete: true, insert: true, update: true } },
+        { key: { columns: ["id"], source: "primary" }, name: "notes", unmappable: null, writes: { delete: false, insert: false, update: false } },
+      ]),
+    ]);
+    const held = await sql(
+      context,
+      engine,
+      "read the grants of the account as root",
+      `SELECT JSON_OBJECT('account', '${ROLE_ACCOUNT}', 'direct', (SELECT COUNT(*) FROM information_schema.TABLE_PRIVILEGES WHERE GRANTEE LIKE '%${ROLE_ACCOUNT}%'), 'role', '${ROLE}')`,
+      CLIENT,
+    );
+    context.expect(held.folder, [
+      same("the account holds no table privilege of its own, so every write comes through the role", pick(held.value, "direct"), 0),
+    ]);
+    await close(session);
   },
 });
