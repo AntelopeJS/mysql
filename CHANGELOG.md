@@ -1,5 +1,47 @@
 # Changelog
 
+## v0.2.5
+
+[compare changes](https://github.com/AntelopeJS/mysql/compare/v0.2.4...v0.2.5)
+
+### 🩹 Fixes
+
+- **probe:** Count the right to create tables as write access ([#104](https://github.com/AntelopeJS/mysql/pull/104))
+- **mysql:** Refuse reads of a group's key, stream or outer row that one statement cannot answer ([#105](https://github.com/AntelopeJS/mysql/pull/105))
+- **catalog:** End an enum or integer range at values counted 5 times ([#114](https://github.com/AntelopeJS/mysql/pull/114))
+
+### 💅 Refactors
+
+- **mysql:** Restore the group reads that 0.2.4 answers ([#111](https://github.com/AntelopeJS/mysql/pull/111))
+
+### 📖 Documentation
+
+- **agents:** Describe the repo, its layout and how to test ([#103](https://github.com/AntelopeJS/mysql/pull/103))
+- **formal:** Describe nested group reads as next answers them after #111 ([#113](https://github.com/AntelopeJS/mysql/pull/113))
+
+### 📦 Build
+
+- Move to @antelopejs/tooling-configs 0.8 and the three-tier CI ([#101](https://github.com/AntelopeJS/mysql/pull/101))
+
+### ✅ Tests
+
+- Add formal targets for JSON value identity and merge on repeated keys ([#107](https://github.com/AntelopeJS/mysql/pull/107))
+- **verify:** Cover the probe and the unmapped files in the verification skill ([#108](https://github.com/AntelopeJS/mysql/pull/108))
+- **mariadb:** Add formal targets for cut-value reads and the unique-index gate ([#106](https://github.com/AntelopeJS/mysql/pull/106))
+- **formal:** Add a formal target for stage chains and a journey for catalog roles ([#109](https://github.com/AntelopeJS/mysql/pull/109))
+
+### 🤖 CI
+
+- **release:** Publish without re-running the test matrix ([#100](https://github.com/AntelopeJS/mysql/pull/100))
+
+#### ⚠️ Breaking Changes
+
+- **mysql:** Refuse reads of a group's key, stream or outer row that one statement cannot answer ([#105](https://github.com/AntelopeJS/mysql/pull/105))
+
+### ❤️ Contributors
+
+- Antony Rizzitelli
+
 ## v0.2.4
 
 [compare changes](https://github.com/AntelopeJS/mysql/compare/v0.2.3...v0.2.4)
