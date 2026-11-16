@@ -1,7 +1,7 @@
 import type { Journey, VerifyConfig } from "@antelopejs/tooling-configs/verify";
 
-import { CLIENT, READER } from "./client.ts";
-import { catalogDescribe, catalogRefused } from "./journeys-catalog.ts";
+import { CLIENT, READER, ROLE, ROLE_ACCOUNT } from "./client.ts";
+import { catalogDescribe, catalogRefused, catalogRoleWrites } from "./journeys-catalog.ts";
 import { externalReadWrite, externalRegistration } from "./journeys-external.ts";
 import { changeFeeds } from "./journeys-feeds.ts";
 import { configOptions, configRefused } from "./journeys-module.ts";
@@ -16,7 +16,8 @@ import { DATABASE, ENGINES, MYSQL, ownedConfig, type Engine } from "./session.ts
 const RESET = [
   `DROP DATABASE IF EXISTS \`${DATABASE}\``,
   `DROP DATABASE IF EXISTS \`${CLIENT}\``,
-  `DROP USER IF EXISTS '${READER}'@'%'`,
+  `DROP USER IF EXISTS '${READER}'@'%', '${ROLE_ACCOUNT}'@'%'`,
+  `DROP ROLE IF EXISTS ${ROLE}`,
   ...PROBE_USERS.map((user) => `DROP USER IF EXISTS '${user}'@'%'`),
   "DROP DATABASE IF EXISTS `probe_shop`",
   `CREATE DATABASE \`${DATABASE}\``,
@@ -35,6 +36,7 @@ const ON_EVERY_ENGINE = {
   "external-read-write": externalReadWrite,
   "external-registration": externalRegistration,
   "catalog-describe": catalogDescribe,
+  "catalog-role-writes": catalogRoleWrites,
   "catalog-refused": catalogRefused,
   "probe-access": probeAccess,
 } satisfies Record<string, (engine: Engine) => Journey>;

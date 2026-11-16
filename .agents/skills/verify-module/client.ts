@@ -35,3 +35,40 @@ export const SALES = `new Schema("${CLIENT}", {
   audit: { fields: { _id: "string", id: "number", note: "string" }, indexes: {} },
   active_accounts: { fields: { name: "string", score: "number" }, indexes: {} },
 })`;
+
+/** The account whose name holds `@`, which holds its privileges only through {@link ROLE}. */
+export const ROLE_ACCOUNT = "app@team";
+
+/** The role the account holds by default: it reads every table of the client's database and writes `ledger` only. */
+export const ROLE = "ledger_writer";
+
+const DEFAULT_ROLE: Record<Engine["service"], string> = {
+  mysql: `SET DEFAULT ROLE ${ROLE} TO '${ROLE_ACCOUNT}'@'%'`,
+  mariadb: `SET DEFAULT ROLE ${ROLE} FOR '${ROLE_ACCOUNT}'@'%'`,
+};
+
+/** Creates the client's `sales` database with `ledger` and `notes`, the role that reads both and writes `ledger`, and the account that holds the role by default, as root. */
+export async function seedRoleClient(context: JourneyContext, engine: Engine): Promise<void> {
+  await seed(
+    context,
+    engine,
+    "create the client's database, a role that writes one table and an account that holds it by default",
+    `CREATE DATABASE ${CLIENT};
+CREATE TABLE ${CLIENT}.ledger (id INT PRIMARY KEY, amount INT NOT NULL);
+CREATE TABLE ${CLIENT}.notes (id INT PRIMARY KEY, body TEXT);
+INSERT INTO ${CLIENT}.ledger VALUES (1, 10);
+INSERT INTO ${CLIENT}.notes VALUES (1, 'kept');
+CREATE USER '${ROLE_ACCOUNT}'@'%';
+CREATE ROLE ${ROLE};
+GRANT SELECT ON ${CLIENT}.* TO ${ROLE};
+GRANT INSERT, UPDATE, DELETE ON ${CLIENT}.ledger TO ${ROLE};
+GRANT ${ROLE} TO '${ROLE_ACCOUNT}'@'%';
+${DEFAULT_ROLE[engine.service]};`,
+    "mysql",
+  );
+}
+
+/** The config of an external instance on the client's database as the account that holds {@link ROLE}. */
+export function roleConfig(context: JourneyContext, engine: Engine): ModuleConfig {
+  return { mode: "external", url: urlOf(server(context, engine), encodeURIComponent(ROLE_ACCOUNT), CLIENT) };
+}
