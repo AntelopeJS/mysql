@@ -3,12 +3,12 @@ import type { QueryStage } from "@antelopejs/interface-database/common";
 import type { Compiled } from "./sql";
 import { CORE_STAGES } from "./stages-core";
 import { DATE_STAGES } from "./stages-date";
-import { ARRAY_STAGES } from "./stages-array";
+import { ARRAY_STAGES, ARRAY_WALKS } from "./stages-array";
 import { OBJECT_STAGES } from "./stages-object";
 import { STRING_STAGES } from "./stages-string";
 import { NUMERIC_STAGES } from "./stages-numeric";
 import type { RowSource } from "./row-source";
-import type { DecodingContext } from "./context";
+import { type DecodingContext, NestedGroupRead } from "./context";
 import { AsValue, type ExpressionState, type StageMap } from "./stage";
 
 /** The expression stage vocabulary: one family per module, merged here. */
@@ -25,18 +25,33 @@ const STAGES: StageMap = {
  * Folds a recorded `ValueProxy` chain into one SQL fragment. `source` seeds the accumulator with
  * the row a lambda is compiled against, so an expression that opens on `obj_index` reaches a typed
  * column rather than a materialized document.
+ *
+ * In a group nested in another query, an array walk whose operand, bounds or callback read the
+ * group's key or stream, or a row from outside the group, is refused: MySQL can then run the walk's
+ * subquery against another group's row.
  */
 export function CompileExpression(
   stages: QueryStage[],
   context: DecodingContext,
   source?: RowSource,
 ): Compiled {
+  const mark = context.groupReadMark();
+  const since = context.reads;
   let state: ExpressionState = { current: source };
   for (const stage of stages) {
     if (!Object.hasOwn(STAGES, stage.stage)) {
       throw new Error(`Unsupported expression stage '${stage.stage}'`);
     }
     state = STAGES[stage.stage](state, stage, context);
+    if (!Object.hasOwn(ARRAY_WALKS, stage.stage)) {
+      continue;
+    }
+    context.walked(since);
+    if (context.readGroupSince(mark)) {
+      throw new NestedGroupRead(
+        "An array stage in a group nested in another query reads the group's key or a row from outside the group",
+      );
+    }
   }
   return AsValue(state);
 }

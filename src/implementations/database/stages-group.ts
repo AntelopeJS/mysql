@@ -2,7 +2,7 @@ import assert from "node:assert";
 import type { QueryStage } from "@antelopejs/interface-database/common";
 
 import type { Dialect } from "../../dialect";
-import { type Sql, join, sql } from "../../statement";
+import type { Sql } from "../../statement";
 import { ArrayOf, IsOpaque, OPAQUE, type SqlType } from "./types";
 import { Collected } from "./json";
 import { AsJson } from "./readings";
@@ -10,7 +10,11 @@ import type { Compiled } from "./sql";
 import { DecodeFunction, RecordedLambda } from "./value";
 import { FIRST_OPERAND, RequireOperand } from "./stage";
 import type { PipelineStage, PipelineStageMap } from "./pipeline";
-import type { DecodingContext, SubqueryProvider } from "./context";
+import {
+  type DecodingContext,
+  NestedGroupRead,
+  type SubqueryProvider,
+} from "./context";
 import { BuildDocument, JsonRowSource, type RowSource } from "./row-source";
 import {
   type Aggregation,
@@ -34,10 +38,8 @@ import {
   FromItem,
   JoinOn,
   Nested,
-  NestedBeside,
   Numbered,
   type RelationFlag,
-  Render,
 } from "./render";
 import { Prepare } from "./wrap";
 import { IsString } from "./guards";
@@ -54,6 +56,24 @@ interface SubStream {
   source: RowSource;
   value: Compiled;
   distinct: boolean;
+  /** Whether the value reads the group's rows, or its key or stream. */
+  readsGroup: boolean;
+  /** Whether the value reads a row from outside the group. */
+  readsOutside: boolean;
+  /** Whether the value reads the group's key or stream, or a row from outside the group. */
+  readsSelect: boolean;
+}
+
+/**
+ * Refuses to aggregate a value that reads only a row from outside the group: the aggregate then
+ * reads no column of the group's select, and both engines run it in the outer query instead.
+ */
+function RequireGroupValue(state: SubStream): void {
+  if (state.readsOutside && !state.readsGroup) {
+    throw new NestedGroupRead(
+      "A group's stream aggregates a value that reads a row from outside the group and none of the group's rows",
+    );
+  }
 }
 
 /** One step of a sub-stream fold: a state continues it, a {@link Compiled} ends it. */
@@ -79,14 +99,34 @@ function Revalued(
     source: new JsonRowSource(context.dialect, value),
     value,
     distinct: state.distinct,
+    readsGroup: state.readsGroup,
+    readsOutside: state.readsOutside,
+    readsSelect: state.readsSelect,
   };
 }
 
+/**
+ * Maps the stream's value. The new value reads the group's rows where the lambda reads its
+ * parameter and the old value read them, or reads the group's key or stream; it reads a row from
+ * outside the group where the lambda reads one, or reads its parameter and the old value read one.
+ */
 const MapSubStream: SubStreamStage = (state, stage, context) => {
-  const body = DecodeFunction(RecordedLambda(stage, FIRST_OPERAND), context, [
-    state.source,
-  ]);
-  return Revalued(state, RequireOperand(body, stage, FIRST_OPERAND), context);
+  const read = context.readingStreamLambda(state.readsSelect, () =>
+    DecodeFunction(RecordedLambda(stage, FIRST_OPERAND), context, [
+      state.source,
+    ]),
+  );
+  return {
+    ...Revalued(
+      state,
+      RequireOperand(read.value, stage, FIRST_OPERAND),
+      context,
+    ),
+    readsGroup: (read.parameter && state.readsGroup) || read.group,
+    readsOutside: (read.parameter && state.readsOutside) || read.outside,
+    readsSelect:
+      (read.parameter && state.readsSelect) || read.group || read.outside,
+  };
 };
 
 /**
@@ -119,6 +159,9 @@ const DistinctSubStream: SubStreamStage = (state, stage, context) => {
  */
 const CountSubStream: SubStreamStage = (state, stage, context) => {
   const field = NamedField(stage);
+  if (field !== undefined || state.distinct) {
+    RequireGroupValue(state);
+  }
   if (field !== undefined) {
     return Tally(context.dialect, state.source.field(field));
   }
@@ -126,8 +169,10 @@ const CountSubStream: SubStreamStage = (state, stage, context) => {
 };
 
 function AggregateSubStream(aggregate: Aggregation): SubStreamStage {
-  return (state, stage, context) =>
-    aggregate(context.dialect, Operand(state, stage), state.distinct);
+  return (state, stage, context) => {
+    RequireGroupValue(state);
+    return aggregate(context.dialect, Operand(state, stage), state.distinct);
+  };
 }
 
 /**
@@ -156,7 +201,6 @@ function RowsOf(relation: Relation): Relation {
     joins: [...relation.joins],
     where: [...relation.where],
     groupBy: [],
-    having: [],
     orderBy: [],
     aggregated: false,
     distinct: false,
@@ -196,6 +240,7 @@ function CollectedRows(
   joins: Sql[],
   context: DecodingContext,
 ): Compiled {
+  RequireGroupValue(state);
   const dialect = context.dialect;
   const element = AsJson(dialect, Deduped(state, context) ?? state.value).sql;
   const type = ArrayOf(state.value.type);
@@ -240,7 +285,14 @@ function StepSubStream(
 }
 
 function SeedOf(rows: Relation): SubStream {
-  return { source: rows.source, value: CurrentValue(rows), distinct: false };
+  return {
+    source: rows.source,
+    value: CurrentValue(rows),
+    distinct: false,
+    readsGroup: true,
+    readsOutside: false,
+    readsSelect: false,
+  };
 }
 
 function Folded(
@@ -255,70 +307,11 @@ function Folded(
 }
 
 /**
- * The rows of the group the select is at, read again where a query nested in the mapper reads them:
- * a derived copy of the grouped rows with each group term beside each row, grouped again by those
- * terms, and kept where every term matches the group's own.
- *
- * The match is an aggregate in the `HAVING`, never a `WHERE`. Where a subselect reads the group's
- * column outside an aggregate, both engines run the aggregate around that subselect in the group's
- * select rather than in the query nested in the mapper, which then answers more than one row, or
- * the wrong one.
- *
- * The group's own term is read through `MIN`, which the group's select aggregates: MySQL 9.7 reads
- * a bare term that is not a column, over a group that aggregates in a temporary table, as the term
- * of one group for every group. Both engines refuse that `MIN` where the group's select is itself
- * inside the aggregate of an enclosing query, so a group two queries deep fails rather than answer
- * another group's rows.
- */
-function GroupRowsAgain(grouped: Relation, context: DecodingContext): Relation {
-  const terms = grouped.groupBy.map((term) => term.sql);
-  const { relation: rows, columns } = NestedBeside(
-    RowsOf(grouped),
-    terms,
-    "_group",
-    context,
-  );
-  rows.groupBy = columns.map((column, index) => ({
-    sql: column,
-    type: grouped.groupBy[index].type,
-  }));
-  const matches = columns.map(
-    (column, index) => sql`(${column} <=> MIN(${terms[index]}))`,
-  );
-  rows.having = [sql`(MAX(${join(matches, sql` AND `)}) = 1)`];
-  return rows;
-}
-
-/**
- * A sub-stream whose value reads the row of a query nested in the mapper, which the group's select
- * cannot aggregate: a subselect inside that query, over the group's rows read again.
- */
-function SubStreamAgain(
-  grouped: Relation,
-  stages: QueryStage[],
-  context: DecodingContext,
-): Compiled {
-  const rows = GroupRowsAgain(grouped, context);
-  const folded = Folded(SeedOf(rows), stages, context);
-  const joins: Sql[] = [];
-  const value = IsTerminal(folded)
-    ? folded
-    : CollectedRows(folded, rows, joins, context);
-  rows.joins.push(...joins);
-  return {
-    sql: sql`(${Render(SetProjection(rows, value))})`,
-    type: value.type,
-  };
-}
-
-/**
  * The subquery provider a `group` binds its stream parameter to, over the rows of one group.
  *
  * The seed is read off the relation once, before any of the mapper is decoded, and never mutated,
  * since one mapper binds this provider as many times as it names the parameter. The joins a
- * collected dedup needs are pushed to `joins`, and left for the group's select to carry. A
- * sub-stream that reads the row of a query nested in the mapper reads the group's rows again
- * inside that query instead.
+ * collected dedup needs are pushed to `joins`, and left for the group's select to carry.
  */
 function SubStreamProvider(
   relation: Relation,
@@ -326,15 +319,8 @@ function SubStreamProvider(
   context: DecodingContext,
 ): SubqueryProvider {
   const seed = SeedOf(relation);
-  const depth = context.depth;
   return (stages) => {
-    const { value: folded, readsNestedRow } = context.readingNestedRow(
-      depth,
-      () => Folded(seed, stages, context),
-    );
-    if (readsNestedRow) {
-      return SubStreamAgain(relation, stages, context);
-    }
+    const folded = Folded(seed, stages, context);
     return IsTerminal(folded)
       ? folded
       : CollectedRows(folded, relation, joins, context);
@@ -433,10 +419,10 @@ const GroupStage: PipelineStage = (relation, stage, context) => {
     ...GroupTerms(context.dialect, columns).map((member) => member.value),
   );
   const joins: Sql[] = [];
-  const mapped = DecodeFunction(RecordedLambda(stage, FIRST_OPERAND), context, [
-    SubStreamProvider(prepared, joins, context),
-    value,
-  ]);
+  const own = [SubStreamProvider(prepared, joins, context), value];
+  const mapped = context.inGroup(own, () =>
+    DecodeFunction(RecordedLambda(stage, FIRST_OPERAND), context, own),
+  );
   prepared.joins.push(...joins);
   const grouped = SetProjection(
     prepared,
