@@ -413,11 +413,9 @@ const GroupStage: PipelineStage = (relation, stage, context) => {
     ...GroupTerms(context.dialect, columns).map((member) => member.value),
   );
   const joins: Sql[] = [];
-  const mapped = context.inGroup(() =>
-    DecodeFunction(RecordedLambda(stage, FIRST_OPERAND), context, [
-      SubStreamProvider(prepared, joins, context),
-      value,
-    ]),
+  const own = [SubStreamProvider(prepared, joins, context), value];
+  const mapped = context.inGroup(own, () =>
+    DecodeFunction(RecordedLambda(stage, FIRST_OPERAND), context, own),
   );
   prepared.joins.push(...joins);
   const grouped = SetProjection(

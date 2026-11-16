@@ -48,14 +48,14 @@ In the list, `s` is the group's stream, `k` the group's key, and `o` the row of 
 
 - a query nested in the callback that reads `k`, `s` or `o`, such as `Owners().map(() => k)`, `Items().filter((i) => i.key("views").eq(k))` or `Owners().map((o) => s.map((i) => [i.key("x"), o.key("take")]).distinct())`;
 - in a group nested in `Owners().map((o) => ...)`, `s` aggregating or collecting a value that reads `o` and no row of the group, such as `s.map(() => o.key("take")).sum()`;
-- in a group nested in another query, an array stage's callback that reads `k` or `o`, such as `ValueProxy.constant([1, 2]).map((x) => x.add(k).add(o.key("take"))).sum()` in the group's select, or `s.map((i) => ValueProxy.constant([1, 2]).filter((x) => x.gt(o.key("take"))).map((x) => x.add(i.key("views"))).sum()).sum()`.
+- in a group nested in another query, an array stage that walks the elements (`slice`, `map`, `filter`, `sum`, `avg`, `min`, `max`) and reads `k`, `s` or `o` in its array, its bounds or its callback, such as `ValueProxy.constant([1, 2, 3]).slice(k).sum()`, `ValueProxy.constant([1, 2]).map((x) => x.add(k).add(o.key("take"))).sum()` in the group's select, or `s.map((i) => ValueProxy.constant([1, 2]).filter((x) => x.gt(o.key("take"))).map((x) => x.add(i.key("views"))).sum()).sum()`.
 
 These shapes answer right on both engines and compile as before:
 
 - `k` and aggregates of `s` in the group's own select;
 - a query nested in the callback that reads its own rows and constants;
 - a group nested in another query that reads that query's row in its own select, or in `s.map(...)` beside a column of the group's rows;
-- an array stage's callback that reads its element, the row of `s` and constants, and in a group no query holds, also `k`.
+- an array stage that reads its elements, the elements of an array stage around it, the row of `s` and constants, and in a group no query holds, also `k`.
 
 ## Storing a value
 

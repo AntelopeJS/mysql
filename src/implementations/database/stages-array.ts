@@ -152,9 +152,9 @@ function ElementBody(
   context: DecodingContext,
 ): Compiled {
   const element = Element(context.dialect, walk, ElementType(value.type));
-  const body = context.inArrayCallback(() =>
-    DecodeFunction(RecordedLambda(stage, FIRST_OPERAND), context, [element]),
-  );
+  const body = DecodeFunction(RecordedLambda(stage, FIRST_OPERAND), context, [
+    element,
+  ]);
   return RequireOperand(body, stage, FIRST_OPERAND);
 }
 
@@ -215,6 +215,14 @@ function ReducerStage(reducer: Reducer): StageHandler {
   });
 }
 
+/** The array stages that walk the elements in a subquery, the rest read the array in place. */
+export const ARRAY_WALKS = {
+  arr_slice: SliceStage,
+  arr_map: MapStage,
+  arr_filter: FilterStage,
+  ...BuildStages(REDUCERS, ReducerStage),
+} satisfies StageMap;
+
 /**
  * Array stages.
  *
@@ -249,9 +257,6 @@ function ReducerStage(reducer: Reducer): StageHandler {
 export const ARRAY_STAGES: StageMap = {
   arr_index: IndexStage,
   arr_includes: IncludesStage,
-  arr_slice: SliceStage,
-  arr_map: MapStage,
-  arr_filter: FilterStage,
   ...BuildStages(MEASURES, MeasureStage),
-  ...BuildStages(REDUCERS, ReducerStage),
+  ...ARRAY_WALKS,
 };

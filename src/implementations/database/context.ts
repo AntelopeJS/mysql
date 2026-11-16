@@ -115,12 +115,12 @@ interface StreamLambdaWatch {
   readonly depth: number;
 }
 
-/** An array stage's callback compiling in a group nested in another query. */
-interface ArrayCallback {
-  /** The subquery depth of the innermost group. */
-  readonly group: number;
-  /** How many parameters were bound before the callback began. */
-  readonly before: number;
+/** A group whose mapper is compiling now. */
+interface OpenGroup {
+  /** How many subqueries were open when the group's select began. */
+  readonly depth: number;
+  /** What the mapper's own parameters are bound to: the group's stream and key. */
+  readonly own: ReadonlySet<ArgumentBinding>;
 }
 
 /**
@@ -136,13 +136,13 @@ export class DecodingContext {
   private readonly bindingDepths = new Map<string, number>();
   /** The rows each lambda parameter ranges over, where the stage that bound it named them. */
   private readonly bindingRows = new Map<string, Relation>();
-  /** The subquery depth of each group whose mapper is compiling now. */
-  private readonly groups: number[] = [];
+  /** Each group whose mapper is compiling now, outermost first. */
+  private readonly groups: OpenGroup[] = [];
   /** The order each lambda parameter was bound in. */
   private readonly bindingOrder = new Map<string, number>();
   private bindCount = 0;
   private readonly streamLambdaWatches: StreamLambdaWatch[] = [];
-  private readonly arrayCallbacks: ArrayCallback[] = [];
+  private groupReadCount = 0;
   /** Per open subquery, outermost first. */
   private readonly open: OpenSubquery[] = [];
   /** Fragments built while the subquery they are in read no parameter bound outside it. */
@@ -216,25 +216,21 @@ export class DecodingContext {
       subquery.rows.add(this.bindingRows.get(key));
     }
     const reading = this.open.length;
-    if (this.groups.some((group) => depth <= group && reading > group)) {
+    if (
+      this.groups.some((group) => depth <= group.depth && reading > group.depth)
+    ) {
       throw new NestedGroupRead(
         "A query nested in a group's mapper reads a value bound in the group's select or outside it, such as the group's key, the group's stream or a row from outside the group",
       );
     }
     const order = this.bindingOrder.get(key) ?? 0;
-    const streamRow = this.streamLambdaWatches.some(
-      (watch) => watch.before === order,
-    );
+    const group = this.groups.at(-1);
     if (
-      this.arrayCallbacks.some(
-        (callback) =>
-          depth < callback.group ||
-          (depth === callback.group && order < callback.before && !streamRow),
-      )
+      group !== undefined &&
+      group.depth > 0 &&
+      (depth < group.depth || group.own.has(binding))
     ) {
-      throw new NestedGroupRead(
-        "An array stage's callback in a group nested in another query reads the group's key or a row from outside the group",
-      );
+      this.groupReadCount++;
     }
     for (const watch of this.streamLambdaWatches) {
       watch.outside ||= depth < watch.depth;
@@ -282,7 +278,7 @@ export class DecodingContext {
       parameter: false,
       group: false,
       before: this.bindCount,
-      depth: this.groups.at(-1) ?? 0,
+      depth: this.groups.at(-1)?.depth ?? 0,
     };
     this.streamLambdaWatches.push(watch);
     try {
@@ -298,11 +294,12 @@ export class DecodingContext {
   }
 
   /**
-   * Builds a group's mapper. A query nested in it may read its own rows and constants only: a read
-   * of anything bound at or outside the group's select is refused.
+   * Builds a group's mapper, whose parameters are bound to `own`. A query nested in it may read its
+   * own rows and constants only: a read of anything bound at or outside the group's select is
+   * refused.
    */
-  public inGroup<T>(build: () => T): T {
-    this.groups.push(this.open.length);
+  public inGroup<T>(own: readonly ArgumentBinding[], build: () => T): T {
+    this.groups.push({ depth: this.open.length, own: new Set(own) });
     try {
       return build();
     } finally {
@@ -311,22 +308,11 @@ export class DecodingContext {
   }
 
   /**
-   * Builds the callback of an array stage. In a group nested in another query, the callback may read
-   * its element, the group's stream rows and constants only: a read of the group's key, of another
-   * value bound in the group's select, or of a row from outside the group is refused.
+   * How many reads of the innermost group's key or stream, or of a row from outside it, were made
+   * while that group sits in another query. It only grows, so two readings bracket a build.
    */
-  public inArrayCallback<T>(build: () => T): T {
-    const group = this.groups.at(-1);
-    if (group === undefined || group === 0) {
-      return build();
-    }
-    const callback: ArrayCallback = { group, before: this.bindCount };
-    this.arrayCallbacks.push(callback);
-    try {
-      return build();
-    } finally {
-      this.arrayCallbacks.splice(this.arrayCallbacks.indexOf(callback), 1);
-    }
+  public get groupReads(): number {
+    return this.groupReadCount;
   }
 
   /** Whether the subquery compiling now has so far read the row of a query outside it. */
