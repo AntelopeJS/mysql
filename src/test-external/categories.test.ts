@@ -4,11 +4,11 @@ import {
   Profile,
   type RelationProfile,
 } from "@antelopejs/interface-database-catalog";
-import { Connection, PoolConnection } from "mysql2/promise";
 
 import type { RelationRow } from "../dialect/external";
 import { SourceFor } from "../implementations/database/external-sample";
 import { type Sql, ident, int, sql } from "../statement";
+import { Received } from "./received";
 import { type NativeCell, Native } from "./sales";
 
 const CATEGORY_LIMIT = 25;
@@ -39,40 +39,6 @@ async function Reference(
       .filter((count) => count.rows < CATEGORY_MIN_ROWS)
       .reduce((total, count) => total + count.rows, 0),
   };
-}
-
-/**
- * Every result set the module's pooled connections receive while `work` runs, as JSON: each
- * statement they run goes through the `execute` or `query` mysql2's promise `PoolConnection`
- * inherits from its `Connection`, which a method of its own shadows for the while.
- */
-async function Received<T>(
-  work: () => Promise<T>,
-): Promise<{ answer: T; results: string }> {
-  const results: string[] = [];
-  const tapped = PoolConnection.prototype;
-  Object.defineProperty(tapped, "execute", {
-    configurable: true,
-    async value(this: Connection, ...args: Parameters<Connection["execute"]>) {
-      const answer = await Connection.prototype.execute.call(this, ...args);
-      results.push(JSON.stringify(answer[0]));
-      return answer;
-    },
-  });
-  Object.defineProperty(tapped, "query", {
-    configurable: true,
-    async value(this: Connection, ...args: Parameters<Connection["query"]>) {
-      const answer = await Connection.prototype.query.call(this, ...args);
-      results.push(JSON.stringify(answer[0]));
-      return answer;
-    },
-  });
-  try {
-    return { answer: await work(), results: results.join("\n") };
-  } finally {
-    Reflect.deleteProperty(tapped, "execute");
-    Reflect.deleteProperty(tapped, "query");
-  }
 }
 
 function CategoriesOf(profile: RelationProfile, column: string): Categories {

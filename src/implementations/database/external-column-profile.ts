@@ -99,14 +99,59 @@ function IsText(column: ProfiledColumn): boolean {
   return TEXT_FAMILIES.includes(column.family);
 }
 
-function BaseSql(column: ProfiledColumn, source: Source): Sql {
+/** Whether a column's values can be categories, so its range ends only at values counted often enough. */
+function IsCounted(column: ProfiledColumn): boolean {
+  return (
+    column.family === "enum" ||
+    column.family === "int" ||
+    column.family === "bigint"
+  );
+}
+
+/** The column's ends, a clause opening the statement and the two aggregates. */
+interface RangeClauses {
+  prefix: Sql;
+  min: Sql;
+  max: Sql;
+}
+
+/**
+ * The ends of a column. Those of an enum or integer column are taken among values counted at least
+ * {@link CATEGORY_MIN_ROWS} times, counted as stored, inside the statement, so a rare value never
+ * leaves the database. The others keep their true minimum and maximum.
+ */
+function RangeSql(column: ProfiledColumn, source: Source): RangeClauses {
   const range = RangeExpression(column);
+  if (!range) {
+    return { prefix: sql``, min: sql`NULL`, max: sql`NULL` };
+  }
+  if (!IsCounted(column)) {
+    return {
+      prefix: sql``,
+      min: sql`MIN(${range})`,
+      max: sql`MAX(${range})`,
+    };
+  }
+  const ranged = sql`counted.ranged`;
+  const counted =
+    column.family === "enum"
+      ? ranged
+      : GetDialect().sql.scalar.cast(ranged, "float");
+  return {
+    prefix: sql`WITH counted AS (SELECT ${column.quoted} AS ranged FROM ${source.from}
+      WHERE ${column.quoted} IS NOT NULL GROUP BY ${column.quoted} HAVING COUNT(*) >= ${int(CATEGORY_MIN_ROWS)}) `,
+    min: sql`(SELECT MIN(${counted}) FROM counted)`,
+    max: sql`(SELECT MAX(${counted}) FROM counted)`,
+  };
+}
+
+function BaseSql(column: ProfiledColumn, source: Source): Sql {
+  const range = RangeSql(column, source);
   const length = GetDialect().external.measures.length(column.quoted);
-  const extreme = (name: Sql) => (range ? sql`${name}(${range})` : sql`NULL`);
   const sized = (name: Sql) =>
     IsText(column) ? sql`${name}(${length})` : sql`NULL`;
-  return sql`SELECT COUNT(*) - COUNT(${column.quoted}) AS nulls,
-    ${extreme(sql`MIN`)} AS min_value, ${extreme(sql`MAX`)} AS max_value,
+  return sql`${range.prefix}SELECT COUNT(*) - COUNT(${column.quoted}) AS nulls,
+    ${range.min} AS min_value, ${range.max} AS max_value,
     ${sized(sql`MIN`)} AS min_length, ${sized(sql`AVG`)} AS avg_length, ${sized(sql`MAX`)} AS max_length
     FROM ${source.from}`;
 }
@@ -189,17 +234,31 @@ async function MeasureDistinct(
 }
 
 /** How a category is named: a number as one, a boolean as one, anything else as its text. */
-function CategoryValue(column: ProfiledColumn): Sql {
+function CategoryValue(column: ProfiledColumn, key: Sql): Sql {
   const scalar = GetDialect().sql.scalar;
   switch (column.family) {
     case "int":
     case "bigint":
-      return scalar.cast(column.quoted, "float");
+      return scalar.cast(key, "float");
     case "bool":
-      return scalar.cast(column.quoted, "bool");
+      return scalar.cast(key, "bool");
     default:
-      return scalar.cast(column.quoted, "text");
+      return scalar.cast(key, "text");
   }
+}
+
+/**
+ * What a column's rows are counted by: an integer as stored, so no conversion merges values that
+ * differ, such as two `BIGINT` values one `DOUBLE` cannot tell apart; any other value as it is named.
+ */
+function CountedKey(column: ProfiledColumn): Sql {
+  return IsInteger(column)
+    ? column.quoted
+    : CategoryValue(column, column.quoted);
+}
+
+function IsInteger(column: ProfiledColumn): boolean {
+  return column.family === "int" || column.family === "bigint";
 }
 
 function CategoryOf(column: ProfiledColumn, row: Row): CategoryCount {
@@ -220,9 +279,12 @@ function CategoryOf(column: ProfiledColumn, row: Row): CategoryCount {
  * statement, so a rare value never leaves the database.
  */
 function CategoriesSql(column: ProfiledColumn, source: Source): Sql {
-  return sql`SELECT CASE WHEN top.category_rows >= ${int(CATEGORY_MIN_ROWS)} THEN top.category END AS category,
+  const named = IsInteger(column)
+    ? CategoryValue(column, sql`top.category_key`)
+    : sql`top.category_key`;
+  return sql`SELECT CASE WHEN top.category_rows >= ${int(CATEGORY_MIN_ROWS)} THEN ${named} END AS category,
       SUM(top.category_rows) AS category_rows
-    FROM (SELECT ${CategoryValue(column)} AS category, COUNT(*) AS category_rows FROM ${source.from}
+    FROM (SELECT ${CountedKey(column)} AS category_key, COUNT(*) AS category_rows FROM ${source.from}
       WHERE ${column.quoted} IS NOT NULL GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT ${int(CATEGORY_LIMIT + 1)}) AS top
     GROUP BY 1 ORDER BY 2 DESC, 1`;
 }
