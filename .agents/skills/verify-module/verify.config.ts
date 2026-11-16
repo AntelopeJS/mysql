@@ -51,6 +51,8 @@ const FORMAL_MARIADB_READ_WARNINGS = ".agents/skills/formal-mariadb-read-warning
 
 const FORMAL_UNIQUE_INDEX_GATE = ".agents/skills/formal-unique-index-gate";
 
+const FORMAL_PIPELINE_CHAINS = ".agents/skills/formal-pipeline-chains";
+
 const config: VerifyConfig = {
   doors: {
     data: {
@@ -217,6 +219,29 @@ const config: VerifyConfig = {
       files: [`${FORMAL_UNIQUE_INDEX_GATE}/**`],
       command: ["node", `${FORMAL_UNIQUE_INDEX_GATE}/check.mjs`, "--full"],
       violation: /^(?:finding|BROKEN|HOLDS) +(\w+)/gm,
+    },
+    {
+      name: "formal-pipeline-chains",
+      covers: [
+        "src/dialect/**",
+        "src/implementations/database/context.ts",
+        "src/implementations/database/expression.ts",
+        "src/implementations/database/feed-pipeline.ts",
+        "src/implementations/database/grouped.ts",
+        "src/implementations/database/pipeline.ts",
+        "src/implementations/database/plan.ts",
+        "src/implementations/database/query.ts",
+        "src/implementations/database/relation.ts",
+        "src/implementations/database/render.ts",
+        "src/implementations/database/selection.ts",
+        "src/implementations/database/stage.ts",
+        "src/implementations/database/stages-*.ts",
+        "src/implementations/database/subquery.ts",
+        "src/implementations/database/wrap.ts",
+      ],
+      files: [`${FORMAL_PIPELINE_CHAINS}/**`],
+      command: ["node", `${FORMAL_PIPELINE_CHAINS}/check.mjs`, "--full"],
+      violation: /^BROKEN +(\w+)/gm,
     },
   ],
 };
