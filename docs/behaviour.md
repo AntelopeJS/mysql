@@ -47,7 +47,7 @@ A `group` callback can hold a query of its own, such as `Owners().map(...)` insi
 In the list, `s` is the group's stream, `k` the group's key, and `o` the row of an `Owners()` query around or inside the callback. Each shape is refused:
 
 - a query nested in the callback that reads `k`, `s` or `o`, such as `Owners().map(() => k)`, `Items().filter((i) => i.key("views").eq(k))` or `Owners().map((o) => s.map((i) => [i.key("x"), o.key("take")]).distinct())`;
-- in a group nested in `Owners().map((o) => ...)`, `s` aggregating or collecting a value that reads `o` and no row of the group, such as `s.map(() => o.key("take")).sum()`;
+- in a group nested in `Owners().map((o) => ...)`, `s` aggregating or collecting a value that reads `o` and no row of the group outside an array stage, such as `s.map(() => o.key("take")).sum()` or `s.map((i) => ValueProxy.constant([1, 2]).map((x) => x.add(i.key("views"))).sum().add(o.key("take"))).sum()`;
 - in a group nested in another query, an array stage that walks the elements (`slice`, `map`, `filter`, `sum`, `avg`, `min`, `max`) and reads `k`, `s` or `o` in its array, its bounds or its callback, such as `ValueProxy.constant([1, 2, 3]).slice(k).sum()`, `ValueProxy.constant([1, 2]).map((x) => x.add(k).add(o.key("take"))).sum()` in the group's select, or `s.map((i) => ValueProxy.constant([1, 2]).filter((x) => x.gt(o.key("take"))).map((x) => x.add(i.key("views"))).sum()).sum()`.
 
 These shapes answer right on both engines and compile as before:

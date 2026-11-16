@@ -100,7 +100,7 @@ export interface StreamLambdaRead<T> {
   readonly value: T;
   /** A row from outside the group. */
   readonly outside: boolean;
-  /** The lambda's own parameter, the value the stream held before it. */
+  /** The lambda's own parameter, the value the stream held before it, outside any array walk. */
   readonly parameter: boolean;
   /** A value bound in the group's select before the lambda, such as the group's key. */
   readonly group: boolean;
@@ -109,7 +109,8 @@ export interface StreamLambdaRead<T> {
 /** What a build read so far, by where the parameters it read were bound. */
 interface StreamLambdaWatch {
   outside: boolean;
-  parameter: boolean;
+  /** The reads of the lambda's own parameter not yet found inside an array walk, by read number. */
+  readonly parameter: Set<number>;
   group: boolean;
   readonly before: number;
   readonly depth: number;
@@ -143,6 +144,7 @@ export class DecodingContext {
   private bindCount = 0;
   private readonly streamLambdaWatches: StreamLambdaWatch[] = [];
   private groupReadCount = 0;
+  private readCount = 0;
   /** Per open subquery, outermost first. */
   private readonly open: OpenSubquery[] = [];
   /** Fragments built while the subquery they are in read no parameter bound outside it. */
@@ -232,9 +234,12 @@ export class DecodingContext {
     ) {
       this.groupReadCount++;
     }
+    this.readCount++;
     for (const watch of this.streamLambdaWatches) {
       watch.outside ||= depth < watch.depth;
-      watch.parameter ||= order === watch.before;
+      if (order === watch.before) {
+        watch.parameter.add(this.readCount);
+      }
       watch.group ||= depth === watch.depth && order < watch.before;
     }
     return binding;
@@ -275,7 +280,7 @@ export class DecodingContext {
   public readingStreamLambda<T>(build: () => T): StreamLambdaRead<T> {
     const watch: StreamLambdaWatch = {
       outside: false,
-      parameter: false,
+      parameter: new Set(),
       group: false,
       before: this.bindCount,
       depth: this.groups.at(-1)?.depth ?? 0,
@@ -283,8 +288,8 @@ export class DecodingContext {
     this.streamLambdaWatches.push(watch);
     try {
       const value = build();
-      const { outside, parameter, group } = watch;
-      return { value, outside, parameter, group };
+      const { outside, group } = watch;
+      return { value, outside, parameter: watch.parameter.size > 0, group };
     } finally {
       this.streamLambdaWatches.splice(
         this.streamLambdaWatches.indexOf(watch),
@@ -313,6 +318,26 @@ export class DecodingContext {
    */
   public get groupReads(): number {
     return this.groupReadCount;
+  }
+
+  /** How many parameter reads were made so far. It only grows, so two readings bracket a build. */
+  public get reads(): number {
+    return this.readCount;
+  }
+
+  /**
+   * Marks the parameter reads made since `since` as inside an array walk. Neither engine reads such
+   * a column when it picks the select an aggregate runs in, so a stream lambda's own parameter read
+   * there does not count as reading the group's rows.
+   */
+  public walked(since: number): void {
+    for (const watch of this.streamLambdaWatches) {
+      for (const read of watch.parameter) {
+        if (read >= since) {
+          watch.parameter.delete(read);
+        }
+      }
+    }
   }
 
   /** Whether the subquery compiling now has so far read the row of a query outside it. */

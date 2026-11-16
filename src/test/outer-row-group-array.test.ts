@@ -185,6 +185,67 @@ async function KeyInArrayStageOfTopGroup(): Promise<void> {
   );
 }
 
+/** A nested group's stream value reading its row only inside an array stage, beside the outer row. */
+async function StreamRowOnlyInArrayStageBesideOuterRow(): Promise<void> {
+  await ExpectRefused(() =>
+    Owners()
+      .map((owner) => ({
+        take: owner.key("take"),
+        groups: Items().group("views", (stream, views) => ({
+          views,
+          sum: stream
+            .map((item) =>
+              ValueProxy.constant([1, 2])
+                .map((value) => value.add(item.key("views")))
+                .sum()
+                .add(owner.key("take")),
+            )
+            .sum(),
+        })),
+      }))
+      .run(),
+  );
+}
+
+/** A nested group's stream value reading its row in and beside an array stage, and the outer row. */
+async function StreamRowBesideArrayStageAndOuterRow(): Promise<void> {
+  const read = await Owners()
+    .map((owner) => ({
+      take: owner.key("take"),
+      groups: Items().group("views", (stream, views) => ({
+        views,
+        sum: stream
+          .map((item) =>
+            ValueProxy.constant([1, 2])
+              .map((value) => value.add(item.key("views")))
+              .sum()
+              .add(item.key("views"))
+              .add(owner.key("take")),
+          )
+          .sum(),
+      })),
+    }))
+    .run();
+  expect(
+    read
+      .map((owner) => ({
+        take: owner.take,
+        groups: [...owner.groups].sort(
+          (left, right) => left.views - right.views,
+        ),
+      }))
+      .sort((left, right) => left.take - right.take),
+  ).to.deep.equal(
+    [...TAKES].sort(ByNumber).map((take) => ({
+      take,
+      groups: VIEWS.map((views) => ({
+        views,
+        sum: Viewed(views).length * (3 + 3 * views + take),
+      })),
+    })),
+  );
+}
+
 describe("an array stage in a group's mapper", function () {
   this.timeout(30_000);
 
@@ -219,5 +280,13 @@ describe("an array stage in a group's mapper", function () {
   it(
     "answers an array stage reading the key in a group no query holds",
     KeyInArrayStageOfTopGroup,
+  );
+  it(
+    "refuses a nested group's stream reading its row only in an array stage beside the outer row",
+    StreamRowOnlyInArrayStageBesideOuterRow,
+  );
+  it(
+    "answers a nested group's stream reading its row beside an array stage and the outer row",
+    StreamRowBesideArrayStageAndOuterRow,
   );
 });

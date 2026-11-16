@@ -36,13 +36,18 @@ export function CompileExpression(
   source?: RowSource,
 ): Compiled {
   const reads = context.groupReads;
+  const since = context.reads;
   let state: ExpressionState = { current: source };
   for (const stage of stages) {
     if (!Object.hasOwn(STAGES, stage.stage)) {
       throw new Error(`Unsupported expression stage '${stage.stage}'`);
     }
     state = STAGES[stage.stage](state, stage, context);
-    if (Object.hasOwn(ARRAY_WALKS, stage.stage) && context.groupReads > reads) {
+    if (!Object.hasOwn(ARRAY_WALKS, stage.stage)) {
+      continue;
+    }
+    context.walked(since);
+    if (context.groupReads > reads) {
       throw new NestedGroupRead(
         "An array stage in a group nested in another query reads the group's key or a row from outside the group",
       );
