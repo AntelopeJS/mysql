@@ -124,6 +124,17 @@ interface OpenGroup {
   readonly depth: number;
   /** What the mapper's own parameters are bound to: the group's stream and key. */
   readonly own: ReadonlySet<ArgumentBinding>;
+  /**
+   * How many reads of the group's key or stream, or of a row from outside it, were made while the
+   * group sits in another query and is the innermost one. It only grows.
+   */
+  reads: number;
+}
+
+/** The innermost group when a build began, and how many of its reads were made by then. */
+export interface GroupReadMark {
+  readonly group: OpenGroup | undefined;
+  readonly reads: number;
 }
 
 /**
@@ -145,7 +156,6 @@ export class DecodingContext {
   private readonly bindingOrder = new Map<string, number>();
   private bindCount = 0;
   private readonly streamLambdaWatches: StreamLambdaWatch[] = [];
-  private groupReadCount = 0;
   private readCount = 0;
   /** Per open subquery, outermost first. */
   private readonly open: OpenSubquery[] = [];
@@ -238,7 +248,7 @@ export class DecodingContext {
           (watch) => watch.tainted && watch.before === order,
         ))
     ) {
-      this.groupReadCount++;
+      group.reads++;
     }
     this.readCount++;
     for (const watch of this.streamLambdaWatches) {
@@ -316,7 +326,7 @@ export class DecodingContext {
    * refused.
    */
   public inGroup<T>(own: readonly ArgumentBinding[], build: () => T): T {
-    this.groups.push({ depth: this.open.length, own: new Set(own) });
+    this.groups.push({ depth: this.open.length, own: new Set(own), reads: 0 });
     try {
       return build();
     } finally {
@@ -324,12 +334,18 @@ export class DecodingContext {
     }
   }
 
+  /** Marks how many reads of the innermost group's key or stream, or of an outside row, were made. */
+  public groupReadMark(): GroupReadMark {
+    const group = this.groups.at(-1);
+    return { group, reads: group?.reads ?? 0 };
+  }
+
   /**
-   * How many reads of the innermost group's key or stream, or of a row from outside it, were made
-   * while that group sits in another query. It only grows, so two readings bracket a build.
+   * Whether the group innermost at `mark` had its key or stream, or a row from outside it, read
+   * since, while it sits in another query.
    */
-  public get groupReads(): number {
-    return this.groupReadCount;
+  public readGroupSince(mark: GroupReadMark): boolean {
+    return mark.group !== undefined && mark.group.reads > mark.reads;
   }
 
   /** How many parameter reads were made so far. It only grows, so two readings bracket a build. */

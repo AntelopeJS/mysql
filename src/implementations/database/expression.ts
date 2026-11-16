@@ -35,7 +35,7 @@ export function CompileExpression(
   context: DecodingContext,
   source?: RowSource,
 ): Compiled {
-  const reads = context.groupReads;
+  const mark = context.groupReadMark();
   const since = context.reads;
   let state: ExpressionState = { current: source };
   for (const stage of stages) {
@@ -47,7 +47,7 @@ export function CompileExpression(
       continue;
     }
     context.walked(since);
-    if (context.groupReads > reads) {
+    if (context.readGroupSince(mark)) {
       throw new NestedGroupRead(
         "An array stage in a group nested in another query reads the group's key or a row from outside the group",
       );

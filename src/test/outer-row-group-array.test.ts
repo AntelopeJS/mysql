@@ -286,6 +286,30 @@ async function OuterRowCarriedIntoArrayStage(): Promise<void> {
   );
 }
 
+/** An array stage outside any group whose callback holds a group reading its own stream. */
+async function GroupInArrayStageCallback(): Promise<void> {
+  const read = await Owners()
+    .map((owner) => ({
+      take: owner.key("take"),
+      counts: ValueProxy.constant([1, 2]).map((element) => ({
+        element,
+        groups: Items()
+          .group("views", (stream, views) => ({
+            views,
+            count: stream.count(),
+          }))
+          .count(),
+      })),
+    }))
+    .run();
+  expect([...read].sort((left, right) => left.take - right.take)).to.deep.equal(
+    [...TAKES].sort(ByNumber).map((take) => ({
+      take,
+      counts: [1, 2].map((element) => ({ element, groups: VIEWS.length })),
+    })),
+  );
+}
+
 describe("an array stage in a group's mapper", function () {
   this.timeout(30_000);
 
@@ -336,5 +360,9 @@ describe("an array stage in a group's mapper", function () {
   it(
     "refuses the outer row carried by a stream map into an array stage",
     OuterRowCarriedIntoArrayStage,
+  );
+  it(
+    "answers an array stage outside any group holding a group in its callback",
+    GroupInArrayStageCallback,
   );
 });
