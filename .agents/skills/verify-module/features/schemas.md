@@ -7,6 +7,7 @@ covers:
   - src/implementations/database/convergence.ts
   - src/implementations/database/migrate-tables.ts
   - src/implementations/database/migrate-indexes.ts
+  - src/implementations/database/unbuilt-unique.ts
   - src/implementations/database/locks.ts
   - src/implementations/database/observe.ts
   - src/implementations/database/instances.ts

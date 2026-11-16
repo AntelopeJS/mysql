@@ -11,4 +11,5 @@ One file per feature. Every repository journey that reaches the server runs on M
 | [feeds](feeds.md) | A consumer module follows `changes()` on a table while it and other writers write. | change-feeds, change-feeds-mariadb |
 | [external](external.md) | The developer points an external instance at a client's database and reads and writes its rows. | external-read-write, external-registration, external-read-write-mariadb, external-registration-mariadb |
 | [catalog](catalog.md) | A generator describes, profiles and samples the client's database through the catalog. | catalog-describe, catalog-refused, catalog-describe-mariadb, catalog-refused-mariadb |
+| [probe](probe.md) | A tool probes a URL with `dist/probe` before any instance is configured with it. | probe-access, probe-access-mariadb |
 | [smoke](smoke.md) | The fixed journey every verdict runs: load the module and write rows read back with the native client, on MySQL 8.4 and, through `insert-values-mariadb`, MariaDB 11.8. | module-dev, insert-values, insert-values-mariadb |
