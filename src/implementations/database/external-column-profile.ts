@@ -108,50 +108,31 @@ function IsCounted(column: ProfiledColumn): boolean {
   );
 }
 
-/** The column's ends, a clause opening the statement and the two aggregates. */
-interface RangeClauses {
-  prefix: Sql;
-  min: Sql;
-  max: Sql;
-}
-
 /**
- * The ends of a column. Those of an enum or integer column are taken among values counted at least
+ * The ends of an enum or integer column, taken among values counted at least
  * {@link CATEGORY_MIN_ROWS} times, counted as stored, inside the statement, so a rare value never
- * leaves the database. The others keep their true minimum and maximum.
+ * leaves the database. The statement is a measure of its own: its grouping can outlast the
+ * measure's timeout on a large table, which must not take the base measures with it.
  */
-function RangeSql(column: ProfiledColumn, source: Source): RangeClauses {
-  const range = RangeExpression(column);
-  if (!range) {
-    return { prefix: sql``, min: sql`NULL`, max: sql`NULL` };
-  }
-  if (!IsCounted(column)) {
-    return {
-      prefix: sql``,
-      min: sql`MIN(${range})`,
-      max: sql`MAX(${range})`,
-    };
-  }
+function CountedRangeSql(column: ProfiledColumn, source: Source): Sql {
   const ranged = sql`counted.ranged`;
-  const counted =
+  const end =
     column.family === "enum"
       ? ranged
       : GetDialect().sql.scalar.cast(ranged, "float");
-  return {
-    prefix: sql`WITH counted AS (SELECT ${column.quoted} AS ranged FROM ${source.from}
-      WHERE ${column.quoted} IS NOT NULL GROUP BY ${column.quoted} HAVING COUNT(*) >= ${int(CATEGORY_MIN_ROWS)}) `,
-    min: sql`(SELECT MIN(${counted}) FROM counted)`,
-    max: sql`(SELECT MAX(${counted}) FROM counted)`,
-  };
+  return sql`SELECT MIN(${end}) AS min_value, MAX(${end}) AS max_value
+    FROM (SELECT ${column.quoted} AS ranged FROM ${source.from}
+      WHERE ${column.quoted} IS NOT NULL GROUP BY ${column.quoted} HAVING COUNT(*) >= ${int(CATEGORY_MIN_ROWS)}) AS counted`;
 }
 
 function BaseSql(column: ProfiledColumn, source: Source): Sql {
-  const range = RangeSql(column, source);
+  const range = IsCounted(column) ? undefined : RangeExpression(column);
   const length = GetDialect().external.measures.length(column.quoted);
+  const extreme = (name: Sql) => (range ? sql`${name}(${range})` : sql`NULL`);
   const sized = (name: Sql) =>
     IsText(column) ? sql`${name}(${length})` : sql`NULL`;
-  return sql`${range.prefix}SELECT COUNT(*) - COUNT(${column.quoted}) AS nulls,
-    ${range.min} AS min_value, ${range.max} AS max_value,
+  return sql`SELECT COUNT(*) - COUNT(${column.quoted}) AS nulls,
+    ${extreme(sql`MIN`)} AS min_value, ${extreme(sql`MAX`)} AS max_value,
     ${sized(sql`MIN`)} AS min_length, ${sized(sql`AVG`)} AS avg_length, ${sized(sql`MAX`)} AS max_length
     FROM ${source.from}`;
 }
@@ -206,7 +187,14 @@ async function MeasureBase(
     nulls: FirstRow(measured, (row) => NumberOf(row, "nulls") ?? 0),
   };
   const row = ValueOf(measured)?.[0];
-  if (RangeExpression(column)) {
+  if (IsCounted(column)) {
+    const ranged = await session.measure(CountedRangeSql(column, source));
+    const first = ValueOf(ranged)?.[0];
+    base.range =
+      ranged.status === "ok"
+        ? Present(first && RangeValue(column, first))
+        : ranged;
+  } else if (RangeExpression(column)) {
     base.range =
       measured.status === "ok"
         ? Present(row && RangeValue(column, row))
