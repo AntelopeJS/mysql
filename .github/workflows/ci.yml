@@ -23,6 +23,8 @@ jobs:
       renovate-sync: false
       extra-commands: |
         node .agents/skills/formal-change-feed-delivery/check.mjs
+        node .agents/skills/formal-mariadb-read-warnings/check.mjs
+        node .agents/skills/formal-unique-index-gate/check.mjs
         pnpm run test:bench
       test-job: true
       setup-commands: |

@@ -47,6 +47,10 @@ const FORMAL_CHANGE_FEED_DELIVERY = ".agents/skills/formal-change-feed-delivery"
 const FORMAL_JSON_VALUE_IDENTITY = ".agents/skills/formal-json-value-identity";
 const FORMAL_MERGE_REPEATED_KEYS = ".agents/skills/formal-merge-repeated-keys";
 
+const FORMAL_MARIADB_READ_WARNINGS = ".agents/skills/formal-mariadb-read-warnings";
+
+const FORMAL_UNIQUE_INDEX_GATE = ".agents/skills/formal-unique-index-gate";
+
 const config: VerifyConfig = {
   doors: {
     data: {
@@ -183,6 +187,35 @@ const config: VerifyConfig = {
       ],
       files: [`${FORMAL_MERGE_REPEATED_KEYS}/**`, "src/test/formal-key-merge.test.ts", "src/test/json-keys.ts", "src/test/json-spell.ts"],
       command: ["node", `${FORMAL_MERGE_REPEATED_KEYS}/check.mjs`, "--full"],
+      violation: /^(?:finding|BROKEN|HOLDS) +(\w+)/gm,
+    },
+    {
+      name: "formal-mariadb-read-warnings",
+      covers: [
+        "src/connection.ts",
+        "src/warnings.ts",
+        "src/implementations/database/row-stream.ts",
+        "src/dialect/mysql/checked-rows.ts",
+        "src/dialect/mysql/capture.ts",
+        "src/dialect/mariadb/index.ts",
+      ],
+      files: [`${FORMAL_MARIADB_READ_WARNINGS}/**`],
+      command: ["node", `${FORMAL_MARIADB_READ_WARNINGS}/check.mjs`, "--full"],
+      violation: /^(?:finding|BROKEN|HOLDS) +(\w+)/gm,
+    },
+    {
+      name: "formal-unique-index-gate",
+      covers: [
+        "src/connection.ts",
+        "src/implementations/database/schema.ts",
+        "src/implementations/database/migrate-tables.ts",
+        "src/implementations/database/migrate-indexes.ts",
+        "src/implementations/database/locks.ts",
+        "src/implementations/database/unbuilt-unique.ts",
+        "src/implementations/database/convergence.ts",
+      ],
+      files: [`${FORMAL_UNIQUE_INDEX_GATE}/**`],
+      command: ["node", `${FORMAL_UNIQUE_INDEX_GATE}/check.mjs`, "--full"],
       violation: /^(?:finding|BROKEN|HOLDS) +(\w+)/gm,
     },
   ],
