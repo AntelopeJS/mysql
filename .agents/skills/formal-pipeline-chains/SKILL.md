@@ -88,7 +88,7 @@ Covered, at the sync commit:
 Left out:
 
 - `distinct`, `join`, `joinInner`, `getAll`, `between`, `avg`, `min`, `max`, and the array and date stages of a value: `value-stages-*.test.ts` and `src/test/unit/` cover them.
-- A group callback that holds a nested query, which `docs/behaviour.md` says the module refuses when it reads the group's key, its stream or an outer row, and a group inside a group callback: `outer-row-group-distinct.test.ts` and `outer-row-join.test.ts` enumerate them.
+- A group callback that holds a nested query, and a group inside a group callback. The module compiles them into one statement and does not refuse them. `docs/behaviour.md` lists the shapes that answer a wrong row on a server, and the check draws only a nested group that sums a field, or the field plus the outer `take`: `outer-row-group-distinct.test.ts` and `outer-row-join.test.ts` enumerate the rest.
 - Concurrent writers and a quiet table between writes: `formal-change-feed-delivery` covers delivery order, and this check writes one row at a time.
 - Rows that hold nested objects, dates and numbers past 2^53.
 - `CROSS_INSTANCE` reads and external instances.
@@ -107,7 +107,7 @@ Each row ran the properties of this folder against the code of the commit before
 | #60 | `79585b4` | MySQL 8.4 | chain 9: `Unknown column 't2.l' in 'field list'` |
 | #68 | `0a4fc37` | MySQL 8.4 | chain 9: `Unknown column 't2.l' in 'field list'` |
 
-This check has not shown the fixes of #7, #16, #28 and #86 alone: the commits before #7, #16 and #28 hold #60's defect as well, and #105 has since made the module refuse the group shape that #86 fixed. At the sync commit both properties hold on MySQL 8.4 and on MariaDB 11.8 under the full bounds.
+This check has not shown the fixes of #7, #16, #28 and #86 alone: the commits before #7, #16 and #28 hold #60's defect as well, and the group shape that #86 fixed is outside what `draw.ts` draws. At the sync commit both properties hold on MySQL 8.4 and on MariaDB 11.8 under the full bounds.
 
 ## Keep it in step
 
