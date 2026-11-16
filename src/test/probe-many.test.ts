@@ -13,8 +13,8 @@ const SECRET = randomBytes(6).toString("hex");
 /** A timeout the probe meets on each answer; the DMS check gives up after three of them. */
 const TIMEOUT_MS = 400;
 const DEADLINE_IN_TIMEOUTS = 3;
-/** What the probe prepares besides one statement per relation: the listing and one confirmed read. */
-const FIXED_PREPARES = 2;
+/** What the probe prepares besides one statement per relation: the listing, one confirmed read and the `CREATE TABLE` check. */
+const FIXED_PREPARES = 3;
 
 const TEARDOWN = [
   `DROP DATABASE IF EXISTS ${DATABASE}`,

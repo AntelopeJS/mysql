@@ -22,6 +22,7 @@ const GENERATED = /\b(VIRTUAL|STORED) GENERATED\b/i;
 const AUTO_INCREMENT = /\bauto_increment\b/i;
 const ENUM_LABEL = /'((?:[^']|'')*)'/g;
 const USER_SEPARATOR = "@";
+const PROBED_TABLE = "antelopejs_probe";
 
 const SYSTEM_SCHEMAS = sql`('mysql', 'information_schema', 'performance_schema', 'sys')`;
 
@@ -307,6 +308,8 @@ export function ExternalCatalogOf(flavour: Flavour): ExternalCatalogSyntax {
       sql`SELECT * FROM ${ident(schema)}.${ident(table)}`,
     deletion: (schema, table) =>
       sql`DELETE FROM ${ident(schema)}.${ident(table)}`,
+    creation: (schema) =>
+      sql`CREATE TABLE ${ident(schema)}.${ident(PROBED_TABLE)} (id INT)`,
     plannedRows: (schema, table) =>
       sql`EXPLAIN FORMAT=TRADITIONAL SELECT * FROM ${ident(schema)}.${ident(table)}`,
     parsePlannedRows: ParsePlannedRows,
