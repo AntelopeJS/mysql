@@ -117,7 +117,7 @@ Each `BROKEN` run exited 1. The rules a run reports depend on the first scenario
 
 ## Keep it in step
 
-Sync commit: `0328962`. At that commit the model and the covered files above describe the same code.
+Sync commit: `734eb7b`. At that commit the model and the covered files above describe the same code.
 
 When a change touches a covered file:
 
