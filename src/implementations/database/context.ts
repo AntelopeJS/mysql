@@ -80,61 +80,20 @@ interface OpenSubquery {
   readonly rows: Set<Relation | undefined>;
 }
 
-/**
- * A query nested in a group's mapper that reads the group's key, its stream or a row from outside
- * the group. MySQL and MariaDB run such a query's aggregate in the group's select, where it fails
- * or answers another group's rows, so the module refuses it while it builds the statement.
- */
-export class NestedGroupRead extends Error {
-  public readonly code = "ANTELOPEJS_MYSQL_NESTED_GROUP_READ";
-
-  public constructor(refused: string) {
-    super(
-      `${refused}, which MySQL and MariaDB cannot run as one statement. Read the group's key and stream in the group's own select, outside any nested query, aggregate values that read the group's rows, or run two queries`,
-    );
-  }
-}
-
-/** What a lambda of the innermost group's stream read, beside what it built. */
-export interface StreamLambdaRead<T> {
+/** What {@link DecodingContext.readingNestedRow} built, and whether building it read a nested row. */
+export interface NestedRowRead<T> {
   readonly value: T;
-  /** A row from outside the group. */
-  readonly outside: boolean;
-  /** The lambda's own parameter, the value the stream held before it, outside any array walk. */
-  readonly parameter: boolean;
-  /** A value bound in the group's select before the lambda, such as the group's key. */
-  readonly group: boolean;
+  readonly readsNestedRow: boolean;
 }
 
-/** What a build read so far, by where the parameters it read were bound. */
-interface StreamLambdaWatch {
-  outside: boolean;
-  /** The reads of the lambda's own parameter not yet found inside an array walk, by read number. */
-  readonly parameter: Set<number>;
-  group: boolean;
+/**
+ * One build watching for reads of a row nested deeper than `depth` subqueries, through a parameter
+ * bound before the build began.
+ */
+interface NestedRowWatch {
+  readonly depth: number;
   readonly before: number;
-  readonly depth: number;
-  /** Whether the parameter holds a value that read the group's key or stream, or an outside row. */
-  readonly tainted: boolean;
-}
-
-/** A group whose mapper is compiling now. */
-interface OpenGroup {
-  /** How many subqueries were open when the group's select began. */
-  readonly depth: number;
-  /** What the mapper's own parameters are bound to: the group's stream and key. */
-  readonly own: ReadonlySet<ArgumentBinding>;
-  /**
-   * How many reads of the group's key or stream, or of a row from outside it, were made while the
-   * group sits in another query and is the innermost one. It only grows.
-   */
-  reads: number;
-}
-
-/** The innermost group when a build began, and how many of its reads were made by then. */
-export interface GroupReadMark {
-  readonly group: OpenGroup | undefined;
-  readonly reads: number;
+  reads: boolean;
 }
 
 /**
@@ -150,13 +109,10 @@ export class DecodingContext {
   private readonly bindingDepths = new Map<string, number>();
   /** The rows each lambda parameter ranges over, where the stage that bound it named them. */
   private readonly bindingRows = new Map<string, Relation>();
-  /** Each group whose mapper is compiling now, outermost first. */
-  private readonly groups: OpenGroup[] = [];
   /** The order each lambda parameter was bound in. */
   private readonly bindingOrder = new Map<string, number>();
   private bindCount = 0;
-  private readonly streamLambdaWatches: StreamLambdaWatch[] = [];
-  private readCount = 0;
+  private readonly nestedRowWatches: NestedRowWatch[] = [];
   /** Per open subquery, outermost first. */
   private readonly open: OpenSubquery[] = [];
   /** Fragments built while the subquery they are in read no parameter bound outside it. */
@@ -216,10 +172,7 @@ export class DecodingContext {
     this.bindingOrder.delete(String(id));
   }
 
-  /**
-   * A parameter's binding; every subquery opened since it was bound now reads its outer row. A read
-   * from a query nested in a group's mapper of anything bound at or outside the group is refused.
-   */
+  /** A parameter's binding; every subquery opened since it was bound now reads its outer row. */
   public arg(id: ParameterId): ArgumentBinding {
     const key = String(id);
     const binding = this.bindings.get(key);
@@ -229,34 +182,11 @@ export class DecodingContext {
       subquery.reads++;
       subquery.rows.add(this.bindingRows.get(key));
     }
-    const reading = this.open.length;
-    if (
-      this.groups.some((group) => depth <= group.depth && reading > group.depth)
-    ) {
-      throw new NestedGroupRead(
-        "A query nested in a group's mapper reads a value bound in the group's select or outside it, such as the group's key, the group's stream or a row from outside the group",
-      );
-    }
     const order = this.bindingOrder.get(key) ?? 0;
-    const group = this.groups.at(-1);
-    if (
-      group !== undefined &&
-      group.depth > 0 &&
-      (depth < group.depth ||
-        group.own.has(binding) ||
-        this.streamLambdaWatches.some(
-          (watch) => watch.tainted && watch.before === order,
-        ))
-    ) {
-      group.reads++;
-    }
-    this.readCount++;
-    for (const watch of this.streamLambdaWatches) {
-      watch.outside ||= depth < watch.depth;
-      if (order === watch.before) {
-        watch.parameter.add(this.readCount);
+    for (const watch of this.nestedRowWatches) {
+      if (depth > watch.depth && order < watch.before) {
+        watch.reads = true;
       }
-      watch.group ||= depth === watch.depth && order < watch.before;
     }
     return binding;
   }
@@ -289,82 +219,27 @@ export class DecodingContext {
     }
   }
 
+  /** How many subqueries are open, which a parameter bound now is nested in. */
+  public get depth(): number {
+    return this.open.length;
+  }
+
   /**
-   * Builds a one-parameter lambda of the innermost group's stream, and tells what it read: a row
-   * from outside the group, its own parameter, or a value bound in the group's select before it.
-   * Where `tainted`, the parameter holds a value that read the group's key or stream, or a row from
-   * outside the group, and a read of it counts as one of those.
+   * Builds part of a query, and tells whether it read the row of a query nested deeper than `depth`
+   * subqueries through a parameter bound before the build began, a row a select at `depth` cannot
+   * read.
    */
-  public readingStreamLambda<T>(
-    tainted: boolean,
-    build: () => T,
-  ): StreamLambdaRead<T> {
-    const watch: StreamLambdaWatch = {
-      outside: false,
-      parameter: new Set(),
-      group: false,
+  public readingNestedRow<T>(depth: number, build: () => T): NestedRowRead<T> {
+    const watch: NestedRowWatch = {
+      depth,
       before: this.bindCount,
-      depth: this.groups.at(-1)?.depth ?? 0,
-      tainted,
+      reads: false,
     };
-    this.streamLambdaWatches.push(watch);
+    this.nestedRowWatches.push(watch);
     try {
-      const value = build();
-      const { outside, group } = watch;
-      return { value, outside, parameter: watch.parameter.size > 0, group };
+      return { value: build(), readsNestedRow: watch.reads };
     } finally {
-      this.streamLambdaWatches.splice(
-        this.streamLambdaWatches.indexOf(watch),
-        1,
-      );
-    }
-  }
-
-  /**
-   * Builds a group's mapper, whose parameters are bound to `own`. A query nested in it may read its
-   * own rows and constants only: a read of anything bound at or outside the group's select is
-   * refused.
-   */
-  public inGroup<T>(own: readonly ArgumentBinding[], build: () => T): T {
-    this.groups.push({ depth: this.open.length, own: new Set(own), reads: 0 });
-    try {
-      return build();
-    } finally {
-      this.groups.pop();
-    }
-  }
-
-  /** Marks how many reads of the innermost group's key or stream, or of an outside row, were made. */
-  public groupReadMark(): GroupReadMark {
-    const group = this.groups.at(-1);
-    return { group, reads: group?.reads ?? 0 };
-  }
-
-  /**
-   * Whether the group innermost at `mark` had its key or stream, or a row from outside it, read
-   * since, while it sits in another query.
-   */
-  public readGroupSince(mark: GroupReadMark): boolean {
-    return mark.group !== undefined && mark.group.reads > mark.reads;
-  }
-
-  /** How many parameter reads were made so far. It only grows, so two readings bracket a build. */
-  public get reads(): number {
-    return this.readCount;
-  }
-
-  /**
-   * Marks the parameter reads made since `since` as inside an array walk. Neither engine reads such
-   * a column when it picks the select an aggregate runs in, so a stream lambda's own parameter read
-   * there does not count as reading the group's rows.
-   */
-  public walked(since: number): void {
-    for (const watch of this.streamLambdaWatches) {
-      for (const read of watch.parameter) {
-        if (read >= since) {
-          watch.parameter.delete(read);
-        }
-      }
+      this.nestedRowWatches.splice(this.nestedRowWatches.indexOf(watch), 1);
     }
   }
 
