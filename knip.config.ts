@@ -6,6 +6,7 @@ export default antelopeKnipConfig({
     "src/test-external/**/*.test.ts",
     "src/probe-worker.ts",
     ".agents/skills/formal-change-feed-delivery/check.{mjs,ts}",
+    ".agents/skills/formal-mariadb-read-warnings/check.{mjs,ts}",
   ],
   ignoreDependencies: ["@types/mocha"],
 });
