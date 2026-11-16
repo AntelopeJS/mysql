@@ -98,7 +98,7 @@ The module reads a relation with no key at all without `_id`: a table without a 
 - `insert` answers each new row's `_id` in input order, keys that the database generates included. Each document is one `INSERT`, all in one transaction.
 - `update` and `delete` run one statement in a transaction of its own, at the session's isolation level, once. A statement that fails after it wrote, such as one through a `merge()` that [MariaDB 11.8 refuses](./mariadb-repeated-keys.md), changes no row on a table whose engine rolls back. On a MyISAM table the rows it wrote stay written.
 - `insert` with a conflict mode locks the row by its key, then updates or inserts it. A clash on another unique index still fails, as `duplicate`.
-- A constraint that the database enforces surfaces as an `ExternalWriteError`. Its `kind` is `invalid`, `missing`, `duplicate`, `reference`, `referenced`, `check` or `forbidden`, and it names the field or the constraint concerned. [Errors and refusals](./errors.md#external-write-errors) lists the errno behind each kind.
+- A constraint that the database enforces surfaces as an `ExternalWriteError`. Its `kind` is `invalid`, `missing`, `duplicate`, `reference`, `referenced`, `check` or `forbidden`, and it names the field or the constraint concerned. [Errors and refusals](./errors-external.md#external-write-errors) lists the errno behind each kind.
 
 Triggers, cascades and other writers on the client's side belong to the client. Nothing reports what they change.
 
