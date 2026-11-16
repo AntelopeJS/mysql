@@ -346,7 +346,7 @@ async function main(): Promise<number> {
     } else if (counterexample === undefined) {
       holding.push(rule);
     } else {
-      console.log(`${isFinding ? "finding" : "BROKEN"} ${rule}\n${counterexample.text}`);
+      console.log(isFinding && !options.isVerbose ? `finding ${rule}` : `${isFinding ? "finding" : "BROKEN"} ${rule}\n${counterexample.text}`);
     }
     changed ||= (counterexample === undefined) === isFinding;
   }

@@ -108,9 +108,9 @@ Each row was run under the CI bounds, in a scratch worktree of the commit named,
 | Before #71 (`b7d0d79`) | `BROKEN HandsOverTheReferenceRows`, `BROKEN NextStatementAnswers`, `BROKEN WriteStoresNoCutValue` |
 | Before #73 (`bd5ebd8`) | `BROKEN HandsOverTheReferenceRows`, `BROKEN NextStatementAnswers`, `BROKEN WriteStoresNoCutValue` |
 | Before #79 (`2d0014e`) | `BROKEN HandsOverTheReferenceRows`, `BROKEN NextStatementAnswers`, `BROKEN WriteStoresNoCutValue` |
-| Before #87 (`aebeeb3`) | `BROKEN HandsOverTheReferenceRows`, `BROKEN WriteStoresNoCutValue` |
+| Before #87 (`aebeeb3`) | `BROKEN HandsOverTheReferenceRows` |
 | Before #90 (`9c1ac1d`) | `BROKEN HandsOverTheReferenceRows` (a cursor hands over the null row a write swapped in between its runs), `BROKEN FailsOnlyOnALimit` |
-| Before #91 (`ba47b96`) | `BROKEN HandsOverTheReferenceRows`, `BROKEN FailsOnlyOnALimit`, `BROKEN WriteStoresNoCutValue` |
+| Before #91 (`ba47b96`) | `BROKEN HandsOverTheReferenceRows`, `BROKEN FailsOnlyOnALimit` |
 | `Listed` no longer clears what it lists (warnings.ts) | `BROKEN NextStatementAnswers` |
 | The cursor's second run starts outside a snapshot (row-stream.ts, `isSnapshotted = true` for `await Snapshotted(connection)`) | `BROKEN HandsOverTheReferenceRows`, `BROKEN FailsOnlyOnALimit` |
 | The session pin drops `max_error_count` (mariadb/index.ts) | `BROKEN HandsOverTheReferenceRows`, `BROKEN FailsOnlyOnALimit` |
