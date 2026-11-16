@@ -246,6 +246,46 @@ async function StreamRowBesideArrayStageAndOuterRow(): Promise<void> {
   );
 }
 
+/** The key read in a nested group's stream, then walked by an array stage in the next map. */
+async function KeyCarriedIntoArrayStage(): Promise<void> {
+  await ExpectRefused(() =>
+    Owners()
+      .map((owner) => ({
+        take: owner.key("take"),
+        groups: Items().group("views", (stream, views) => ({
+          views,
+          take: owner.key("take"),
+          sum: stream
+            .map(() => views)
+            .map((value) => ValueProxy.constant([1, 2, 3]).slice(value).sum())
+            .sum(),
+        })),
+      }))
+      .run(),
+  );
+}
+
+/** The outer row read in a nested group's stream, then walked by an array stage in the next map. */
+async function OuterRowCarriedIntoArrayStage(): Promise<void> {
+  await ExpectRefused(() =>
+    Owners()
+      .map((owner) =>
+        Items().group("views", (stream, views) => ({
+          views,
+          sum: stream
+            .map((item) => item.key("views").add(owner.key("take")))
+            .map((value) =>
+              ValueProxy.constant([1, 2])
+                .map((element) => element.add(value))
+                .sum(),
+            )
+            .sum(),
+        })),
+      )
+      .run(),
+  );
+}
+
 describe("an array stage in a group's mapper", function () {
   this.timeout(30_000);
 
@@ -288,5 +328,13 @@ describe("an array stage in a group's mapper", function () {
   it(
     "answers a nested group's stream reading its row beside an array stage and the outer row",
     StreamRowBesideArrayStageAndOuterRow,
+  );
+  it(
+    "refuses the key carried by a stream map into an array stage",
+    KeyCarriedIntoArrayStage,
+  );
+  it(
+    "refuses the outer row carried by a stream map into an array stage",
+    OuterRowCarriedIntoArrayStage,
   );
 });

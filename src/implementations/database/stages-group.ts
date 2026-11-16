@@ -60,6 +60,8 @@ interface SubStream {
   readsGroup: boolean;
   /** Whether the value reads a row from outside the group. */
   readsOutside: boolean;
+  /** Whether the value reads the group's key or stream, or a row from outside the group. */
+  readsSelect: boolean;
 }
 
 /**
@@ -99,6 +101,7 @@ function Revalued(
     distinct: state.distinct,
     readsGroup: state.readsGroup,
     readsOutside: state.readsOutside,
+    readsSelect: state.readsSelect,
   };
 }
 
@@ -108,7 +111,7 @@ function Revalued(
  * outside the group where the lambda reads one, or reads its parameter and the old value read one.
  */
 const MapSubStream: SubStreamStage = (state, stage, context) => {
-  const read = context.readingStreamLambda(() =>
+  const read = context.readingStreamLambda(state.readsSelect, () =>
     DecodeFunction(RecordedLambda(stage, FIRST_OPERAND), context, [
       state.source,
     ]),
@@ -121,6 +124,8 @@ const MapSubStream: SubStreamStage = (state, stage, context) => {
     ),
     readsGroup: (read.parameter && state.readsGroup) || read.group,
     readsOutside: (read.parameter && state.readsOutside) || read.outside,
+    readsSelect:
+      (read.parameter && state.readsSelect) || read.group || read.outside,
   };
 };
 
@@ -286,6 +291,7 @@ function SeedOf(rows: Relation): SubStream {
     distinct: false,
     readsGroup: true,
     readsOutside: false,
+    readsSelect: false,
   };
 }
 

@@ -114,6 +114,8 @@ interface StreamLambdaWatch {
   group: boolean;
   readonly before: number;
   readonly depth: number;
+  /** Whether the parameter holds a value that read the group's key or stream, or an outside row. */
+  readonly tainted: boolean;
 }
 
 /** A group whose mapper is compiling now. */
@@ -230,7 +232,11 @@ export class DecodingContext {
     if (
       group !== undefined &&
       group.depth > 0 &&
-      (depth < group.depth || group.own.has(binding))
+      (depth < group.depth ||
+        group.own.has(binding) ||
+        this.streamLambdaWatches.some(
+          (watch) => watch.tainted && watch.before === order,
+        ))
     ) {
       this.groupReadCount++;
     }
@@ -276,14 +282,20 @@ export class DecodingContext {
   /**
    * Builds a one-parameter lambda of the innermost group's stream, and tells what it read: a row
    * from outside the group, its own parameter, or a value bound in the group's select before it.
+   * Where `tainted`, the parameter holds a value that read the group's key or stream, or a row from
+   * outside the group, and a read of it counts as one of those.
    */
-  public readingStreamLambda<T>(build: () => T): StreamLambdaRead<T> {
+  public readingStreamLambda<T>(
+    tainted: boolean,
+    build: () => T,
+  ): StreamLambdaRead<T> {
     const watch: StreamLambdaWatch = {
       outside: false,
       parameter: new Set(),
       group: false,
       before: this.bindCount,
       depth: this.groups.at(-1)?.depth ?? 0,
+      tainted,
     };
     this.streamLambdaWatches.push(watch);
     try {
