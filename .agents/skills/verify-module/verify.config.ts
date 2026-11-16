@@ -40,6 +40,8 @@ function journeyId(id: string, engine: Engine): string {
 }
 
 const FORMAL_CHANGE_FEED_DELIVERY = ".agents/skills/formal-change-feed-delivery";
+const FORMAL_JSON_VALUE_IDENTITY = ".agents/skills/formal-json-value-identity";
+const FORMAL_MERGE_REPEATED_KEYS = ".agents/skills/formal-merge-repeated-keys";
 
 const config: VerifyConfig = {
   doors: {
@@ -143,6 +145,40 @@ const config: VerifyConfig = {
       ],
       files: [`${FORMAL_CHANGE_FEED_DELIVERY}/**`],
       command: ["node", `${FORMAL_CHANGE_FEED_DELIVERY}/check.mjs`, "--full"],
+      violation: /^(?:finding|BROKEN|HOLDS) +(\w+)/gm,
+    },
+    {
+      name: "formal-json-value-identity",
+      covers: [
+        "src/dialect/mysql/sql-json.ts",
+        "src/dialect/mysql/sql-json-kinds.ts",
+        "src/dialect/mysql/flavour.ts",
+        "src/dialect/mariadb/numbers.ts",
+        "src/dialect/mariadb/json-text.ts",
+        "src/implementations/database/stages-aggregate.ts",
+        "src/implementations/database/stages-group.ts",
+        "src/implementations/database/grouped.ts",
+        "src/implementations/database/join-key.ts",
+        "src/implementations/database/value-key.ts",
+        "src/implementations/database/ranked-key.ts",
+      ],
+      files: [`${FORMAL_JSON_VALUE_IDENTITY}/**`, "src/test/formal-json-value-identity.test.ts", "src/test/json-draw.ts", "src/test/json-model.ts", "src/test/json-spell.ts"],
+      command: ["node", `${FORMAL_JSON_VALUE_IDENTITY}/check.mjs`, "--full"],
+      violation: /^(?:finding|BROKEN|HOLDS) +(\w+)/gm,
+    },
+    {
+      name: "formal-merge-repeated-keys",
+      covers: [
+        "src/dialect/mysql/sql-last-members.ts",
+        "src/dialect/mariadb/escaped-keys.ts",
+        "src/dialect/mariadb/containers.ts",
+        "src/dialect/mariadb/json-text.ts",
+        "src/implementations/database/member.ts",
+        "src/implementations/database/stages-object.ts",
+        "src/implementations/database/paths.ts",
+      ],
+      files: [`${FORMAL_MERGE_REPEATED_KEYS}/**`, "src/test/formal-key-merge.test.ts", "src/test/json-keys.ts", "src/test/json-spell.ts"],
+      command: ["node", `${FORMAL_MERGE_REPEATED_KEYS}/check.mjs`, "--full"],
       violation: /^(?:finding|BROKEN|HOLDS) +(\w+)/gm,
     },
   ],
