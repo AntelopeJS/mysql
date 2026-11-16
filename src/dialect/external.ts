@@ -131,6 +131,11 @@ export interface ExternalCatalogSyntax {
    * refuses it when the account may not delete from the relation, which no column privilege tells.
    */
   deletion(schema: string, table: string): Sql;
+  /**
+   * A statement that creates a table in a schema, which the probe only prepares: the server
+   * refuses it when the account may not create tables there, whether or not the name is taken.
+   */
+  creation(schema: string): Sql;
   info(): Sql;
   parseInfo(row: Row): Omit<CatalogInfo, "engine">;
   /** The optimizer's row estimate for reading a relation whole. */

@@ -77,6 +77,11 @@ export function Deletes(
   );
 }
 
+/** Whether the account may create a table in `schema`: once the server prepares one, which creates nothing. */
+export function Creates(session: Session, schema: string): Promise<boolean> {
+  return session.prepares(session.dialect.external.catalog.creation(schema));
+}
+
 /** The relations a listing statement answers, each {@link Confirmed}. */
 async function ParseRelations(statement: Sql): Promise<RelationRow[]> {
   const session = PoolSession();

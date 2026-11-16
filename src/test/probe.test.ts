@@ -23,6 +23,7 @@ const GRANTS: readonly (readonly [string, string])[] = [
   ["probe_updater", `UPDATE ON ${DATABASE}.notes`],
   ["probe_deleter", `DELETE ON ${DATABASE}.notes`],
   ["probe_blind", `SELECT (id) ON ${DATABASE}.orders`],
+  ["probe_builder", `SELECT, CREATE ON ${EMPTY}.*`],
 ];
 const STRANGER = "probe_stranger";
 const USERS = [...GRANTS.map(([user]) => user), STRANGER, ROLE_USER];
@@ -107,15 +108,23 @@ describe("probe, against a live server", function () {
     expect(answer).to.have.property("latencyMs").that.is.above(0);
   });
 
-  /** Fails on a probe that answers no read access to an account that sees no relation. */
-  it("answers read access and no write access to an account that sees no relation", async () => {
-    const answer = await Probe(Url("probe_reader", SECRET, EMPTY));
-    expect(answer).to.include({
-      outcome: "signed-in",
-      canRead: true,
-      canWrite: false,
-    });
-    expect(answer).to.not.have.property("unreadable");
+  /**
+   * Fails on a probe that answers no read access to an account that sees no relation, or that
+   * answers write access on a database with no relation by anything but the right to create tables.
+   */
+  it("answers read access to an account that sees no relation, and write access only if it may create tables", async () => {
+    for (const [user, canWrite] of [
+      ["probe_reader", false],
+      ["probe_builder", true],
+    ] as const) {
+      const answer = await Probe(Url(user, SECRET, EMPTY));
+      expect(answer, user).to.include({
+        outcome: "signed-in",
+        canRead: true,
+        canWrite,
+      });
+      expect(answer, user).to.not.have.property("unreadable");
+    }
   });
 
   it("answers read and write access to an account that may write", async () => {

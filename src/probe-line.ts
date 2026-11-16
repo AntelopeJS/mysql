@@ -16,6 +16,7 @@ import { DIALECTS, DetectDialect } from "./dialect";
 import { IsString } from "./implementations/database/guards";
 import {
   Confirmed,
+  Creates,
   Deletes,
   ReadRelationAccess,
 } from "./implementations/database/external-catalog";
@@ -295,7 +296,11 @@ async function AnyRead(
   return false;
 }
 
-/** Signs in, reads the account, and decides what it may do with the relations of the URL's database. */
+/**
+ * Signs in, reads the account, and decides what it may do with the relations of the URL's
+ * database. It may write when it may create a table there, so an empty database it may build in
+ * is not read-only.
+ */
 async function Inspect(line: Line): Promise<ProbeAnswer> {
   const client = line.connection.promise();
   await line.answer(client.connect());
@@ -328,7 +333,8 @@ async function Inspect(line: Line): Promise<ProbeAnswer> {
     return {
       ...signedIn,
       canRead: await AnyRead(session, rows),
-      canWrite: await AnyWrite(session, rows),
+      canWrite:
+        (await Creates(session, database)) || (await AnyWrite(session, rows)),
     };
   } catch (error) {
     if (!(error instanceof Error) || !CodeOf(error)?.startsWith(SERVER_ERROR)) {

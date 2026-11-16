@@ -99,8 +99,34 @@ function IsText(column: ProfiledColumn): boolean {
   return TEXT_FAMILIES.includes(column.family);
 }
 
+/** Whether a column's values can be categories, so its range ends only at values counted often enough. */
+function IsCounted(column: ProfiledColumn): boolean {
+  return (
+    column.family === "enum" ||
+    column.family === "int" ||
+    column.family === "bigint"
+  );
+}
+
+/**
+ * The ends of an enum or integer column, taken among values counted at least
+ * {@link CATEGORY_MIN_ROWS} times, counted as stored, inside the statement, so a rare value never
+ * leaves the database. The statement is a measure of its own: its grouping can outlast the
+ * measure's timeout on a large table, which must not take the base measures with it.
+ */
+function CountedRangeSql(column: ProfiledColumn, source: Source): Sql {
+  const ranged = sql`counted.ranged`;
+  const end =
+    column.family === "enum"
+      ? ranged
+      : GetDialect().sql.scalar.cast(ranged, "float");
+  return sql`SELECT MIN(${end}) AS min_value, MAX(${end}) AS max_value
+    FROM (SELECT ${column.quoted} AS ranged FROM ${source.from}
+      WHERE ${column.quoted} IS NOT NULL GROUP BY ${column.quoted} HAVING COUNT(*) >= ${int(CATEGORY_MIN_ROWS)}) AS counted`;
+}
+
 function BaseSql(column: ProfiledColumn, source: Source): Sql {
-  const range = RangeExpression(column);
+  const range = IsCounted(column) ? undefined : RangeExpression(column);
   const length = GetDialect().external.measures.length(column.quoted);
   const extreme = (name: Sql) => (range ? sql`${name}(${range})` : sql`NULL`);
   const sized = (name: Sql) =>
@@ -161,7 +187,14 @@ async function MeasureBase(
     nulls: FirstRow(measured, (row) => NumberOf(row, "nulls") ?? 0),
   };
   const row = ValueOf(measured)?.[0];
-  if (RangeExpression(column)) {
+  if (IsCounted(column)) {
+    const ranged = await session.measure(CountedRangeSql(column, source));
+    const first = ValueOf(ranged)?.[0];
+    base.range =
+      ranged.status === "ok"
+        ? Present(first && RangeValue(column, first))
+        : ranged;
+  } else if (RangeExpression(column)) {
     base.range =
       measured.status === "ok"
         ? Present(row && RangeValue(column, row))
@@ -189,17 +222,31 @@ async function MeasureDistinct(
 }
 
 /** How a category is named: a number as one, a boolean as one, anything else as its text. */
-function CategoryValue(column: ProfiledColumn): Sql {
+function CategoryValue(column: ProfiledColumn, key: Sql): Sql {
   const scalar = GetDialect().sql.scalar;
   switch (column.family) {
     case "int":
     case "bigint":
-      return scalar.cast(column.quoted, "float");
+      return scalar.cast(key, "float");
     case "bool":
-      return scalar.cast(column.quoted, "bool");
+      return scalar.cast(key, "bool");
     default:
-      return scalar.cast(column.quoted, "text");
+      return scalar.cast(key, "text");
   }
+}
+
+/**
+ * What a column's rows are counted by: an integer as stored, so no conversion merges values that
+ * differ, such as two `BIGINT` values one `DOUBLE` cannot tell apart; any other value as it is named.
+ */
+function CountedKey(column: ProfiledColumn): Sql {
+  return IsInteger(column)
+    ? column.quoted
+    : CategoryValue(column, column.quoted);
+}
+
+function IsInteger(column: ProfiledColumn): boolean {
+  return column.family === "int" || column.family === "bigint";
 }
 
 function CategoryOf(column: ProfiledColumn, row: Row): CategoryCount {
@@ -220,9 +267,12 @@ function CategoryOf(column: ProfiledColumn, row: Row): CategoryCount {
  * statement, so a rare value never leaves the database.
  */
 function CategoriesSql(column: ProfiledColumn, source: Source): Sql {
-  return sql`SELECT CASE WHEN top.category_rows >= ${int(CATEGORY_MIN_ROWS)} THEN top.category END AS category,
+  const named = IsInteger(column)
+    ? CategoryValue(column, sql`top.category_key`)
+    : sql`top.category_key`;
+  return sql`SELECT CASE WHEN top.category_rows >= ${int(CATEGORY_MIN_ROWS)} THEN ${named} END AS category,
       SUM(top.category_rows) AS category_rows
-    FROM (SELECT ${CategoryValue(column)} AS category, COUNT(*) AS category_rows FROM ${source.from}
+    FROM (SELECT ${CountedKey(column)} AS category_key, COUNT(*) AS category_rows FROM ${source.from}
       WHERE ${column.quoted} IS NOT NULL GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT ${int(CATEGORY_LIMIT + 1)}) AS top
     GROUP BY 1 ORDER BY 2 DESC, 1`;
 }

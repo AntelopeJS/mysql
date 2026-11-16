@@ -17,8 +17,10 @@ docs:
   - docs/errors.md
 journeys:
   - catalog-describe
+  - catalog-role-writes
   - catalog-refused
   - catalog-describe-mariadb
+  - catalog-role-writes-mariadb
   - catalog-refused-mariadb
 ---
 
@@ -29,8 +31,9 @@ journeys:
 ## Sub-features
 
 - `catalog-describe`: `Info` answers the engine `mysql`, the url's database and the user part of the connected account; `ListRelations` answers each relation with its kind, key and what the account may write; `DescribeRelations` answers the comment and the columns; `Profile` names the categories of a column with few distinct values; `SampleRows` answers the requested columns and rows as text; the client's database is unchanged afterwards.
+- `catalog-role-writes`: an account whose name holds `@` and that holds its privileges only through a default role, the role reading two tables and writing one, gets `ListRelations` answers of writes on the table the role writes and none on the other, both tables mappable. The account holds no privilege of its own on a table.
 - `catalog-refused`: an owned instance refuses the catalog; `catalog.enabled: false` refuses it under `ajs project dev` while the database interface still answers; an external instance whose server does not answer still starts in development, and both the catalog and a query refuse with `MySQL or MariaDB adapter is not connected: <reason>`, since `dialect` is left to detection and no server answered.
-- `catalog-describe-mariadb`, `catalog-refused-mariadb`: the same journeys on MariaDB 11.8, where `Info` answers `engine` `mariadb`.
+- `catalog-describe-mariadb`, `catalog-role-writes-mariadb`, `catalog-refused-mariadb`: the same journeys on MariaDB 11.8, where `Info` answers `engine` `mariadb`.
 
 ## How to get to it (user POV)
 

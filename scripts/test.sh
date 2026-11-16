@@ -6,7 +6,7 @@ images=${MYSQL_TEST_IMAGES:-mysql:8.4 mysql:9.7 mariadb:11.8 mariadb:12.3}
 parallel=${MYSQL_TEST_PARALLEL:-2}
 prefix=${MYSQL_TEST_CONTAINER_PREFIX:-ajs-mysql-test}
 password=antelopejs-test
-suites=(owned external decorators)
+suites=(owned external decorators chains)
 logs=$(mktemp -d "${TMPDIR:-/tmp}/ajs-mysql-test.XXXXXX")
 ajs="$root/node_modules/.bin/ajs"
 
@@ -15,6 +15,7 @@ run_suite() {
     owned) MYSQL_TEST_URL=$1 "$ajs" module test . ;;
     external) MYSQL_TEST_URL=$1 pnpm run --silent test:external:run ;;
     decorators) MYSQL_TEST_URL=$1 scripts/decorators.sh ;;
+    chains) MYSQL_TEST_URL=$1 node .agents/skills/formal-pipeline-chains/check.mjs --no-build ;;
   esac
 }
 

@@ -1,10 +1,11 @@
 import type { Journey, VerifyConfig } from "@antelopejs/tooling-configs/verify";
 
-import { CLIENT, READER } from "./client.ts";
-import { catalogDescribe, catalogRefused } from "./journeys-catalog.ts";
+import { CLIENT, READER, ROLE, ROLE_ACCOUNT } from "./client.ts";
+import { catalogDescribe, catalogRefused, catalogRoleWrites } from "./journeys-catalog.ts";
 import { externalReadWrite, externalRegistration } from "./journeys-external.ts";
 import { changeFeeds } from "./journeys-feeds.ts";
 import { configOptions, configRefused } from "./journeys-module.ts";
+import { PROBE_USERS, probeAccess } from "./journeys-probe.ts";
 import { refusedUniqueIndex } from "./journeys-indexes.ts";
 import { lockedUniqueIndex } from "./journeys-locked.ts";
 import { readQueries } from "./journeys-reads.ts";
@@ -15,7 +16,10 @@ import { DATABASE, ENGINES, MYSQL, ownedConfig, type Engine } from "./session.ts
 const RESET = [
   `DROP DATABASE IF EXISTS \`${DATABASE}\``,
   `DROP DATABASE IF EXISTS \`${CLIENT}\``,
-  `DROP USER IF EXISTS '${READER}'@'%'`,
+  `DROP USER IF EXISTS '${READER}'@'%', '${ROLE_ACCOUNT}'@'%'`,
+  `DROP ROLE IF EXISTS ${ROLE}`,
+  ...PROBE_USERS.map((user) => `DROP USER IF EXISTS '${user}'@'%'`),
+  "DROP DATABASE IF EXISTS `probe_shop`",
   `CREATE DATABASE \`${DATABASE}\``,
 ].join("; ");
 
@@ -32,7 +36,9 @@ const ON_EVERY_ENGINE = {
   "external-read-write": externalReadWrite,
   "external-registration": externalRegistration,
   "catalog-describe": catalogDescribe,
+  "catalog-role-writes": catalogRoleWrites,
   "catalog-refused": catalogRefused,
+  "probe-access": probeAccess,
 } satisfies Record<string, (engine: Engine) => Journey>;
 
 function journeyId(id: string, engine: Engine): string {
@@ -40,6 +46,14 @@ function journeyId(id: string, engine: Engine): string {
 }
 
 const FORMAL_CHANGE_FEED_DELIVERY = ".agents/skills/formal-change-feed-delivery";
+const FORMAL_JSON_VALUE_IDENTITY = ".agents/skills/formal-json-value-identity";
+const FORMAL_MERGE_REPEATED_KEYS = ".agents/skills/formal-merge-repeated-keys";
+
+const FORMAL_MARIADB_READ_WARNINGS = ".agents/skills/formal-mariadb-read-warnings";
+
+const FORMAL_UNIQUE_INDEX_GATE = ".agents/skills/formal-unique-index-gate";
+
+const FORMAL_PIPELINE_CHAINS = ".agents/skills/formal-pipeline-chains";
 
 const config: VerifyConfig = {
   doors: {
@@ -144,6 +158,92 @@ const config: VerifyConfig = {
       files: [`${FORMAL_CHANGE_FEED_DELIVERY}/**`],
       command: ["node", `${FORMAL_CHANGE_FEED_DELIVERY}/check.mjs`, "--full"],
       violation: /^(?:finding|BROKEN|HOLDS) +(\w+)/gm,
+    },
+    {
+      name: "formal-json-value-identity",
+      covers: [
+        "src/dialect/mysql/sql-json.ts",
+        "src/dialect/mysql/sql-json-kinds.ts",
+        "src/dialect/mysql/flavour.ts",
+        "src/dialect/mariadb/numbers.ts",
+        "src/dialect/mariadb/json-text.ts",
+        "src/implementations/database/stages-aggregate.ts",
+        "src/implementations/database/stages-group.ts",
+        "src/implementations/database/grouped.ts",
+        "src/implementations/database/join-key.ts",
+        "src/implementations/database/value-key.ts",
+        "src/implementations/database/ranked-key.ts",
+      ],
+      files: [`${FORMAL_JSON_VALUE_IDENTITY}/**`, "src/test/formal-json-value-identity.test.ts", "src/test/json-draw.ts", "src/test/json-model.ts", "src/test/json-spell.ts"],
+      command: ["node", `${FORMAL_JSON_VALUE_IDENTITY}/check.mjs`, "--full"],
+      violation: /^(?:finding|BROKEN|HOLDS) +(\w+)/gm,
+    },
+    {
+      name: "formal-merge-repeated-keys",
+      covers: [
+        "src/dialect/mysql/sql-last-members.ts",
+        "src/dialect/mariadb/escaped-keys.ts",
+        "src/dialect/mariadb/containers.ts",
+        "src/dialect/mariadb/json-text.ts",
+        "src/implementations/database/member.ts",
+        "src/implementations/database/stages-object.ts",
+        "src/implementations/database/paths.ts",
+      ],
+      files: [`${FORMAL_MERGE_REPEATED_KEYS}/**`, "src/test/formal-key-merge.test.ts", "src/test/json-keys.ts", "src/test/json-spell.ts"],
+      command: ["node", `${FORMAL_MERGE_REPEATED_KEYS}/check.mjs`, "--full"],
+      violation: /^(?:finding|BROKEN|HOLDS) +(\w+)/gm,
+    },
+    {
+      name: "formal-mariadb-read-warnings",
+      covers: [
+        "src/connection.ts",
+        "src/warnings.ts",
+        "src/implementations/database/row-stream.ts",
+        "src/dialect/mysql/checked-rows.ts",
+        "src/dialect/mysql/capture.ts",
+        "src/dialect/mariadb/index.ts",
+      ],
+      files: [`${FORMAL_MARIADB_READ_WARNINGS}/**`],
+      command: ["node", `${FORMAL_MARIADB_READ_WARNINGS}/check.mjs`, "--full"],
+      violation: /^(?:finding|BROKEN|HOLDS) +(\w+)/gm,
+    },
+    {
+      name: "formal-unique-index-gate",
+      covers: [
+        "src/connection.ts",
+        "src/implementations/database/schema.ts",
+        "src/implementations/database/migrate-tables.ts",
+        "src/implementations/database/migrate-indexes.ts",
+        "src/implementations/database/locks.ts",
+        "src/implementations/database/unbuilt-unique.ts",
+        "src/implementations/database/convergence.ts",
+      ],
+      files: [`${FORMAL_UNIQUE_INDEX_GATE}/**`],
+      command: ["node", `${FORMAL_UNIQUE_INDEX_GATE}/check.mjs`, "--full"],
+      violation: /^(?:finding|BROKEN|HOLDS) +(\w+)/gm,
+    },
+    {
+      name: "formal-pipeline-chains",
+      covers: [
+        "src/dialect/**",
+        "src/implementations/database/context.ts",
+        "src/implementations/database/expression.ts",
+        "src/implementations/database/feed-pipeline.ts",
+        "src/implementations/database/grouped.ts",
+        "src/implementations/database/pipeline.ts",
+        "src/implementations/database/plan.ts",
+        "src/implementations/database/query.ts",
+        "src/implementations/database/relation.ts",
+        "src/implementations/database/render.ts",
+        "src/implementations/database/selection.ts",
+        "src/implementations/database/stage.ts",
+        "src/implementations/database/stages-*.ts",
+        "src/implementations/database/subquery.ts",
+        "src/implementations/database/wrap.ts",
+      ],
+      files: [`${FORMAL_PIPELINE_CHAINS}/**`],
+      command: ["node", `${FORMAL_PIPELINE_CHAINS}/check.mjs`, "--full"],
+      violation: /^BROKEN +(\w+)/gm,
     },
   ],
 };
