@@ -1,6 +1,12 @@
 ---
 covers:
   - src/dialect/sql-types.ts
+  - src/dialect/sql-time-types.ts
+  - src/dialect/mysql/checked-rows.ts
+  - src/implementations/database/edge.ts
+  - src/implementations/database/grouped.ts
+  - src/implementations/database/join-key.ts
+  - src/implementations/database/wrap.ts
   - src/dialect/mysql/sql-*.ts
   - src/implementations/database/query.ts
   - src/implementations/database/pipeline.ts

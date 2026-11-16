@@ -5,6 +5,7 @@ import { catalogDescribe, catalogRefused } from "./journeys-catalog.ts";
 import { externalReadWrite, externalRegistration } from "./journeys-external.ts";
 import { changeFeeds } from "./journeys-feeds.ts";
 import { configOptions, configRefused } from "./journeys-module.ts";
+import { PROBE_USERS, probeAccess } from "./journeys-probe.ts";
 import { refusedUniqueIndex } from "./journeys-indexes.ts";
 import { lockedUniqueIndex } from "./journeys-locked.ts";
 import { readQueries } from "./journeys-reads.ts";
@@ -16,6 +17,8 @@ const RESET = [
   `DROP DATABASE IF EXISTS \`${DATABASE}\``,
   `DROP DATABASE IF EXISTS \`${CLIENT}\``,
   `DROP USER IF EXISTS '${READER}'@'%'`,
+  ...PROBE_USERS.map((user) => `DROP USER IF EXISTS '${user}'@'%'`),
+  "DROP DATABASE IF EXISTS `probe_shop`",
   `CREATE DATABASE \`${DATABASE}\``,
 ].join("; ");
 
@@ -33,6 +36,7 @@ const ON_EVERY_ENGINE = {
   "external-registration": externalRegistration,
   "catalog-describe": catalogDescribe,
   "catalog-refused": catalogRefused,
+  "probe-access": probeAccess,
 } satisfies Record<string, (engine: Engine) => Journey>;
 
 function journeyId(id: string, engine: Engine): string {
