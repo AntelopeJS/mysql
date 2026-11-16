@@ -97,6 +97,8 @@ export interface Relation {
   /** The conjuncts of the `WHERE`, each already parenthesised by whoever pushed it. */
   where: Sql[];
   groupBy: Compiled[];
+  /** The conjuncts of the `HAVING`, each already parenthesised, over the groups of `groupBy`. */
+  having?: Sql[];
   orderBy: OrderTerm[];
   limit?: number;
   offset?: number;
