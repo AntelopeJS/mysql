@@ -141,6 +141,14 @@ const READ_TABLES: readonly string[] = [
   "CREATE TABLE sales.tallies (id INT PRIMARY KEY, label VARCHAR(10) NOT NULL)",
   `INSERT INTO sales.tallies ${Series(29)}
     SELECT g, CASE WHEN g <= 4 THEN 'four' WHEN g <= 9 THEN 'five' ELSE 'many' END FROM seq`,
+  "CREATE TABLE sales.grades (id INT PRIMARY KEY, grade ENUM('bronze', 'silver', 'gold', 'platinum') NOT NULL, level INT NOT NULL)",
+  `INSERT INTO sales.grades ${Series(18)}
+    SELECT g,
+      CASE WHEN g <= 4 THEN 'bronze' WHEN g <= 9 THEN 'silver' WHEN g <= 17 THEN 'gold' ELSE 'platinum' END,
+      CASE WHEN g <= 4 THEN 7001 WHEN g <= 9 THEN 7002 WHEN g <= 14 THEN 7008 ELSE 7009 END
+    FROM seq`,
+  "CREATE TABLE sales.snowflakes (id INT PRIMARY KEY, ref BIGINT NOT NULL)",
+  `INSERT INTO sales.snowflakes ${Series(5)} SELECT g, 1500000000000000000 + g FROM seq`,
 ];
 
 /** The accent- and case-insensitive collation each engine's `w_names.name` is declared in. */
@@ -233,6 +241,8 @@ const READABLE: readonly string[] = [
   "invoices",
   "big_events",
   "tallies",
+  "grades",
+  "snowflakes",
   "w_accounts",
   "w_items",
   "w_serial",
