@@ -310,6 +310,29 @@ async function GroupInArrayStageCallback(): Promise<void> {
   );
 }
 
+/** The outer row carried by a stream map through a second map into an array stage in a third. */
+async function OuterRowCarriedThroughMaps(): Promise<void> {
+  await ExpectRefused(() =>
+    Owners()
+      .map((owner) =>
+        Items().group("views", (stream, views) => ({
+          views,
+          take: owner.key("take"),
+          sum: stream
+            .map(() => ({ take: owner.key("take") }))
+            .map((carried) => carried.merge({ z: 1 }))
+            .map((carried) =>
+              ValueProxy.constant([1, 2])
+                .map((element) => element.add(carried.key("take")))
+                .sum(),
+            )
+            .sum(),
+        })),
+      )
+      .run(),
+  );
+}
+
 describe("an array stage in a group's mapper", function () {
   this.timeout(30_000);
 
@@ -364,5 +387,9 @@ describe("an array stage in a group's mapper", function () {
   it(
     "answers an array stage outside any group holding a group in its callback",
     GroupInArrayStageCallback,
+  );
+  it(
+    "refuses the outer row carried through two stream maps into an array stage",
+    OuterRowCarriedThroughMaps,
   );
 });
