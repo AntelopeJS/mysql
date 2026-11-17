@@ -87,8 +87,8 @@ interface OpenSubquery {
 interface GroupKey {
   readonly aggregated: Compiled;
   folds: number;
-  /** How many array stages were compiling their callback or bounds when its mapper began. */
-  walks: number;
+  /** How many `map` stages over an array were compiling their callback when its mapper began. */
+  elementMaps: number;
   /** How many queries over ordered or bounded rows were compiling their mapper when it began. */
   windows: number;
 }
@@ -97,8 +97,8 @@ interface GroupKey {
 export interface StreamReadPlace {
   /** Inside the mapper of another group nested in the group's mapper. */
   readonly innerGroup: boolean;
-  /** Inside the callback or bounds of an array stage. */
-  readonly walk: boolean;
+  /** Inside the callback of a `map` stage over an array, whose value the walk aggregates. */
+  readonly elementMap: boolean;
   /** Inside a query nested in the mapper over ordered or bounded rows. */
   readonly window: boolean;
 }
@@ -120,8 +120,8 @@ export class DecodingContext {
   private readonly groupKeys = new WeakMap<ArgumentBinding, GroupKey>();
   /** The keys of the groups whose mappers are compiling now, outermost first. */
   private readonly mappers: Compiled[] = [];
-  /** How many array stages are compiling their callback or bounds now. */
-  private walkDepth = 0;
+  /** How many `map` stages over an array are compiling their callback now. */
+  private elementMapDepth = 0;
   /** How many queries over ordered or bounded rows are compiling their mapper now. */
   private windowDepth = 0;
   /** Per open subquery, outermost first. */
@@ -200,7 +200,12 @@ export class DecodingContext {
    * else in the group's mapper. Answers the binding the mapper's key parameter takes.
    */
   public groupKey(key: Compiled, aggregated: Compiled): Compiled {
-    this.groupKeys.set(key, { aggregated, folds: 0, walks: 0, windows: 0 });
+    this.groupKeys.set(key, {
+      aggregated,
+      folds: 0,
+      elementMaps: 0,
+      windows: 0,
+    });
     return key;
   }
 
@@ -208,7 +213,7 @@ export class DecodingContext {
   public mappingGroup<T>(key: Compiled, build: () => T): T {
     const group = this.groupKeys.get(key);
     assert(group, "A group's mapper names a key no group bound");
-    group.walks = this.walkDepth;
+    group.elementMaps = this.elementMapDepth;
     group.windows = this.windowDepth;
     this.mappers.push(key);
     try {
@@ -218,13 +223,13 @@ export class DecodingContext {
     }
   }
 
-  /** Builds the callback or bounds of an array stage, which the engine reads inside its walk. */
-  public walking<T>(build: () => T): T {
-    this.walkDepth++;
+  /** Builds the callback of a `map` stage over an array, which the walk's aggregate reads. */
+  public mappingElements<T>(build: () => T): T {
+    this.elementMapDepth++;
     try {
       return build();
     } finally {
-      this.walkDepth--;
+      this.elementMapDepth--;
     }
   }
 
@@ -245,7 +250,7 @@ export class DecodingContext {
     assert(group, "A read of a group's stream names a key no group bound");
     return {
       innerGroup: this.mappers.at(-1) !== key,
-      walk: this.walkDepth > group.walks,
+      elementMap: this.elementMapDepth > group.elementMaps,
       window: this.windowDepth > group.windows,
     };
   }
