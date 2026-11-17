@@ -7,12 +7,7 @@
 ### 🩹 Fixes
 
 - **probe:** Count the right to create tables as write access ([#104](https://github.com/AntelopeJS/mysql/pull/104))
-- **mysql:** Refuse reads of a group's key, stream or outer row that one statement cannot answer ([#105](https://github.com/AntelopeJS/mysql/pull/105))
 - **catalog:** End an enum or integer range at values counted 5 times ([#114](https://github.com/AntelopeJS/mysql/pull/114))
-
-### 💅 Refactors
-
-- **mysql:** Restore the group reads that 0.2.4 answers ([#111](https://github.com/AntelopeJS/mysql/pull/111))
 
 ### 📖 Documentation
 
@@ -34,9 +29,6 @@
 
 - **release:** Publish without re-running the test matrix ([#100](https://github.com/AntelopeJS/mysql/pull/100))
 
-#### ⚠️ Breaking Changes
-
-- **mysql:** Refuse reads of a group's key, stream or outer row that one statement cannot answer ([#105](https://github.com/AntelopeJS/mysql/pull/105))
 
 ### ❤️ Contributors
 
