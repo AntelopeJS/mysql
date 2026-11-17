@@ -264,8 +264,10 @@ class NestedGroupRead extends Error {
 /**
  * Refuses, on an engine that collects nested rows in place, a read of a group's stream that MariaDB
  * answers wrong: from the mapper of another group nested in it, which then answers one inner
- * group's key for every inner group; from an array stage's callback or bounds, or from a query
- * over ordered or bounded rows, where the stream's aggregate is read inside another aggregate.
+ * group's key for every inner group; from the callback of a `map` over an array, or from a query
+ * over ordered or bounded rows, where the stream's aggregate is read inside another aggregate. A
+ * slice's bounds and a filter's callback sit in the walk's `WHERE`, outside its aggregate, and
+ * MariaDB answers them.
  */
 function RefuseStreamRead(key: Compiled, context: DecodingContext): void {
   if (context.dialect.sql.json.inPlace === undefined) {
@@ -274,8 +276,8 @@ function RefuseStreamRead(key: Compiled, context: DecodingContext): void {
   const place = context.streamReadPlace(key);
   const where = place.innerGroup
     ? "a group nested in the group's mapper"
-    : place.walk
-      ? "an array stage's callback or bounds"
+    : place.elementMap
+      ? "the callback of a map over an array"
       : place.window
         ? "a query over ordered or sliced rows nested in the group's mapper"
         : undefined;

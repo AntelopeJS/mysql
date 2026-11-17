@@ -45,11 +45,13 @@ A `group` callback can hold a query of its own, such as `Owners().map(...)` insi
 
 MariaDB answers another group's rows for these reads of the stream, so the module refuses them there with `ANTELOPEJS_MYSQL_NESTED_GROUP_READ` while it builds the statement. MySQL answers them. `s` is the group's stream.
 
-| Where the callback reads `s`                                  | Example                                                                                                        |
-| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| In a group nested in the callback                             | `Owners().group("take", (owners, take) => ({ take, c: s.count() }))`                                           |
-| In the callback or bounds of an array stage                   | `ValueProxy.constant([1, 2]).map((x) => ValueProxy.constant({ a: 1 }).merge({ n: s.count() }).values().sum())` |
-| In a query nested in the callback over ordered or sliced rows | `Owners().orderBy("take").slice(0, 2).map((o) => ({ t: o.key("take"), r: s.map((i) => i.key("slug")) }))`      |
+| Where the callback reads `s`                                  | Example                                                                                                   |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| In a group nested in the callback                             | `Owners().group("take", (owners, take) => ({ take, c: s.count() }))`                                      |
+| In the callback of a `map` over an array, at any depth        | `ValueProxy.constant([1, 2]).map(() => s.count())`                                                        |
+| In a query nested in the callback over ordered or sliced rows | `Owners().orderBy("take").slice(0, 2).map((o) => ({ t: o.key("take"), r: s.map((i) => i.key("slug")) }))` |
+
+Of the array stages, only `map`'s callback is refused, along with anything nested in it, such as `ValueProxy.constant([1, 2]).map((x) => ValueProxy.constant({ a: 1 }).merge({ n: s.count() }).values().sum())`. MariaDB answers a read of `s` in the bounds of a `slice` and in the callback of a `filter`, as in `ValueProxy.constant([1, 2, 3]).slice(0, n)` or `.filter((x) => x.gt(n))` where `n` reads `s.count()`, unless a `map` encloses it.
 
 The message is `A group's stream is read in {where}, which MariaDB answers with another group's rows. Read the stream in the group's own select, or run a query per group`.
 

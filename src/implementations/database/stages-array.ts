@@ -161,7 +161,9 @@ function ElementBody(
 const MapStage = LiftRaw((value, stage, context) => {
   const dialect = context.dialect;
   const { json, walk } = Elements(value, context);
-  const body = ElementBody(value, walk, stage, context);
+  const body = context.mappingElements(() =>
+    ElementBody(value, walk, stage, context),
+  );
   const collected = Collected(dialect, walk.ordinal, AsJson(dialect, body).sql);
   return {
     sql: GuardJson(dialect, json, "array", walk.aggregate(collected)),
@@ -215,12 +217,6 @@ function ReducerStage(reducer: Reducer): StageHandler {
   });
 }
 
-/** A stage whose bounds or callback the engine reads inside the subquery that walks the elements. */
-function Walking(handler: StageHandler): StageHandler {
-  return (state, stage, context) =>
-    context.walking(() => handler(state, stage, context));
-}
-
 /**
  * Array stages.
  *
@@ -255,9 +251,9 @@ function Walking(handler: StageHandler): StageHandler {
 export const ARRAY_STAGES: StageMap = {
   arr_index: IndexStage,
   arr_includes: IncludesStage,
-  arr_slice: Walking(SliceStage),
-  arr_map: Walking(MapStage),
-  arr_filter: Walking(FilterStage),
+  arr_slice: SliceStage,
+  arr_map: MapStage,
+  arr_filter: FilterStage,
   ...BuildStages(MEASURES, MeasureStage),
   ...BuildStages(REDUCERS, ReducerStage),
 };
