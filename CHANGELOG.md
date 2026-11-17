@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.2.6
+
+[compare changes](https://github.com/AntelopeJS/mysql/compare/v0.2.5...v0.2.6)
+
+### 🩹 Fixes
+
+- **mysql:** Answer each group's own rows where its mapper reads the key, stream or outer row ([#116](https://github.com/AntelopeJS/mysql/pull/116))
+- **mysql:** Refuse on MariaDB only a group's stream read in a map's callback over an array ([#117](https://github.com/AntelopeJS/mysql/pull/117))
+
+### 📖 Documentation
+
+- Drop the cancelled #105 and #111 from the 0.2.5 changelog ([#115](https://github.com/AntelopeJS/mysql/pull/115))
+
+### ❤️ Contributors
+
+- Antony Rizzitelli
+
 ## v0.2.5
 
 [compare changes](https://github.com/AntelopeJS/mysql/compare/v0.2.4...v0.2.5)
