@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.2.7
+
+[compare changes](https://github.com/AntelopeJS/mysql/compare/v0.2.6...v0.2.7)
+
+### 🩹 Fixes
+
+- **database:** Answer false for match on a value that is not text ([#121](https://github.com/AntelopeJS/mysql/pull/121))
+
+### ✅ Tests
+
+- **mysql:** Cover the key read in queries nested in a group the outer row filters ([#119](https://github.com/AntelopeJS/mysql/pull/119))
+
+### ❤️ Contributors
+
+- Antony Rizzitelli
+
 ## v0.2.6
 
 [compare changes](https://github.com/AntelopeJS/mysql/compare/v0.2.5...v0.2.6)
