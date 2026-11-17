@@ -1,7 +1,7 @@
 import { type Sql, sql } from "../../statement";
 import { TextParam } from "./sql";
 import { AsFloat } from "./readings";
-import { ArrayOf, BOOL, TEXT } from "./types";
+import { ArrayOf, BOOL, IsJsonBacked, TEXT } from "./types";
 import { IsString } from "./guards";
 import { OptionsOf } from "./utils";
 import { StageOperand } from "./member";
@@ -56,6 +56,9 @@ const ConcatStage = Lift((value, args, stage, context) => {
 });
 
 const MatchStage = LiftRaw((value, stage, context) => {
+  if (value.type.kind !== TEXT.kind && !IsJsonBacked(value.type)) {
+    return { sql: sql`FALSE`, type: BOOL };
+  }
   const dialect = context.dialect;
   const raw = StageOperand(stage, FIRST_OPERAND);
   const pattern = IsString(raw)
@@ -66,10 +69,10 @@ const MatchStage = LiftRaw((value, stage, context) => {
         FIRST_OPERAND,
       );
   return {
-    sql: dialect.sql.scalar.regex.matches(
+    sql: sql`COALESCE(${dialect.sql.scalar.regex.matches(
       TextOf(value, context).sql,
       TextOf(pattern, context).sql,
-    ),
+    )}, FALSE)`,
     type: BOOL,
   };
 });
@@ -108,8 +111,10 @@ const SplitStage = LiftRaw((value, stage, context) => {
  *   UTF-16 code units, so the two disagree on an astral-plane character.
  * - `str_concat` is `CONCAT`, whose NULL operand makes the whole result NULL. MySQL's `||` is OR
  *   and is never emitted.
- * - `str_match` answers a boolean. A literal pattern is rewritten from JavaScript's flavour into
- *   the engine's by the dialect; a pattern computed from a value is bound as it is.
+ * - `str_match` answers a boolean, false wherever the value is not text: a number, a boolean, an
+ *   instant, `null`, an array or an object is never matched through its text rendering. A literal
+ *   pattern is rewritten from JavaScript's flavour into the engine's by the dialect; a pattern
+ *   computed from a value is bound as it is.
  * - `str_split` carries its separator and its bound in `stage.options` and takes no arguments,
  *   which is why it is lifted raw. `maxSplits` truncates the result, and an empty text is one
  *   empty piece.
