@@ -248,7 +248,7 @@ async function OuterStreamInNestedGroup(): Promise<void> {
 }
 
 /**
- * The stream counted in an array stage's callback. MariaDB failed with `Invalid use of group
+ * The stream counted in a map's callback over an array. MariaDB failed with `Invalid use of group
  * function`, and answers another value once the count is tied to the group's rows, so it refuses;
  * MySQL answers.
  */
@@ -358,7 +358,7 @@ describe("a group's key, stream and outer row read inside its mapper", function 
     OuterStreamInNestedGroup,
   );
   it(
-    "answers or refuses the stream counted in an array stage's callback",
+    "answers or refuses the stream counted in a map's callback over an array",
     StreamInArrayStageCallback,
   );
   it(

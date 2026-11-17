@@ -22,8 +22,8 @@ interface Placement {
 
 /**
  * Reads of a group's stream in an array stage's bounds or filter callback, which sit outside the
- * aggregate that walks the elements. 0.2.4 answered each of them on both engines; a rule that
- * refuses every read of the stream inside an array stage fails them on MariaDB.
+ * aggregate that walks the elements. 0.2.4 answered each of them on MariaDB; a rule that refuses
+ * every read of the stream inside an array stage fails them there.
  */
 const OUTSIDE_THE_WALK_AGGREGATE: Placement[] = [
   {
@@ -71,6 +71,14 @@ function Expected(placement: Placement) {
   }));
 }
 
+const TAKES = OWNERS.map((owner) => owner.take).sort(
+  (left, right) => left - right,
+);
+
+function ByTake(left: { take: number }[], right: { take: number }[]): number {
+  return (left[0]?.take ?? 0) - (right[0]?.take ?? 0);
+}
+
 function ByViews<T extends { views: number }>(groups: T[]): T[] {
   return [...groups].sort((left, right) => left.views - right.views);
 }
@@ -108,6 +116,43 @@ describe("a group's stream read in an array stage", function () {
         .run();
       expect(read.map(ByViews)).to.deep.equal(
         OWNERS.map(() => Expected(placement)),
+      );
+    });
+
+    it(`answers the stream counted in ${placement.name}, in a group nested in a query whose row it reads`, async () => {
+      const read = await Owners()
+        .map((owner) =>
+          Items().group("views", (stream, views) => ({
+            views,
+            take: owner.key("take"),
+            read: placement.read(stream),
+          })),
+        )
+        .run();
+      expect(read.map((groups) => ByViews(groups)).sort(ByTake)).to.deep.equal(
+        TAKES.map((take) =>
+          Expected(placement).map((group) => ({ ...group, take })),
+        ),
+      );
+    });
+
+    it(`answers or refuses the stream counted in ${placement.name}, inside a map's callback`, async () => {
+      const run = () =>
+        Items()
+          .group("views", (stream, views) => ({
+            views,
+            read: ValueProxy.constant([1, 2]).map(() => placement.read(stream)),
+          }))
+          .run();
+      if (GetDialect().id === "mariadb") {
+        await ExpectRefused(run);
+        return;
+      }
+      expect(ByViews(await run())).to.deep.equal(
+        Expected(placement).map(({ views, read }) => ({
+          views,
+          read: [read, read],
+        })),
       );
     });
   }
