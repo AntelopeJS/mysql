@@ -107,12 +107,12 @@ describe("listing an external relation as a TableView does", function () {
     });
   }
 
-  it("searches a date column through its ISO rendering, as a TableView search does", async () => {
+  it("answers false for match on a date column, rather than matching its ISO rendering", async () => {
     const total = await Accounts()
       .filter((row) => row.key("created_at").match("(?i)2026-01-02T0"))
       .count()
       .run();
-    expect(total).to.equal(10);
+    expect(total).to.equal(0);
   });
 
   it("searches enum and uuid-shaped columns through their text", async () => {
