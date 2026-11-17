@@ -12,7 +12,7 @@ describe("the group stage", () => {
         Root().group("name", (stream, name) => ({ name, n: stream.count() })),
       ),
     ).to.deep.equal({
-      sql: `SELECT JSON_OBJECT('name', CAST(JSON_QUOTE(\`t0\`.\`name\`) AS JSON), 'n', CAST(CAST(COUNT(*) AS DOUBLE) AS JSON)) AS \`value\` ${FROM_PEOPLE} GROUP BY \`t0\`.\`name\``,
+      sql: `SELECT JSON_OBJECT('name', CAST(JSON_QUOTE(MIN(\`t0\`.\`name\`)) AS JSON), 'n', CAST(CAST(COUNT((CASE WHEN (\`t0\`.\`name\` <=> \`t0\`.\`name\`) THEN 1 END)) AS DOUBLE) AS JSON)) AS \`value\` ${FROM_PEOPLE} GROUP BY \`t0\`.\`name\``,
       args: [""],
     });
   });
@@ -22,7 +22,7 @@ describe("the group stage", () => {
       Root().group("byAgeActive", (stream, group) => ({ group })),
     ).sql;
     expect(sql).to.include(
-      "JSON_OBJECT('age', CAST((`t0`.`age` + 0e0) AS JSON), 'isActive', CAST((`t0`.`isActive`) <> 0 AS JSON))",
+      "JSON_OBJECT('age', CAST(MIN((`t0`.`age` + 0e0)) AS JSON), 'isActive', CAST((MIN(`t0`.`isActive`)) <> 0 AS JSON))",
     );
     expect(sql).to.match(/GROUP BY `t0`\.`age`, `t0`\.`isActive`$/);
   });
@@ -61,7 +61,9 @@ describe("a group's sub-stream", () => {
         n: stream.map((row) => row.key("nickname")).count(),
       })),
     ).sql;
-    expect(sql).to.include("'n', CAST(CAST(COUNT(*) AS DOUBLE) AS JSON)");
+    expect(sql).to.include(
+      "'n', CAST(CAST(COUNT((CASE WHEN (`t0`.`name` <=> `t0`.`name`) THEN 1 END)) AS DOUBLE) AS JSON)",
+    );
   });
 
   it("counts the values a pending distinct chose rather than the rows", () => {

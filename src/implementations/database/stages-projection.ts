@@ -18,8 +18,10 @@ import {
 import type { QueryStage } from "@antelopejs/interface-database/common";
 
 import {
+  Anchored,
   CurrentValue,
   type Relation,
+  RowAnchor,
   SetPlainProjection,
   SetProjection,
 } from "./relation";
@@ -131,13 +133,29 @@ function MappedRows(
  */
 const MapStage: PipelineStage = (relation, stage, context, later) => {
   const prepared = Prepare(relation, PROJECTION_BLOCKERS, context);
-  const body = DecodeFunction(
-    RecordedLambda(stage, FIRST_OPERAND),
-    context,
-    [prepared.source],
-    MappedRows(prepared, later, context.readsOuterRow),
+  const rows = MappedRows(prepared, later, context.readsOuterRow);
+  const windowed =
+    prepared.orderBy.length > 0 ||
+    [prepared, rows].some(
+      (each) => each?.limit !== undefined || (each?.offset ?? 0) > 0,
+    );
+  const { value: body, readsOuterRow } = context.readingOuterRow(() =>
+    context.mappingRows(windowed, () =>
+      DecodeFunction(
+        RecordedLambda(stage, FIRST_OPERAND),
+        context,
+        [prepared.source],
+        rows,
+      ),
+    ),
   );
-  return SetProjection(prepared, RequireOperand(body, stage, FIRST_OPERAND));
+  const value = RequireOperand(body, stage, FIRST_OPERAND);
+  return SetProjection(
+    prepared,
+    readsOuterRow
+      ? Anchored(context.dialect, RowAnchor(prepared), value)
+      : value,
+  );
 };
 
 /** Builds a document from the named fields alone; `_id` is present only if it was asked for. */

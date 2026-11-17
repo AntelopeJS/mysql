@@ -432,6 +432,12 @@ export interface RowSyntax {
   ): { readonly from: Sql; readonly value: Sql };
   /** Whether an `INSERT` can answer values of the row it wrote, by a `RETURNING` clause. */
   readonly returning: boolean;
+  /**
+   * Whether a grouped select reads a group term through `MIN`, an aggregate of the group. MySQL
+   * reads a bare term inside a subquery of a grouped select off another group's row, once the
+   * select is read again for each row of an enclosing query.
+   */
+  readonly aggregatesGroupTerms: boolean;
 }
 
 /** The expression members the compiler and the writes reach. */

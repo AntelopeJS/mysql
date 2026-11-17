@@ -109,6 +109,7 @@ Under `conflict: "update"` or `"replace"`, an existing `_id` is upserted, not re
 | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
 | `filter`, `orderBy`, `slice`, `nth`, `join`, `lookup`, `union` or a nested `group` inside a `group` callback | `The '{stage}' stage cannot appear in a group's sub-stream, though it is legal on the query outside the group`        |
 | Two aggregates in one sub-stream, such as `stream.count().count()`                                           | `The '{stage}' stage cannot follow an aggregate in a group's sub-stream, since an aggregate may not read another one` |
+| A stream read [MariaDB refuses](behaviour.md#group-callbacks-that-hold-nested-queries)                       | `ANTELOPEJS_MYSQL_NESTED_GROUP_READ`                                                                                  |
 
 ## Instances and configuration
 

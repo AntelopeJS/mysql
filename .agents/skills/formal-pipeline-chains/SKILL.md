@@ -88,7 +88,7 @@ Covered, at the sync commit:
 Left out:
 
 - `distinct`, `join`, `joinInner`, `getAll`, `between`, `avg`, `min`, `max`, and the array and date stages of a value: `value-stages-*.test.ts` and `src/test/unit/` cover them.
-- A group callback that holds a nested query, and a group inside a group callback. The module compiles them into one statement and does not refuse them. `docs/behaviour.md` lists the shapes that answer a wrong row on a server, and the check draws only a nested group that sums a field, or the field plus the outer `take`: `outer-row-group-distinct.test.ts` and `outer-row-join.test.ts` enumerate the rest.
+- A group callback that holds a nested query, and a group inside a group callback. The module compiles them into one statement, and on MariaDB refuses the three reads of a group's stream `docs/behaviour.md` lists. The check draws only a nested group that sums a field, or the field plus the outer `take`: `outer-row-group-reads.test.ts`, `outer-row-group-distinct.test.ts` and `outer-row-join.test.ts` enumerate the rest.
 - Concurrent writers and a quiet table between writes: `formal-change-feed-delivery` covers delivery order, and this check writes one row at a time.
 - Rows that hold nested objects, dates and numbers past 2^53.
 - `CROSS_INSTANCE` reads and external instances.

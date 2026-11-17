@@ -136,6 +136,7 @@ const MASKED_ROWS: RowSyntax = {
   hold: (value) => ({ from: Marked(value), value: Marked() }),
   holdBare: (value) => ({ from: Marked(value), value: Marked() }),
   returning: false,
+  aggregatesGroupTerms: false,
 };
 
 const MASKED_SYNTAX: CompilerSyntax = {

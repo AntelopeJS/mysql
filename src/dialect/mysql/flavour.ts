@@ -127,6 +127,8 @@ export interface Flavour {
   readonly inPlace?: JsonSyntax["inPlace"];
   /** Whether an `INSERT` can answer values of the row it wrote, by a `RETURNING` clause. */
   readonly returning: boolean;
+  /** The row syntax's `aggregatesGroupTerms`. */
+  readonly aggregatesGroupTerms: boolean;
   /** Whether a derived table can read the columns of the tables joined before it. */
   readonly lateral: boolean;
   /** Whether a subquery inside a table function's argument can read a column of an outer query. */
@@ -296,6 +298,7 @@ export const MYSQL: Flavour = {
   collect: Collect,
   collectsDistinct: false,
   returning: false,
+  aggregatesGroupTerms: true,
   lateral: true,
   outerInTableFunction: false,
   hold: (columns) =>
