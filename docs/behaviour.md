@@ -51,7 +51,7 @@ MariaDB answers another group's rows for these reads of the stream, so the modul
 | In the callback or bounds of an array stage                   | `ValueProxy.constant([1, 2]).map((x) => ValueProxy.constant({ a: 1 }).merge({ n: s.count() }).values().sum())` |
 | In a query nested in the callback over ordered or sliced rows | `Owners().orderBy("take").slice(0, 2).map((o) => ({ t: o.key("take"), r: s.map((i) => i.key("slug")) }))`      |
 
-Read `s` in the group's own select, or run a query per group.
+The message is `A group's stream is read in {where}, which MariaDB answers with another group's rows. Read the stream in the group's own select, or run a query per group`.
 
 ## Storing a value
 
