@@ -126,6 +126,42 @@ async function KeyInNestedQueryOfNestedGroup(): Promise<void> {
 }
 
 /**
+ * Groups of rows the outer row filters, whose mapper counts and maps queries that read the key and
+ * no outer row. MariaDB answered the mapped key once per row of the group.
+ */
+async function KeyInNestedQueriesOfFilteredGroup(): Promise<void> {
+  const read = await Owners()
+    .map((owner) =>
+      Items()
+        .filter((item) => item.key("views").lt(owner.key("take")))
+        .group("views", (_stream, views) => ({
+          views,
+          count: Items()
+            .filter((item) => item.key("views").eq(views))
+            .count(),
+          takes: Owners()
+            .filter((other) => other.key("take").eq(views))
+            .map(() => views),
+        })),
+    )
+    .run();
+  const sorted = read
+    .map((groups) =>
+      [...groups].sort((left, right) => left.views - right.views),
+    )
+    .sort((left, right) => left.length - right.length);
+  expect(sorted).to.deep.equal(
+    TAKES.map((take) =>
+      VIEWS.filter((views) => views < take).map((views) => ({
+        views,
+        count: Viewed(views).length,
+        takes: TAKES.filter((other) => other === views),
+      })),
+    ),
+  );
+}
+
+/**
  * The stream aggregates and collects a value that reads the outer row and no column of the group's
  * rows. Both engines ran the aggregate in the outer query, which answered one owner for all.
  */
@@ -340,6 +376,10 @@ describe("a group's key, stream and outer row read inside its mapper", function 
   it(
     "reads each group's key in a query nested in a group nested in another query",
     KeyInNestedQueryOfNestedGroup,
+  );
+  it(
+    "reads each group's key in queries nested in a group filtered by the outer row",
+    KeyInNestedQueriesOfFilteredGroup,
   );
   it(
     "aggregates over the group's rows a value that reads only the outer row",
