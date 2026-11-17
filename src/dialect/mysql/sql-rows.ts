@@ -66,6 +66,7 @@ export function RowsOf(flavour: Flavour): RowSyntax {
     joinScope: JoinScope,
     nestedLoopJoin: flavour.nestedLoopJoin !== undefined,
     returning: flavour.returning,
+    aggregatesGroupTerms: flavour.aggregatesGroupTerms,
     hold: (value, alias) => {
       const held: Held = { name: "value", value, kind: "json" };
       return {

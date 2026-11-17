@@ -105,10 +105,11 @@ Under `conflict: "update"` or `"replace"`, an existing `_id` is upserted, not re
 
 ## Grouping
 
-| What you did                                                                                                 | Message                                                                                                               |
-| ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
-| `filter`, `orderBy`, `slice`, `nth`, `join`, `lookup`, `union` or a nested `group` inside a `group` callback | `The '{stage}' stage cannot appear in a group's sub-stream, though it is legal on the query outside the group`        |
-| Two aggregates in one sub-stream, such as `stream.count().count()`                                           | `The '{stage}' stage cannot follow an aggregate in a group's sub-stream, since an aggregate may not read another one` |
+| What you did                                                                                                                                                                  | Message                                                                                                                                                                                                         |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `filter`, `orderBy`, `slice`, `nth`, `join`, `lookup`, `union` or a nested `group` inside a `group` callback                                                                  | `The '{stage}' stage cannot appear in a group's sub-stream, though it is legal on the query outside the group`                                                                                                  |
+| Two aggregates in one sub-stream, such as `stream.count().count()`                                                                                                            | `The '{stage}' stage cannot follow an aggregate in a group's sub-stream, since an aggregate may not read another one`                                                                                           |
+| On MariaDB, read a group's stream in a group nested in its callback, in an array stage's callback or bounds, or in a query over ordered or sliced rows nested in the callback | `A group's stream is read in {where}, which MariaDB answers with another group's rows. Read the stream in the group's own select, or run a query per group`, with the code `ANTELOPEJS_MYSQL_NESTED_GROUP_READ` |
 
 ## Instances and configuration
 

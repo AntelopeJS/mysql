@@ -41,27 +41,17 @@ These queries answer instead of throwing, and the answer may not be the one you 
 
 ## Group callbacks that hold nested queries
 
-A `group` callback can hold a query of its own, such as `Owners().map(...)` inside it, and a `group` can sit inside another query. The module compiles both into one statement. MySQL and MariaDB decide which select runs an aggregate from the columns it reads, and in the shapes below they run it in the wrong select. The query then fails with an engine error, or answers another group's rows. Read the group's key and stream in the group's own select, let a query nested in the callback read its own rows and constants only, or run a second query per group.
+A `group` callback can hold a query of its own, such as `Owners().map(...)` inside it, and a `group` can sit inside another query. The module compiles both into one statement. MySQL and MariaDB run an aggregate in the innermost select whose rows it reads, so the module ties each aggregate to a column of the rows it aggregates. MySQL reads a group's key inside a subquery off the row of another group once the group sits in another query, so on MySQL the module reads the key through `MIN`, an aggregate of the group. The key, the stream and an outer row then answer the right rows wherever the callback reads them, with three exceptions on MariaDB.
 
-In the table, `s` is the group's stream, `k` the group's key, and `o` the row of an `Owners()` query around or inside the callback.
+MariaDB answers another group's rows for these reads of the stream, so the module refuses them there with `ANTELOPEJS_MYSQL_NESTED_GROUP_READ` while it builds the statement. MySQL answers them. `s` is the group's stream.
 
-| Shape                                                                                                                                                                                           | What the servers answer                                                                     |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| A nested query of one row that reads `k` in a query nested in it, such as `Owners().filter(...).map(() => Items().filter((i) => i.key("views").eq(k)))`                                         | Another group's rows, on MySQL and MariaDB                                                  |
-| In a group nested in `Owners().map((o) => ...)`, `s` aggregates or collects a value that reads `o` and no row of the group, such as `s.map(() => o.key("take")).sum()`                          | One outer row for all, with the same value in every group, on MySQL and MariaDB             |
-| In a group nested in `Owners().map((o) => ...)`, an array stage reads `o` beside `k`, such as `ValueProxy.constant([1, 2]).map((x) => x.add(k).add(o.key("take"))).sum()` in the group's select | Another group's value on MySQL                                                              |
-| The same array stage inside `s.map(...)`, such as `s.map((i) => ValueProxy.constant([1, 2]).filter((x) => x.gt(o.key("take"))).map((x) => x.add(i.key("views"))).sum()).sum()`                  | One outer row for all, on MySQL and MariaDB                                                 |
-| `s` read in a nested query that is ordered, sliced or deduplicated, such as `Owners().orderBy("take").slice(0, 2).map((o) => ({ t: o.key("take"), r: s.map(...) }))`                            | One owner's row repeated on MariaDB                                                         |
-| `s` read in a nested query beside `k`, such as `Owners().map((o) => ({ t: o.key("take"), e: s.map((i) => [k, i.key("slug")]) }))`                                                               | Another group's rows on MariaDB                                                             |
-| A group inside the callback that reads the outer `s`, such as `Owners().group("take", (os, take) => ({ take, c: s.count() }))`                                                                  | The last group's key for every group on MariaDB                                             |
-| A group nested in `Owners().map((o) => ...)` after a filter on `o`, with a nested query that reads `k`, such as `Items().filter((i) => i.key("kind").eq(k)).count()`                            | Another group's count on MySQL                                                              |
-| `k` read in a query nested in the callback, alone or in its filter, such as `Owners().map(() => k)` or `Items().filter((i) => i.key("views").eq(k))` inside `Owners().map(...)`                 | `Subquery returns more than 1 row` or `Invalid use of group function`, on MySQL and MariaDB |
+| Where the callback reads `s`                                  | Example                                                                                                        |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| In a group nested in the callback                             | `Owners().group("take", (owners, take) => ({ take, c: s.count() }))`                                           |
+| In the callback or bounds of an array stage                   | `ValueProxy.constant([1, 2]).map((x) => ValueProxy.constant({ a: 1 }).merge({ n: s.count() }).values().sum())` |
+| In a query nested in the callback over ordered or sliced rows | `Owners().orderBy("take").slice(0, 2).map((o) => ({ t: o.key("take"), r: s.map((i) => i.key("slug")) }))`      |
 
-These shapes answer right on both engines:
-
-- `k` and aggregates of `s` in the group's own select;
-- a query nested in the callback that reads its own rows and constants;
-- a group nested in another query that reads that query's row in its own select, or in `s.map(...)` beside a column of the group's rows.
+Read `s` in the group's own select, or run a query per group.
 
 ## Storing a value
 

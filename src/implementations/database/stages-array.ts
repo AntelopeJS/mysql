@@ -215,6 +215,12 @@ function ReducerStage(reducer: Reducer): StageHandler {
   });
 }
 
+/** A stage whose bounds or callback the engine reads inside the subquery that walks the elements. */
+function Walking(handler: StageHandler): StageHandler {
+  return (state, stage, context) =>
+    context.walking(() => handler(state, stage, context));
+}
+
 /**
  * Array stages.
  *
@@ -249,9 +255,9 @@ function ReducerStage(reducer: Reducer): StageHandler {
 export const ARRAY_STAGES: StageMap = {
   arr_index: IndexStage,
   arr_includes: IncludesStage,
-  arr_slice: SliceStage,
-  arr_map: MapStage,
-  arr_filter: FilterStage,
+  arr_slice: Walking(SliceStage),
+  arr_map: Walking(MapStage),
+  arr_filter: Walking(FilterStage),
   ...BuildStages(MEASURES, MeasureStage),
   ...BuildStages(REDUCERS, ReducerStage),
 };
