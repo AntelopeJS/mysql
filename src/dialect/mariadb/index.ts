@@ -349,6 +349,7 @@ const MARIADB: Flavour = {
       TextColumns(array, "$[*]", parts, alias),
   },
   returning: true,
+  aggregatesGroupTerms: false,
   lateral: false,
   outerInTableFunction: true,
   nestedLoopJoin: { jsonHash: JsonHash },

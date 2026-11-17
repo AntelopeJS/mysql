@@ -1,7 +1,7 @@
 import assert from "node:assert";
 
 import type { Dialect } from "../../dialect";
-import type { Sql } from "../../statement";
+import { type Sql, sql } from "../../statement";
 import type { SqlType } from "./types";
 import { ElementColumns, type TablePlan, ValueKeys } from "./plan";
 import type { TableModel } from "./fields";
@@ -17,6 +17,7 @@ import {
   type RowSource,
 } from "./row-source";
 import { ExternalRowSource } from "./external-row-source";
+import { ID_COLUMN } from "./utils";
 
 /** The single column a value-mode relation projects, and the key its rows are decoded from. */
 export const OUTPUT_COLUMN = "value";
@@ -371,4 +372,32 @@ export function SetPlainProjection(
 /** What the relation currently yields, materialized — the operand of a field-less stage. */
 export function CurrentValue(relation: Relation): Compiled {
   return relation.projection ?? relation.source.toJson();
+}
+
+/** A column of the rows the relation reads, or a value it computes from them. */
+export function RowAnchor(relation: Relation): Sql {
+  return relation.table
+    ? QualifiedColumn(relation.alias, ID_COLUMN)
+    : CurrentValue(relation).sql;
+}
+
+/**
+ * `value` read only where `anchor` equals itself, which it always does. An aggregate runs in the
+ * innermost query whose rows its operand reads, so a value that reads no column of its own rows,
+ * only a row of an enclosing query, is aggregated by that query instead unless it is tied to a
+ * column of its own rows this way.
+ */
+export function Anchored(
+  dialect: Dialect,
+  anchor: Sql,
+  value: Compiled,
+): Compiled {
+  const kept = (operand: Sql) =>
+    sql`(CASE WHEN ${dialect.sql.rows.nullSafeEqual(anchor, anchor)} THEN ${operand} END)`;
+  const { native } = value;
+  return {
+    sql: kept(value.sql),
+    type: value.type,
+    ...(native && { native: { ...native, sql: kept(native.sql) } }),
+  };
 }

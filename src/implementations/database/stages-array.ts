@@ -161,7 +161,9 @@ function ElementBody(
 const MapStage = LiftRaw((value, stage, context) => {
   const dialect = context.dialect;
   const { json, walk } = Elements(value, context);
-  const body = ElementBody(value, walk, stage, context);
+  const body = context.mappingElements(() =>
+    ElementBody(value, walk, stage, context),
+  );
   const collected = Collected(dialect, walk.ordinal, AsJson(dialect, body).sql);
   return {
     sql: GuardJson(dialect, json, "array", walk.aggregate(collected)),

@@ -80,20 +80,27 @@ interface OpenSubquery {
   readonly rows: Set<Relation | undefined>;
 }
 
-/** What {@link DecodingContext.readingNestedRow} built, and whether building it read a nested row. */
-export interface NestedRowRead<T> {
-  readonly value: T;
-  readonly readsNestedRow: boolean;
+/**
+ * A group's key as a read outside the group's rows takes it, and how many folds of the group's
+ * rows are compiling now, inside which a read takes the key of the row being folded.
+ */
+interface GroupKey {
+  readonly aggregated: Compiled;
+  folds: number;
+  /** How many `map` stages over an array were compiling their callback when its mapper began. */
+  elementMaps: number;
+  /** How many queries over ordered or bounded rows were compiling their mapper when it began. */
+  windows: number;
 }
 
-/**
- * One build watching for reads of a row nested deeper than `depth` subqueries, through a parameter
- * bound before the build began.
- */
-interface NestedRowWatch {
-  readonly depth: number;
-  readonly before: number;
-  reads: boolean;
+/** Where a read of a group's stream sits, among what the group's mapper opened around it. */
+export interface StreamReadPlace {
+  /** Inside the mapper of another group nested in the group's mapper. */
+  readonly innerGroup: boolean;
+  /** Inside the callback of a `map` stage over an array, whose value the walk aggregates. */
+  readonly elementMap: boolean;
+  /** Inside a query nested in the mapper over ordered or bounded rows. */
+  readonly window: boolean;
 }
 
 /**
@@ -109,10 +116,14 @@ export class DecodingContext {
   private readonly bindingDepths = new Map<string, number>();
   /** The rows each lambda parameter ranges over, where the stage that bound it named them. */
   private readonly bindingRows = new Map<string, Relation>();
-  /** The order each lambda parameter was bound in. */
-  private readonly bindingOrder = new Map<string, number>();
-  private bindCount = 0;
-  private readonly nestedRowWatches: NestedRowWatch[] = [];
+  /** The key each group's mapper is bound to, by the binding. */
+  private readonly groupKeys = new WeakMap<ArgumentBinding, GroupKey>();
+  /** The keys of the groups whose mappers are compiling now, outermost first. */
+  private readonly mappers: Compiled[] = [];
+  /** How many `map` stages over an array are compiling their callback now. */
+  private elementMapDepth = 0;
+  /** How many queries over ordered or bounded rows are compiling their mapper now. */
+  private windowDepth = 0;
   /** Per open subquery, outermost first. */
   private readonly open: OpenSubquery[] = [];
   /** Fragments built while the subquery they are in read no parameter bound outside it. */
@@ -157,7 +168,6 @@ export class DecodingContext {
     const key = String(id);
     this.bindings.set(key, binding);
     this.bindingDepths.set(key, this.open.length);
-    this.bindingOrder.set(key, this.bindCount++);
     if (rows) {
       this.bindingRows.set(key, rows);
     } else {
@@ -169,7 +179,6 @@ export class DecodingContext {
     this.bindings.delete(String(id));
     this.bindingDepths.delete(String(id));
     this.bindingRows.delete(String(id));
-    this.bindingOrder.delete(String(id));
   }
 
   /** A parameter's binding; every subquery opened since it was bound now reads its outer row. */
@@ -182,13 +191,80 @@ export class DecodingContext {
       subquery.reads++;
       subquery.rows.add(this.bindingRows.get(key));
     }
-    const order = this.bindingOrder.get(key) ?? 0;
-    for (const watch of this.nestedRowWatches) {
-      if (depth > watch.depth && order < watch.before) {
-        watch.reads = true;
-      }
+    const group = this.groupKeys.get(binding);
+    return group === undefined || group.folds > 0 ? binding : group.aggregated;
+  }
+
+  /**
+   * Binds a group's key: `key` where a fold of the group's rows reads it, `aggregated` anywhere
+   * else in the group's mapper. Answers the binding the mapper's key parameter takes.
+   */
+  public groupKey(key: Compiled, aggregated: Compiled): Compiled {
+    this.groupKeys.set(key, {
+      aggregated,
+      folds: 0,
+      elementMaps: 0,
+      windows: 0,
+    });
+    return key;
+  }
+
+  /** Builds the mapper of the group whose key {@link DecodingContext.groupKey} bound. */
+  public mappingGroup<T>(key: Compiled, build: () => T): T {
+    const group = this.groupKeys.get(key);
+    assert(group, "A group's mapper names a key no group bound");
+    group.elementMaps = this.elementMapDepth;
+    group.windows = this.windowDepth;
+    this.mappers.push(key);
+    try {
+      return build();
+    } finally {
+      this.mappers.pop();
     }
-    return binding;
+  }
+
+  /** Builds the callback of a `map` stage over an array, which the walk's aggregate reads. */
+  public mappingElements<T>(build: () => T): T {
+    this.elementMapDepth++;
+    try {
+      return build();
+    } finally {
+      this.elementMapDepth--;
+    }
+  }
+
+  /** Builds the mapper of a query, over ordered or bounded rows where `windowed`. */
+  public mappingRows<T>(windowed: boolean, build: () => T): T {
+    const step = windowed ? 1 : 0;
+    this.windowDepth += step;
+    try {
+      return build();
+    } finally {
+      this.windowDepth -= step;
+    }
+  }
+
+  /** Where a read of the stream of the group whose key {@link DecodingContext.groupKey} bound sits now. */
+  public streamReadPlace(key: Compiled): StreamReadPlace {
+    const group = this.groupKeys.get(key);
+    assert(group, "A read of a group's stream names a key no group bound");
+    return {
+      innerGroup: this.mappers.at(-1) !== key,
+      elementMap: this.elementMapDepth > group.elementMaps,
+      window: this.windowDepth > group.windows,
+    };
+  }
+
+  /** Builds a fold of the rows of the group whose key {@link DecodingContext.groupKey} bound. */
+  public foldingGroupRows<T>(key: Compiled, build: () => T): T {
+    const group = this.groupKeys.get(key);
+    assert(group, "A fold of a group's rows names a key no group bound");
+    group.folds++;
+    try {
+      return build();
+    } finally {
+      group.folds--;
+    }
   }
 
   public expression(stages: QueryStage[], source?: RowSource): Compiled {
@@ -222,25 +298,6 @@ export class DecodingContext {
   /** How many subqueries are open, which a parameter bound now is nested in. */
   public get depth(): number {
     return this.open.length;
-  }
-
-  /**
-   * Builds part of a query, and tells whether it read the row of a query nested deeper than `depth`
-   * subqueries through a parameter bound before the build began, a row a select at `depth` cannot
-   * read.
-   */
-  public readingNestedRow<T>(depth: number, build: () => T): NestedRowRead<T> {
-    const watch: NestedRowWatch = {
-      depth,
-      before: this.bindCount,
-      reads: false,
-    };
-    this.nestedRowWatches.push(watch);
-    try {
-      return { value: build(), readsNestedRow: watch.reads };
-    } finally {
-      this.nestedRowWatches.splice(this.nestedRowWatches.indexOf(watch), 1);
-    }
   }
 
   /** Whether the subquery compiling now has so far read the row of a query outside it. */

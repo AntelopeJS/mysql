@@ -3,9 +3,9 @@ import type { QueryStage } from "@antelopejs/interface-database/common";
 
 import type { Dialect } from "../../dialect";
 import { type Sql, join, sql } from "../../statement";
-import { ArrayOf, IsOpaque, OPAQUE, type SqlType } from "./types";
+import { ArrayOf, FLOAT, IsOpaque, OPAQUE, type SqlType } from "./types";
 import { Collected } from "./json";
-import { AsJson } from "./readings";
+import { AsFloat, AsJson } from "./readings";
 import type { Compiled } from "./sql";
 import { DecodeFunction, RecordedLambda } from "./value";
 import { FIRST_OPERAND, RequireOperand } from "./stage";
@@ -23,6 +23,7 @@ import {
   Total,
 } from "./stages-aggregate";
 import {
+  Anchored,
   CurrentValue,
   IndexColumns,
   type IndexedMember,
@@ -54,6 +55,13 @@ interface SubStream {
   source: RowSource;
   value: Compiled;
   distinct: boolean;
+  /** The group's first term, a column of the group's rows or a value computed from them. */
+  term: Sql;
+  /**
+   * The term once a `map` has made the value something that may read no column of the group's
+   * rows, which ties an aggregate of the value to them; absent before any `map`.
+   */
+  anchor?: Sql;
 }
 
 /** One step of a sub-stream fold: a state continues it, a {@link Compiled} ends it. */
@@ -63,10 +71,29 @@ type SubStreamStage = (
   context: DecodingContext,
 ) => SubStream | Compiled;
 
+/** `value` tied to the group's rows once a `map` may have left it reading none of them. */
+function Kept(
+  anchor: Sql | undefined,
+  value: Compiled,
+  context: DecodingContext,
+): Compiled {
+  return anchor === undefined
+    ? value
+    : Anchored(context.dialect, anchor, value);
+}
+
 /** What an aggregate reads: the field it named, or whatever the sub-stream currently yields. */
-function Operand(state: SubStream, stage: QueryStage): Compiled {
+function Operand(
+  state: SubStream,
+  stage: QueryStage,
+  context: DecodingContext,
+): Compiled {
   const field = NamedField(stage);
-  return field === undefined ? state.value : state.source.field(field);
+  return Kept(
+    state.anchor,
+    field === undefined ? state.value : state.source.field(field),
+    context,
+  );
 }
 
 /** A new value and the source that addresses it, which is what a projection is one level up. */
@@ -79,6 +106,8 @@ function Revalued(
     source: new JsonRowSource(context.dialect, value),
     value,
     distinct: state.distinct,
+    term: state.term,
+    anchor: state.anchor,
   };
 }
 
@@ -86,7 +115,10 @@ const MapSubStream: SubStreamStage = (state, stage, context) => {
   const body = DecodeFunction(RecordedLambda(stage, FIRST_OPERAND), context, [
     state.source,
   ]);
-  return Revalued(state, RequireOperand(body, stage, FIRST_OPERAND), context);
+  return {
+    ...Revalued(state, RequireOperand(body, stage, FIRST_OPERAND), context),
+    anchor: state.term,
+  };
 };
 
 /**
@@ -99,7 +131,7 @@ function Deduped(
   context: DecodingContext,
 ): Compiled | undefined {
   return state.distinct
-    ? Deduplicable(context.dialect, state.value)
+    ? Kept(state.anchor, Deduplicable(context.dialect, state.value), context)
     : undefined;
 }
 
@@ -113,21 +145,29 @@ const DistinctSubStream: SubStreamStage = (state, stage, context) => {
 };
 
 /**
- * The one terminal that reads the *presence* of a row. A field-less count is `COUNT(*)` however
- * the rows were mapped, since `COUNT(<expr>)` skips NULLs; only a pending dedup makes the value
- * the thing counted, and a field named on the count itself supersedes that dedup.
+ * The one terminal that reads the *presence* of a row. A field-less count counts the group's rows
+ * however they were mapped, since `COUNT(<expr>)` skips NULLs; only a pending dedup makes the value
+ * the thing counted, and a field named on the count itself supersedes that dedup. The rows are
+ * counted through the group's term rather than as `COUNT(*)`, which reads no column and so runs in
+ * whichever query it is written in, such as the subquery of an array stage.
  */
 const CountSubStream: SubStreamStage = (state, stage, context) => {
+  const dialect = context.dialect;
   const field = NamedField(stage);
   if (field !== undefined) {
-    return Tally(context.dialect, state.source.field(field));
+    return Tally(dialect, Operand(state, stage, context));
   }
-  return Tally(context.dialect, Deduped(state, context));
+  const deduped = Deduped(state, context);
+  if (deduped !== undefined) {
+    return Tally(dialect, deduped);
+  }
+  const row = Anchored(dialect, state.term, { sql: sql`1`, type: FLOAT });
+  return AsFloat(dialect, sql`COUNT(${row.sql})`);
 };
 
 function AggregateSubStream(aggregate: Aggregation): SubStreamStage {
   return (state, stage, context) =>
-    aggregate(context.dialect, Operand(state, stage), state.distinct);
+    aggregate(context.dialect, Operand(state, stage, context), state.distinct);
 }
 
 /**
@@ -197,7 +237,10 @@ function CollectedRows(
   context: DecodingContext,
 ): Compiled {
   const dialect = context.dialect;
-  const element = AsJson(dialect, Deduped(state, context) ?? state.value).sql;
+  const element = AsJson(
+    dialect,
+    Deduped(state, context) ?? Kept(state.anchor, state.value, context),
+  ).sql;
   const type = ArrayOf(state.value.type);
   if (!state.distinct || dialect.sql.json.collectsDistinct) {
     return {
@@ -208,6 +251,41 @@ function CollectedRows(
   const numbers = ValueNumbers(rows, element, context);
   joins.push(numbers.join);
   return { sql: Collected(dialect, numbers.number, element), type };
+}
+
+/**
+ * A read of a group's rows or key that MySQL or MariaDB cannot answer in one statement, refused
+ * while the statement is built.
+ */
+class NestedGroupRead extends Error {
+  public readonly code = "ANTELOPEJS_MYSQL_NESTED_GROUP_READ";
+}
+
+/**
+ * Refuses, on an engine that collects nested rows in place, a read of a group's stream that MariaDB
+ * answers wrong: from the mapper of another group nested in it, which then answers one inner
+ * group's key for every inner group; from the callback of a `map` over an array, or from a query
+ * over ordered or bounded rows, where the stream's aggregate is read inside another aggregate. A
+ * slice's bounds and a filter's callback sit in the walk's `WHERE`, outside its aggregate, and
+ * MariaDB answers them.
+ */
+function RefuseStreamRead(key: Compiled, context: DecodingContext): void {
+  if (context.dialect.sql.json.inPlace === undefined) {
+    return;
+  }
+  const place = context.streamReadPlace(key);
+  const where = place.innerGroup
+    ? "a group nested in the group's mapper"
+    : place.elementMap
+      ? "the callback of a map over an array"
+      : place.window
+        ? "a query over ordered or sliced rows nested in the group's mapper"
+        : undefined;
+  if (where !== undefined) {
+    throw new NestedGroupRead(
+      `A group's stream is read in ${where}, which MariaDB answers with another group's rows. Read the stream in the group's own select, or run a query per group`,
+    );
+  }
 }
 
 function RefuseSubStreamStage(stage: QueryStage): never {
@@ -239,8 +317,11 @@ function StepSubStream(
   return handler(state, stage, context);
 }
 
-function SeedOf(rows: Relation): SubStream {
-  return { source: rows.source, value: CurrentValue(rows), distinct: false };
+/** The group's rows as a sub-stream starts them, once the relation is grouped by its terms. */
+function SeedOf(rows: Relation, value: Compiled): SubStream {
+  const [first] = rows.groupBy;
+  assert(first, "A group's sub-stream starts from rows grouped by a term");
+  return { source: rows.source, value, distinct: false, term: first.sql };
 }
 
 function Folded(
@@ -299,7 +380,7 @@ function SubStreamAgain(
   context: DecodingContext,
 ): Compiled {
   const rows = GroupRowsAgain(grouped, context);
-  const folded = Folded(SeedOf(rows), stages, context);
+  const folded = Folded(SeedOf(rows, CurrentValue(rows)), stages, context);
   const joins: Sql[] = [];
   const value = IsTerminal(folded)
     ? folded
@@ -314,30 +395,32 @@ function SubStreamAgain(
 /**
  * The subquery provider a `group` binds its stream parameter to, over the rows of one group.
  *
- * The seed is read off the relation once, before any of the mapper is decoded, and never mutated,
- * since one mapper binds this provider as many times as it names the parameter. The joins a
+ * The rows' value is read off the relation once, before any of the mapper is decoded, and never
+ * mutated, since one mapper binds this provider as many times as it names the parameter; the
+ * group's term is read when the provider is called, once the relation is grouped. The joins a
  * collected dedup needs are pushed to `joins`, and left for the group's select to carry. A
- * sub-stream that reads the row of a query nested in the mapper reads the group's rows again
- * inside that query instead.
+ * sub-stream read inside a query nested in the mapper reads the group's rows again inside that
+ * query instead, rather than an aggregate of the group's select from inside another aggregate.
  */
 function SubStreamProvider(
   relation: Relation,
+  key: Compiled,
   joins: Sql[],
   context: DecodingContext,
 ): SubqueryProvider {
-  const seed = SeedOf(relation);
+  const value = CurrentValue(relation);
   const depth = context.depth;
   return (stages) => {
-    const { value: folded, readsNestedRow } = context.readingNestedRow(
-      depth,
-      () => Folded(seed, stages, context),
-    );
-    if (readsNestedRow) {
-      return SubStreamAgain(relation, stages, context);
-    }
-    return IsTerminal(folded)
-      ? folded
-      : CollectedRows(folded, relation, joins, context);
+    RefuseStreamRead(key, context);
+    return context.foldingGroupRows(key, () => {
+      if (context.depth > depth) {
+        return SubStreamAgain(relation, stages, context);
+      }
+      const folded = Folded(SeedOf(relation, value), stages, context);
+      return IsTerminal(folded)
+        ? folded
+        : CollectedRows(folded, relation, joins, context);
+    });
   };
 }
 
@@ -386,6 +469,14 @@ function GroupTerms(
   );
 }
 
+/** A part of the key read through `MIN`, an aggregate of the group, which keeps its type. */
+function AggregatedPart(member: IndexedMember): IndexedMember {
+  return {
+    ...member,
+    value: { sql: sql`MIN(${member.value.sql})`, type: member.value.type },
+  };
+}
+
 /**
  * The key the mapper reads, with a negative zero read as 0 in every part: one part is the value
  * itself; a compound index is a document of its parts, by field name.
@@ -422,21 +513,26 @@ const GroupStage: PipelineStage = (relation, stage, context) => {
   const prepared = Prepare(relation, GROUP_BLOCKERS, context);
   AbsorbOrder(prepared);
   const columns = IndexColumns(prepared, GroupName(stage));
-  const value = GroupValue(
-    columns.map((member) => ({
-      ...member,
-      value: Deduplicable(context.dialect, member.value),
-    })),
-    context,
+  const parts = columns.map((member) => ({
+    ...member,
+    value: Deduplicable(context.dialect, member.value),
+  }));
+  const value = context.groupKey(
+    GroupValue(parts, context),
+    context.dialect.sql.rows.aggregatesGroupTerms
+      ? GroupValue(parts.map(AggregatedPart), context)
+      : GroupValue(parts, context),
   );
   prepared.groupBy.push(
     ...GroupTerms(context.dialect, columns).map((member) => member.value),
   );
   const joins: Sql[] = [];
-  const mapped = DecodeFunction(RecordedLambda(stage, FIRST_OPERAND), context, [
-    SubStreamProvider(prepared, joins, context),
-    value,
-  ]);
+  const mapped = context.mappingGroup(value, () =>
+    DecodeFunction(RecordedLambda(stage, FIRST_OPERAND), context, [
+      SubStreamProvider(prepared, value, joins, context),
+      value,
+    ]),
+  );
   prepared.joins.push(...joins);
   const grouped = SetProjection(
     prepared,
