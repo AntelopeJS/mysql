@@ -33,13 +33,14 @@ if (args.includes("--full")) {
 env.FORMAL_RUNS = value("--runs") ?? env.FORMAL_RUNS;
 env.FORMAL_SEED = value("--seed") ?? env.FORMAL_SEED;
 
-const build = spawnSync("pnpm", ["run", "--silent", "build"], { cwd: root, encoding: "utf8" });
+const tsc = path.join(root, "node_modules", "typescript", "bin", "tsc");
+const build = spawnSync(process.execPath, [tsc], { cwd: root, encoding: "utf8" });
 if (build.status !== 0) {
   console.error(`${build.stdout}${build.stderr}`);
   process.exit(TOOL_ERROR);
 }
-const ajs = path.join(root, "node_modules", ".bin", "ajs");
-const test = spawnSync(ajs, ["module", "test", ".", "-f", "dist/test/formal-key-merge.test.js"], {
+const ajs = path.join(root, "node_modules", "@antelopejs", "core", "dist", "core", "cli", "index.js");
+const test = spawnSync(process.execPath, [ajs, "module", "test", ".", "-f", "dist/test/formal-key-merge.test.js"], {
   cwd: root,
   env,
   encoding: "utf8",
