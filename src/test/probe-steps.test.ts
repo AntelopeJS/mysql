@@ -19,8 +19,11 @@ const DATABASE = "probe_steps";
 /** `ER_MAX_PREPARED_STMT_COUNT_REACHED`: the server's cap on prepared statements, whatever the account may do. */
 const MAX_PREPARED_STATEMENTS = 1461;
 
-/** How long the relay holds each chunk from the server, so a round trip takes at least that. */
-const DELAY_MS = 100;
+/**
+ * How long the relay holds each chunk from the server, so a round trip takes at least that. A
+ * loaded host adds over 100 ms to a round trip, which must stay under this.
+ */
+const DELAY_MS = 500;
 
 /** Each step the probe takes after the sign-in, by the command that starts it. */
 const STEPS = [

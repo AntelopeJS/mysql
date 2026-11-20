@@ -4,14 +4,18 @@ import { randomBytes } from "node:crypto";
 
 import { GetOptions } from "../config";
 import { probe } from "../probe";
-import { CommandCounter, PREPARE_COMMAND, Relay } from "./unit/probe-fixture";
+import {
+  CommandCounter,
+  PREPARE_COMMAND,
+  Relay,
+  TIMEOUT_MS,
+} from "./unit/probe-fixture";
 
 const DATABASE = "probe_many";
 const RELATIONS = 1000;
 const READER = "probe_many_reader";
 const SECRET = randomBytes(6).toString("hex");
-/** A timeout the probe meets on each answer; the DMS check gives up after three of them. */
-const TIMEOUT_MS = 400;
+/** How many probe timeouts the DMS check waits before it gives up. */
 const DEADLINE_IN_TIMEOUTS = 3;
 /** What the probe prepares besides one statement per relation: the listing, one confirmed read and the `CREATE TABLE` check. */
 const FIXED_PREPARES = 3;

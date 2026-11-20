@@ -12,6 +12,8 @@ import { parseArgs } from "node:util";
 
 const TOOL_ERROR = 2;
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const tsc = path.join(root, "node_modules", "typescript", "bin", "tsc");
+const ajs = path.join(root, "node_modules", "@antelopejs", "core", "dist", "core", "cli", "index.js");
 
 const PROPERTIES = [
   { name: "ChainsMatchReference", file: "dist/formal-pipeline-chains/pipeline-chains.test.js", runs: "CHAINS_RUNS", ci: 1000, full: 10_000 },
@@ -28,15 +30,16 @@ const { values } = parseArgs({
 });
 
 /**
- * Runs a command to its end and answers its exit code and everything it printed.
- * @param {string} command
+ * Runs a Node script to its end in this Node, which needs no shell on Windows, and answers its exit
+ * code and everything it printed.
+ * @param {string} script
  * @param {string[]} args
  * @param {Record<string, string>} [env]
  * @returns {Promise<{ code: number, output: string }>}
  */
-function run(command, args, env = {}) {
+function run(script, args, env = {}) {
   return new Promise((resolve) => {
-    const child = spawn(command, args, { cwd: root, env: { ...process.env, ...env } });
+    const child = spawn(process.execPath, [script, ...args], { cwd: root, env: { ...process.env, ...env } });
     let output = "";
     child.stdout.on("data", (chunk) => (output += chunk));
     child.stderr.on("data", (chunk) => (output += chunk));
@@ -64,16 +67,14 @@ function counterexample(output) {
 }
 
 if (!values["no-build"]) {
-  const built = await run("pnpm", ["run", "build"]);
+  const built = await run(tsc, []);
   if (built.code !== 0) {
-    console.error(`pnpm run build failed\n${built.output}`);
+    console.error(`tsc failed on the module\n${built.output}`);
     process.exit(TOOL_ERROR);
   }
 }
 
-const compiled = await run("pnpm", [
-  "exec",
-  "tsc",
+const compiled = await run(tsc, [
   "-p",
   ".agents/skills/formal-pipeline-chains/tsconfig.json",
   "--outDir",
@@ -90,7 +91,7 @@ for (const property of PROPERTIES) {
   if (values.seed) {
     env.CHAINS_SEED = values.seed;
   }
-  const { code, output } = await run("pnpm", ["exec", "ajs", "module", "test", ".", "-f", property.file], env);
+  const { code, output } = await run(ajs, ["module", "test", ".", "-f", property.file], env);
   if (code === 0) {
     continue;
   }

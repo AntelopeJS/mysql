@@ -59,7 +59,8 @@ async function Cleared(): Promise<void> {
 
 /**
  * Waits until the feed is open. A feed opens when it is first read, and a write before that is not
- * delivered, so a document the chain passes is written until one is delivered. With no such
+ * delivered, so a document the chain passes is written until one is delivered, then deleted, and
+ * its removal awaited however late a loaded host delivers it. With no such
  * document no write of the script is delivered either, and a pause is as good.
  */
 async function Opened(reader: Reader, stages: readonly Stage[]): Promise<void> {
@@ -72,6 +73,7 @@ async function Opened(reader: Reader, stages: readonly Stage[]): Promise<void> {
     await fixture.handles.items().insert(probe).run();
     if (await reader.next(QUIET_MS)) {
       await Cleared();
+      await reader.next(DELIVERY_MS);
       await reader.drain(QUIET_MS);
       return;
     }

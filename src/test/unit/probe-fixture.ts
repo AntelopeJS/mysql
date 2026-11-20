@@ -5,8 +5,12 @@ import path from "node:path";
 
 import { IsString } from "../../implementations/database/guards";
 
-/** How long a probe in these tests waits to connect and for each answer. */
-export const TIMEOUT_MS = 1000;
+/**
+ * How long a probe in these tests waits to connect and for each answer. Beside 4 busy loops per
+ * CPU, a probe took up to 4.7 s past a 1 s timeout to give up on a server that stopped answering,
+ * so a bound of twice this one holds on a loaded host.
+ */
+export const TIMEOUT_MS = 5000;
 
 /** How long a test lets sockets settle before it counts the ones still open. */
 export const CLOSE_SETTLE_MS = 1000;
