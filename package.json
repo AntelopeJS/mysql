@@ -1,6 +1,6 @@
 {
   "name": "@antelopejs/mysql",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "MySQL and MariaDB backend for AntelopeJS, implementing the Database interface on relational tables, with an external mode for existing databases.",
   "keywords": [
     "antelopejs",
@@ -56,7 +56,7 @@
   "dependencies": {
     "@antelopejs/interface-core": ">=0.5.1 <0.6.0",
     "@antelopejs/interface-database": ">=0.4.1 <0.5.0",
-    "@antelopejs/interface-database-catalog": "0.1.1-next.44.gee21aa3",
+    "@antelopejs/interface-database-catalog": ">=0.1.1 <0.2.0",
     "mysql2": "^3.24.6"
   },
   "devDependencies": {

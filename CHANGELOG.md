@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.2.8
+
+[compare changes](https://github.com/AntelopeJS/mysql/compare/v0.2.7...v0.2.8)
+
+### 🩹 Fixes
+
+- **ci:** Run the formal checks on Windows and size test bounds for a loaded host ([#126](https://github.com/AntelopeJS/mysql/pull/126))
+- **deps:** Depend on the stable @antelopejs/interface-database-catalog
+
+### 📖 Documentation
+
+- **external-mode:** Name the current catalog consumers ([#124](https://github.com/AntelopeJS/mysql/pull/124))
+
+### 📦 Build
+
+- **ci:** Roll out trunk CI and merge queue ([#123](https://github.com/AntelopeJS/mysql/pull/123))
+
+### ✅ Tests
+
+- **catalog:** Run the shared fewer-than-5 profile check ([#125](https://github.com/AntelopeJS/mysql/pull/125))
+
+### ❤️ Contributors
+
+- Antony Rizzitelli
+
 ## v0.2.7
 
 [compare changes](https://github.com/AntelopeJS/mysql/compare/v0.2.6...v0.2.7)
