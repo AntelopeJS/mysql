@@ -126,4 +126,4 @@ When a change touches a covered file:
 3. Apply each row of "Confirm the check can fail" again, and update a row whose code moved.
 4. Move the sync commit forward only once you have confirmed that the model describes the code at the new commit.
 
-`antelopejs-verify formal` runs this check with `--full` when a diff touches a covered file or this folder, and CI runs the CI bounds through `extra-commands`. `.agents/skills/verify-module/verify.config.ts` lists it under `formal`.
+CI runs the CI bounds through `extra-commands` in `.github/workflows/ci.yml`. Run `--full` by hand when a diff touches a covered file or this folder.
