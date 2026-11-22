@@ -120,4 +120,4 @@ When a change touches a covered file:
 3. Run the properties against a scratch change that breaks the stage, and add a row to "Confirm the check can fail".
 4. Move the sync commit forward only once you have confirmed that the reference describes the code at the new commit.
 
-`antelopejs-verify formal` runs this check with `--full` when a diff touches a covered file or this folder. `.agents/skills/verify-module/verify.config.ts` lists it under `formal`.
+`scripts/test.sh` runs it as the `chains` suite against each server image. Run `--full` by hand when a diff touches a covered file or this folder.
