@@ -26,7 +26,7 @@ importers:
     devDependencies:
       '@antelopejs/api':
         specifier: ~1.7.4
-        version: 1.7.4(@antelopejs/core@1.23.1)
+        version: 1.7.8(@antelopejs/core@1.23.1)
       '@antelopejs/core':
         specifier: ~1.23.1
         version: 1.23.1
@@ -93,10 +93,10 @@ importers:
 
 packages:
 
-  '@antelopejs/api@1.7.4':
-    resolution: {integrity: sha512-YQF32mEvu+yl053Q33IThvW20SUsz61WUuIKAw25bJRGw4XD3nyWstrIZ3J6GRsn72KqcfEibLbetsdEmsNrtg==}
+  '@antelopejs/api@1.7.8':
+    resolution: {integrity: sha512-xfF/i7xxUT7dfOmeCD7+HQUTvPhYo/okjvqXbLOsSlPxtsBnuho62qwJPh2Dj0JbVakCnyFoRQMlKiuKtfF/9A==}
     peerDependencies:
-      '@antelopejs/core': ~1.23.0
+      '@antelopejs/core': ~1.24.4
     peerDependenciesMeta:
       '@antelopejs/core':
         optional: true
@@ -104,13 +104,14 @@ packages:
   '@antelopejs/core@1.23.1':
     resolution: {integrity: sha512-0hTjFw5vHNwwTE6HYCvEHErKkJR9MiehE1UmY3P1M0LEky5j+TPWYcf7+Qtzp9U6ErYb+cRljHCzRaBu2pEbIw==}
     engines: {node: ^20.19.0 || >=22.12.0}
+    deprecated: 'Update to @antelopejs/core >=1.24.6: interface-core 0.5.2 adds HoldReloads, which older cores do not implement'
     hasBin: true
 
-  '@antelopejs/interface-api-util@0.3.2':
-    resolution: {integrity: sha512-bNzujj2Jf9VM+XYSO0QcrD3SUmOk5TcWncGioCWnlWnfGvuPgeWE8T58+SMYyfzmPalQQa0JUed/+6k+e59lZw==}
+  '@antelopejs/interface-api-util@0.3.3':
+    resolution: {integrity: sha512-jk5uRMjjjkRm/vOoB1NCvtcgjQYvI27y2/4O+5cLlrryKpOd52amkQIJKbdX/n/bkxdx19oUGkwYLyFwxyaXNw==}
     peerDependencies:
-      '@antelopejs/interface-api': '>=0.3.0 <1.0.0'
-      '@antelopejs/interface-core': '>=0.2.4 <1.0.0'
+      '@antelopejs/interface-api': '>=0.3.3 <0.4.0'
+      '@antelopejs/interface-core': '>=0.5.1 <0.6.0'
 
   '@antelopejs/interface-api@0.3.3':
     resolution: {integrity: sha512-jcsbhW5sO56ZFGBvHPy8/bmIw9BPS/lxBPF4Pyv3YwY9/VaFXGZVI3N+TjgJAHOwnjW8gRuASfqaTDYaFM/ldQ==}
@@ -2865,8 +2866,8 @@ packages:
   wrappy@1.0.2:
     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
 
-  ws@8.22.2:
-    resolution: {integrity: sha512-/rEZ2ejown2N5gxVTHUu9bVVC7ttu0/Tgzf5hbTOixR3Fs7mbbXgn2DbdbcKgJOmpQMtrIUWivtYuVMnp/W/yA==}
+  ws@8.23.0:
+    resolution: {integrity: sha512-wCkmX8QMOrKjgO8HW2WyDbTSGeqkocxgDzS9iR79rEAexty6/2qzilx3Ag8Tqf9ykop3irLKle0MtVn5qjVnoQ==}
     engines: {node: '>=10.0.0'}
     peerDependencies:
       bufferutil: ^4.0.1
@@ -2934,13 +2935,13 @@ packages:
 
 snapshots:
 
-  '@antelopejs/api@1.7.4(@antelopejs/core@1.23.1)':
+  '@antelopejs/api@1.7.8(@antelopejs/core@1.23.1)':
     dependencies:
       '@antelopejs/interface-api': 0.3.3(@antelopejs/interface-core@0.5.1)
-      '@antelopejs/interface-api-util': 0.3.2(@antelopejs/interface-api@0.3.3(@antelopejs/interface-core@0.5.1))(@antelopejs/interface-core@0.5.1)
+      '@antelopejs/interface-api-util': 0.3.3(@antelopejs/interface-api@0.3.3(@antelopejs/interface-core@0.5.1))(@antelopejs/interface-core@0.5.1)
       '@antelopejs/interface-core': 0.5.1
       reflect-metadata: 0.2.2
-      ws: 8.22.2
+      ws: 8.23.0
     optionalDependencies:
       '@antelopejs/core': 1.23.1
     transitivePeerDependencies:
@@ -2962,7 +2963,7 @@ snapshots:
       semver: 7.8.6
       typescript: 5.9.3
 
-  '@antelopejs/interface-api-util@0.3.2(@antelopejs/interface-api@0.3.3(@antelopejs/interface-core@0.5.1))(@antelopejs/interface-core@0.5.1)':
+  '@antelopejs/interface-api-util@0.3.3(@antelopejs/interface-api@0.3.3(@antelopejs/interface-core@0.5.1))(@antelopejs/interface-core@0.5.1)':
     dependencies:
       '@antelopejs/interface-api': 0.3.3(@antelopejs/interface-core@0.5.1)
       '@antelopejs/interface-core': 0.5.1
@@ -5601,7 +5602,7 @@ snapshots:
 
   wrappy@1.0.2: {}
 
-  ws@8.22.2: {}
+  ws@8.23.0: {}
 
   wsl-utils@0.1.0:
     dependencies:
