@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
+import { Schema } from "@antelopejs/interface-database/schema";
 
-import { FIXTURE, type Fixture, ValueStageTable } from "./value-stage-table";
-
-type DeepPartial<Value> = { [Key in keyof Value]?: Value[Key] };
+import { FIXTURE, ValueStageTable } from "./value-stage-table";
 
 const table = ValueStageTable("value-stages-write");
 
@@ -29,17 +28,36 @@ describe("An update through the value stages", function () {
     assert.equal(row.name, "ADA!");
     assert.deepEqual(row.bornAt, new Date(FIXTURE.bornAt.getTime() + 60_000));
   });
+});
+
+interface Lookalike {
+  _id: string;
+  stage: string;
+  args: unknown[];
+}
+
+const lookalikeSchema = new Schema<{ rows: Lookalike }>(
+  "value-stages-write-lookalike",
+  {
+    rows: { fields: { stage: "string", args: "object" }, indexes: {} },
+  },
+);
+
+describe("An update by a document", function () {
+  this.timeout(30_000);
+  const rows = () => lookalikeSchema.instance("one").table("rows");
+  before(async () => {
+    await lookalikeSchema.createInstance("one").run();
+    await rows().insert({ _id: "row", stage: "", args: [] }).run();
+  });
+  after(() => lookalikeSchema.destroyInstance("one").run());
 
   it("writes a document holding stage func and an args pair as a document, not as a lambda", async () => {
-    const lookalike = { stage: "func", args: [[1, 2], "x"] };
-    // SAFETY: the fixture's types do not declare the two keys this document carries, which the table stores in its overflow column.
-    await table
-      .rows()
-      .update(lookalike as DeepPartial<Fixture>)
+    await rows()
+      .update({ stage: "func", args: [[1, 2], "x"] })
       .run();
-    const [row] = await table.rows().run();
-    // SAFETY: the stored row carries the two overflow keys the update wrote.
-    const stored = row as Fixture & typeof lookalike;
-    assert.deepEqual({ stage: stored.stage, args: stored.args }, lookalike);
+    const [row] = await rows().run();
+    assert.equal(row.stage, "func");
+    assert.deepEqual(row.args, [[1, 2], "x"]);
   });
 });
