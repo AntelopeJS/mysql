@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 
-import { FIXTURE, ValueStageTable } from "./value-stage-table";
+import { FIXTURE, type Fixture, ValueStageTable } from "./value-stage-table";
+
+type DeepPartial<Value> = { [Key in keyof Value]?: Value[Key] };
 
 const table = ValueStageTable("value-stages-write");
 
@@ -26,5 +28,18 @@ describe("An update through the value stages", function () {
     assert.deepEqual(row.meta, { a: 9, b: { x: 1 }, empty: null });
     assert.equal(row.name, "ADA!");
     assert.deepEqual(row.bornAt, new Date(FIXTURE.bornAt.getTime() + 60_000));
+  });
+
+  it("writes a document holding stage func and an args pair as a document, not as a lambda", async () => {
+    const lookalike = { stage: "func", args: [[1, 2], "x"] };
+    // SAFETY: the fixture's types do not declare the two keys this document carries, which the table stores in its overflow column.
+    await table
+      .rows()
+      .update(lookalike as DeepPartial<Fixture>)
+      .run();
+    const [row] = await table.rows().run();
+    // SAFETY: the stored row carries the two overflow keys the update wrote.
+    const stored = row as Fixture & typeof lookalike;
+    assert.deepEqual({ stage: stored.stage, args: stored.args }, lookalike);
   });
 });

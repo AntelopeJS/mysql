@@ -21,7 +21,7 @@ import { IsJsonBacked } from "./types";
 import { ID_COLUMN, INSTANCE_COLUMN } from "./utils";
 import {
   FUNCTION_BODY,
-  IsRecordedFunction,
+  IsLambdaStage,
   ParameterKey,
   type RecordedFunction,
   WithBoundArguments,
@@ -61,7 +61,7 @@ function FreeParameters(stages: QueryStage[]): Set<string> {
     }
     stage.args.forEach((_, index) => {
       const operand = StageOperand(stage, index);
-      if (IsRecordedFunction(operand)) {
+      if (IsLambdaStage(operand)) {
         operand.args[0].forEach((id) => bound.add(ParameterKey(id)));
       }
     });
