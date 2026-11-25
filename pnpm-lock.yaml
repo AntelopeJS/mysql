@@ -41,7 +41,7 @@ importers:
         version: 0.4.2
       '@antelopejs/tooling-configs':
         specifier: '>=0.9.4 <0.10.0'
-        version: 0.9.4(knip@6.47.0)(oxfmt@0.77.0)(oxlint@1.81.0(oxlint-tsgolint@7.0.2008))
+        version: 0.9.4(knip@6.48.0)(oxfmt@0.77.0)(oxlint@1.81.0(oxlint-tsgolint@7.0.2008))
       '@testcontainers/mysql':
         specifier: ^12.2.1
         version: 12.2.2(bare-buffer@3.7.3)
@@ -62,7 +62,7 @@ importers:
         version: 4.11.0
       knip:
         specifier: ^6.34.0
-        version: 6.47.0
+        version: 6.48.0
       lefthook:
         specifier: ^2.2.2
         version: 2.2.2
@@ -1934,8 +1934,8 @@ packages:
   json-with-bigint@3.5.12:
     resolution: {integrity: sha512-uwbF/wSSuOgC7qqlq27Xp5B6a2MHVug3t0idZdTqu0JnlFvgJuH7ju+KAk/J06C7GfhoYy2gnb9wz2INqcne7w==}
 
-  knip@6.47.0:
-    resolution: {integrity: sha512-nYmQnk0YqDXIJrYViJz88c8xw3tBDkpuAmofo58EkVPnKr6DnRKYtf6oIqcGVHZvXDE+gtmFuYx277/QsWng+A==}
+  knip@6.48.0:
+    resolution: {integrity: sha512-v+Gfp6uiOeXaaj+Khk2Z7/fTTZYWLnDwxZapQUyy8WoQFLYXiUHXqRdFJTwRnrKNA1gPXTPi5NGTKKLXyImVrg==}
     engines: {node: ^20.19.0 || >=22.12.0}
     hasBin: true
 
@@ -3003,7 +3003,7 @@ snapshots:
     transitivePeerDependencies:
       - pg-native
 
-  '@antelopejs/tooling-configs@0.9.4(knip@6.47.0)(oxfmt@0.77.0)(oxlint@1.81.0(oxlint-tsgolint@7.0.2008))':
+  '@antelopejs/tooling-configs@0.9.4(knip@6.48.0)(oxfmt@0.77.0)(oxlint@1.81.0(oxlint-tsgolint@7.0.2008))':
     dependencies:
       '@oxlint/plugins': 1.94.0
       dts-bundle-generator: 9.5.1
@@ -3032,7 +3032,7 @@ snapshots:
       '@typescript/typescript-sunos-x64': 7.0.2
       '@typescript/typescript-win32-arm64': 7.0.2
       '@typescript/typescript-win32-x64': 7.0.2
-      knip: 6.47.0
+      knip: 6.48.0
       oxfmt: 0.77.0
       oxlint: 1.81.0(oxlint-tsgolint@7.0.2008)
 
@@ -4517,7 +4517,7 @@ snapshots:
 
   json-with-bigint@3.5.12: {}
 
-  knip@6.47.0:
+  knip@6.48.0:
     dependencies:
       formatly: 0.11.4
       get-tsconfig: 4.14.3
