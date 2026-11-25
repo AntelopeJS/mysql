@@ -240,10 +240,9 @@ describe("writing back what was read from an external relation", function () {
   });
 
   it("refuses a function update by name, not as a document with a stage field", async () => {
-    const id = await Seeded("r1f");
     const failure = await Failure(async () => {
       await Table("w_accounts")
-        .get(id)
+        .get("1")
         .update((row) => ({ code: row.key("code") }))
         .run();
     });
