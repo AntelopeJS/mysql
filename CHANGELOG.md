@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.2.9
+
+[compare changes](https://github.com/AntelopeJS/mysql/compare/v0.2.8...v0.2.9)
+
+### 🩹 Fixes
+
+- **update:** Switch the update stage on options.by ([#133](https://github.com/AntelopeJS/mysql/pull/133))
+- **update:** Narrow update stages with UpdatesByFunction ([#138](https://github.com/AntelopeJS/mysql/pull/138))
+- **deps:** Depend on the stable @antelopejs/interface-database
+
+### 📖 Documentation
+
+- **skills:** Name only tools this repo has in the formal skills ([#130](https://github.com/AntelopeJS/mysql/pull/130))
+
+### 🏡 Chore
+
+- **deps:** Update dependency @antelopejs/api to v1.7.8 ([#132](https://github.com/AntelopeJS/mysql/pull/132))
+- **deps:** Update dependency oxlint-tsgolint to v7.0.2008 ([#135](https://github.com/AntelopeJS/mysql/pull/135))
+- **deps:** Update dependency @testcontainers/mysql to v12.2.2 ([#134](https://github.com/AntelopeJS/mysql/pull/134))
+- **deps:** Update dependency fast-check to v4.11.0 ([#140](https://github.com/AntelopeJS/mysql/pull/140))
+- **deps:** Update dependency knip to v6.47.0 ([#141](https://github.com/AntelopeJS/mysql/pull/141))
+- **deps:** Update pnpm to v10.34.9 ([#142](https://github.com/AntelopeJS/mysql/pull/142))
+
+### 🤖 CI
+
+- Re-sync the AntelopeJS pack for the release app ([#128](https://github.com/AntelopeJS/mysql/pull/128))
+- Stop forwarding the retired RELEASE_GITHUB_TOKEN ([#129](https://github.com/AntelopeJS/mysql/pull/129))
+
+### ❤️ Contributors
+
+- Antony Rizzitelli
+
 ## v0.2.8
 
 [compare changes](https://github.com/AntelopeJS/mysql/compare/v0.2.7...v0.2.8)
