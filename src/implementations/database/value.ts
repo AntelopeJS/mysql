@@ -188,27 +188,12 @@ export function ParameterKey(id: QueryValue): string {
  * callback accepts whatever ids a `func` rebuilt from JSON may carry, which are bound by their text.
  * The body is an operand like any other, which is the type the operand already has.
  */
-function IsLambdaStage(value: QueryValue): value is RecordedFunction {
+export function IsLambdaStage(value: QueryValue): value is RecordedFunction {
   if (!IsOperandRecord(value) || value.stage !== FUNCTION_STAGE) {
     return false;
   }
   const args = value.args;
   return IsList(args) && IsList(args[PARAMETER_IDS]);
-}
-
-function IsNumberId(id: QueryValue): id is number {
-  return typeof id === "number";
-}
-
-/**
- * Whether an operand is a lambda a caller recorded, for `update`, the one stage taking either a
- * lambda or a plain document. The parameter ids are read as well as the stage name, because they
- * are the half no caller's own document plausibly carries.
- */
-export function IsRecordedFunction(
-  value: QueryValue,
-): value is RecordedFunction {
-  return IsLambdaStage(value) && value.args[PARAMETER_IDS].every(IsNumberId);
 }
 
 /** The lambda a stage records as its argument at `index`, refused by name when it is anything else. */

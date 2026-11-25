@@ -9,13 +9,13 @@ import { JsonRowSource } from "./row-source";
 import { JsonOf, type KeyTypes } from "./types";
 import type { DecodingContext } from "./context";
 import { Render } from "./render";
-import { EXTRA_COLUMN, ID_COLUMN, INSTANCE_COLUMN } from "./utils";
+import { EXTRA_COLUMN, ID_COLUMN, INSTANCE_COLUMN, OptionsOf } from "./utils";
 import { type Compiled, QualifiedColumn } from "./sql";
 import { DeclaredColumns, DocumentKeys, type TableModel } from "./fields";
 import {
   DecodeValue,
   FUNCTION_BODY,
-  IsRecordedFunction,
+  RecordedLambda,
   type RecordedFunction,
   WithBoundArguments,
 } from "./value";
@@ -322,15 +322,29 @@ function MappedColumns(
   };
 }
 
+function IsFunctionUpdate(stage: QueryStage): boolean {
+  const by = OptionsOf(stage)?.by;
+  assert(
+    by === "function" || by === "document",
+    `The '${stage.stage}' stage records how it changes rows in options.by, received ${String(by)}`,
+  );
+  return by === "function";
+}
+
 /**
  * Changes the rows the read pipeline selected, one column per key the payload named. Allowed under
  * `CROSS_INSTANCE`, since `_instance` is never assigned and each row keeps its own instance.
  */
 export const UpdateWrite: WriteCompiler = (target, stage, context) => {
   const rows = TargetedRows(target, context.nextAlias());
-  const argument = StageOperand(stage, FIRST_OPERAND);
-  const changed = IsRecordedFunction(argument)
-    ? MappedColumns(target, stage, argument, context, rows)
+  const changed = IsFunctionUpdate(stage)
+    ? MappedColumns(
+        target,
+        stage,
+        RecordedLambda(stage, FIRST_OPERAND),
+        context,
+        rows,
+      )
     : ChangedColumnsOf(
         context.dialect,
         ChangedPayload(ChangedDocument(stage), target, context),
