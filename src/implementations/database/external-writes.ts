@@ -1,5 +1,9 @@
 import assert from "node:assert";
-import type { QueryStage } from "@antelopejs/interface-database/common";
+import {
+  IsQueryStage,
+  type QueryStage,
+  UpdatesByFunction,
+} from "@antelopejs/interface-database/common";
 
 import type { PoolConnection } from "mysql2/promise";
 
@@ -201,6 +205,10 @@ function UpdateOf(
 }
 
 function DocumentOf(stage: QueryStage): DocumentView {
+  assert(
+    !(IsQueryStage(stage, "update") && UpdatesByFunction(stage)),
+    `The '${stage.stage}' stage on an external relation takes a document, received a function; an expression mapper is not supported on external relations in this version`,
+  );
   const { document, kind } = ClassifyMember(StageOperand(stage, FIRST_OPERAND));
   assert(
     document,
