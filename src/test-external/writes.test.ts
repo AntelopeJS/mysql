@@ -239,6 +239,18 @@ describe("writing back what was read from an external relation", function () {
     expect(await Stored(id)).to.deep.equal(before);
   });
 
+  it("refuses a function update by name, not as a document with a stage field", async () => {
+    const failure = await Failure(async () => {
+      await Table("w_accounts")
+        .get("1")
+        .update((row) => ({ code: row.key("code") }))
+        .run();
+    });
+    expect(failure.message).to.contain(
+      "an expression mapper is not supported on external relations",
+    );
+  });
+
   it("writes the one field an edit changed and keeps every other stored value", async () => {
     const id = await Seeded("r2");
     const before = await Stored(id);
