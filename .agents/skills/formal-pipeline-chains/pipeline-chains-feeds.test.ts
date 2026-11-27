@@ -9,6 +9,7 @@ import {
   Delivered,
   Evaluate,
   type FeedEvent,
+  IdOf,
   type Stage,
   type Write,
 } from "./model";
@@ -58,10 +59,35 @@ async function Cleared(): Promise<void> {
 }
 
 /**
- * Waits until the feed is open. A feed opens when it is first read, and a write before that is not
- * delivered, so a document the chain passes is written until one is delivered, then deleted, and
- * its removal awaited however late a loaded host delivers it. With no such
- * document no write of the script is delivered either, and a pause is as good.
+ * Inserts the probe until the feed delivers an event, deleting it between attempts, each attempt
+ * waiting twice as long as the one before. Leaves the probe in the table.
+ */
+async function Probed(reader: Reader, probe: Doc): Promise<void> {
+  for (let attempt = 0; attempt < OPEN_ATTEMPTS; attempt += 1) {
+    await fixture.handles.items().insert(probe).run();
+    if (await reader.next(QUIET_MS * 2 ** attempt)) {
+      return;
+    }
+    await Cleared();
+  }
+  throw new Error(`the feed did not open within ${OPEN_ATTEMPTS} attempts`);
+}
+
+async function Delivery(reader: Reader): Promise<FeedEvent> {
+  const event = await reader.next(DELIVERY_MS);
+  if (!event) {
+    throw new Error(`the feed delivered no event of its open within ${DELIVERY_MS} ms`);
+  }
+  return event;
+}
+
+/**
+ * Waits until the feed is open and every event of the writes that opened it is read. A feed opens
+ * when it is first read, and a write before that is not delivered, so a document the chain passes
+ * is inserted until an event comes. Those writes only insert and delete, so an update of the probe
+ * fences them off: every event before its `modified` is theirs, and the reference names the
+ * events after it. With no such document no write of the script is delivered either, and a pause
+ * is as good.
  */
 async function Opened(reader: Reader, stages: readonly Stage[]): Promise<void> {
   const probe = Probe(stages);
@@ -69,17 +95,26 @@ async function Opened(reader: Reader, stages: readonly Stage[]): Promise<void> {
     await reader.drain(QUIET_MS);
     return;
   }
-  for (let attempt = 0; attempt < OPEN_ATTEMPTS; attempt += 1) {
-    await fixture.handles.items().insert(probe).run();
-    if (await reader.next(QUIET_MS)) {
-      await Cleared();
-      await reader.next(DELIVERY_MS);
-      await reader.drain(QUIET_MS);
-      return;
-    }
-    await Cleared();
+  await Probed(reader, probe);
+  const id = IdOf(probe);
+  const fence: Write[] = [
+    { kind: "update", id, changes: { slug: "s-fence" } },
+    { kind: "delete", id },
+  ];
+  for (const write of fence) {
+    await Written(write);
   }
-  throw new Error(`the feed did not open within ${OPEN_ATTEMPTS} attempts`);
+  const events = Delivered(stages, [{ kind: "insert", doc: probe }, ...fence], TABLES);
+  const marker = events.findIndex((event) => event.changeType === "modified");
+  if (marker < 0) {
+    throw new Error("the reference delivers no event for the update of the probe");
+  }
+  while ((await Delivery(reader)).changeType !== "modified") {
+    continue;
+  }
+  for (let left = events.length - marker - 1; left > 0; left -= 1) {
+    await Delivery(reader);
+  }
 }
 
 async function Written(write: Write): Promise<void> {
