@@ -30,7 +30,7 @@ The database interface pages document schemas, tables, queries, change feeds and
 This package requires Node.js `>=22`.
 <!-- antelopejs-docs-node:end -->
 
-The module supports the MySQL and MariaDB LTS releases that `images` pins in `scripts/test.sh`: `mysql:8.4`, `mysql:9.7`, `mariadb:11.8` and `mariadb:12.3`. `pnpm test` runs every suite on all four. It reads the server's version when it connects and picks the MySQL or the MariaDB dialect. [MariaDB](./docs/mariadb.md) lists every behaviour that differs between the two.
+The module supports the MySQL and MariaDB LTS releases that `images` pins in `scripts/test.sh`: `mysql:8.4`, `mysql:9.7`, `mariadb:11.8` and `mariadb:12.3`. `pnpm run test:images` runs every suite on all four. It reads the server's version when it connects and picks the MySQL or the MariaDB dialect. [MariaDB](./docs/mariadb.md) lists every behaviour that differs between the two.
 
 A server with binary logging on needs `binlog_format` set to `ROW` or `MIXED`, the defaults of MySQL and MariaDB. The module runs an owned update, delete or replace, an insert with a conflict mode, an external insert, and the numbering of a change feed's log at READ COMMITTED. InnoDB logs a write at that isolation only as rows, so a server at `binlog_format = STATEMENT` refuses each of them with errno 1665. A write refused this way, and a change feed that cannot number its log, fails with an error that names `binlog_format` and both formats it takes. Set the format with `SET GLOBAL binlog_format = 'ROW'` and in the server's configuration file, then restart the application: a connection keeps the format it opened with. A server with binary logging off needs no setting.
 
@@ -147,16 +147,16 @@ pnpm install
 pnpm lint
 pnpm format:check
 pnpm knip
-pnpm test:unit      # fast loop: this repository's unit specs, no Docker
-pnpm test           # everything, on MySQL 8.4 and 9.7 and MariaDB 11.8 and 12.3: owned, external and decorators suites
+pnpm test          # fast loop: this repository's unit specs, no Docker
+pnpm test:images   # everything, on MySQL 8.4 and 9.7 and MariaDB 11.8 and 12.3: owned, external and decorators suites
 ```
 
-`pnpm test` starts one server container per image with Docker, so it needs a Docker daemon. Set `MYSQL_TEST_IMAGES` to a space-separated list of images to test others. It tests two images at a time, since the change-feed tests measure how long a server takes; set `MYSQL_TEST_PARALLEL` to change that. Besides this repository's own tests, it runs the shared conformance suites of the interfaces listed in `antelopeJs.implements`, and the `@antelopejs/interface-database-decorators` suite through [`scripts/decorators.sh`](scripts/decorators.sh).
+`pnpm run test:images` starts one server container per image with Docker, so it needs a Docker daemon. Set `MYSQL_TEST_IMAGES` to a space-separated list of images to test others. It tests two images at a time, since the change-feed tests measure how long a server takes; set `MYSQL_TEST_PARALLEL` to change that. `ANTELOPEJS_CI_SHARD`, such as `2/4`, runs only every fourth image starting at the second, as each CI `Extra` leg does. Besides this repository's own tests, it runs the shared conformance suites of the interfaces listed in `antelopeJs.implements`, and the `@antelopejs/interface-database-decorators` suite through [`scripts/decorators.sh`](scripts/decorators.sh).
 
 To test against an existing server instead of a container, set `MYSQL_TEST_URL`. It must point to a disposable server, because the suites create and drop databases and the external suite creates and drops an account.
 
 ```bash
-MYSQL_TEST_URL=mysql://root:secret@localhost:3306/mysql pnpm test
+MYSQL_TEST_URL=mysql://root:secret@localhost:3306/mysql pnpm run test:images
 ```
 
 Read the [contribution guidelines](CONTRIBUTING.md) before opening a pull request.

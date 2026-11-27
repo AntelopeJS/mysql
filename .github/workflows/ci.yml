@@ -22,7 +22,11 @@ jobs:
         README.md
         docs
       renovate-sync: false
+      extra-commands-job: true
+      extra-commands-shards: 4
       extra-commands: |
+        pnpm run test:images
+        [ "${ANTELOPEJS_CI_SHARD%/*}" = 1 ] || exit 0
         node .agents/skills/formal-change-feed-delivery/check.mjs
         node .agents/skills/formal-mariadb-read-warnings/check.mjs
         node .agents/skills/formal-unique-index-gate/check.mjs
