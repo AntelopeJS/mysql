@@ -12,6 +12,7 @@ import { SessionOf } from "../implementations/database/locks";
 import { CountOpenCursors } from "../implementations/database/cursors";
 import { Schemas } from "../implementations/database/schema";
 import { Numbers, PhysicalTable, Reconnect, Run } from "./tables";
+import { TcpBufferBytes } from "./helpers/tcp-buffers";
 
 interface Item {
   _id: string;
@@ -76,7 +77,27 @@ async function Seeded(
  * this table holds about 48 MB.
  */
 function SeededPastSocketBuffers(schemaId: string): Promise<Schema<Tables>> {
-  return Seeded(schemaId, 16_000, 3000);
+  return Seeded(schemaId, 16_000, ROW_PADDING);
+}
+
+const ROW_PADDING = 3000;
+/** The two loopback hops of a published Docker port: client to proxy, proxy to server. */
+const LOOPBACK_HOPS = 2;
+const BUFFER_HEADROOM = 1.25;
+
+/**
+ * One schema over a table whose cursor keeps its statement running on the server for as long as
+ * it waits, on this host's buffer limits: runners raise them to 64 MB a side, which takes a result
+ * of about 256 MB before the server blocks on the socket.
+ */
+async function SeededPastHostSocketBuffers(
+  schemaId: string,
+): Promise<Schema<Tables>> {
+  const bytes = Math.max(
+    16_000 * ROW_PADDING,
+    BUFFER_HEADROOM * LOOPBACK_HOPS * TcpBufferBytes(),
+  );
+  return Seeded(schemaId, Math.ceil(bytes / ROW_PADDING), ROW_PADDING);
 }
 
 /** The options the live adapter runs with now, with `overrides` on top, connected again. */
@@ -226,7 +247,7 @@ describe("a DDL statement on a table with an open cursor", function () {
   it("waits while the cursor is open, and completes once the cursor is closed", async () => {
     const schemaId = "cursors_ddl_closed";
     const physical = PhysicalTable(schemaId, "items");
-    const items = (await SeededPastSocketBuffers(schemaId))
+    const items = (await SeededPastHostSocketBuffers(schemaId))
       .instance()
       .table("items");
     const cursor = items[Symbol.asyncIterator]();
@@ -253,7 +274,7 @@ describe("a DDL statement on a table with an open cursor", function () {
   it("waits while the cursor is open, and completes once the idle reclaim ends it", async () => {
     const schemaId = "cursors_ddl_reclaimed";
     const physical = PhysicalTable(schemaId, "items");
-    const items = (await SeededPastSocketBuffers(schemaId))
+    const items = (await SeededPastHostSocketBuffers(schemaId))
       .instance()
       .table("items");
     const cursor = items[Symbol.asyncIterator]();
