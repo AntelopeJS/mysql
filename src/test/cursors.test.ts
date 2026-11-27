@@ -43,6 +43,10 @@ const COMPLETES_WITHIN_MS = 15_000;
 const SAMPLE_EVERY = 2000;
 const STALL_MS = 1000;
 const POLL_MS = 20;
+const ROW_PADDING = 3000;
+/** The two loopback hops of a published Docker port: client to proxy, proxy to server. */
+const LOOPBACK_HOPS = 2;
+const BUFFER_HEADROOM = 1.25;
 
 setFlagsFromString("--expose-gc");
 
@@ -79,11 +83,6 @@ async function Seeded(
 function SeededPastSocketBuffers(schemaId: string): Promise<Schema<Tables>> {
   return Seeded(schemaId, 16_000, ROW_PADDING);
 }
-
-const ROW_PADDING = 3000;
-/** The two loopback hops of a published Docker port: client to proxy, proxy to server. */
-const LOOPBACK_HOPS = 2;
-const BUFFER_HEADROOM = 1.25;
 
 /**
  * One schema over a table whose cursor keeps its statement running on the server for as long as
