@@ -71,11 +71,6 @@ describe("a watched table an older process converges", function () {
   this.timeout(60_000);
   const schemaId = "feeds-rolling";
 
-  /**
-   * An older replica restarting in a rolling deploy registers the schema without `size`. Triggers
-   * planned from its declaration would log the table without the column, and the newer process's
-   * feed would deliver rows without the value it reads back.
-   */
   it("keeps logging the column a newer process declared", async () => {
     const wide = new Schema<{ rows: Row }>(schemaId, {
       rows: { fields: { label: "string", size: "number" }, indexes: {} },
@@ -101,11 +96,6 @@ describe("a watched table whose undeclared field becomes a column", function () 
   this.timeout(60_000);
   const schemaId = "feeds-backfill";
 
-  /**
-   * The backfill moves each stored `size` out of `_extra` into the new column. A backfill whose
-   * writes were logged would deliver one `modified` event per row, and the feed, which reads the
-   * table as it was declared when it opened, would show `size` gone from each new value.
-   */
   it("delivers nothing for the rows the backfill moved", async () => {
     const narrow = new Schema<{ items: Row }>(schemaId, {
       items: { fields: { name: "string" }, indexes: {} },

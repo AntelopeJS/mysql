@@ -1,11 +1,11 @@
+import type { VirtualClock } from "./clock";
+
 /**
  * The MySQL server the real code converges a schema on, reduced to what the unique-index gate
  * depends on: the catalog of a table, the DDL that changes it, named locks, sessions that die, and
  * the ways a statement fails. A statement it does not know stops the check, so an edit to the SQL
  * cannot pass unread.
  */
-import type { VirtualClock } from "./clock";
-
 export const DATABASE = "db";
 const DEFAULT_LOCK_WAIT_SECONDS = 50;
 const MS = 1000;

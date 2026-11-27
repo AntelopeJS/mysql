@@ -34,7 +34,6 @@ describe("probe, with a URL value made to be slow", function () {
   });
 
   for (const [option, value] of HOSTILE) {
-    /** Fails on a probe that lets a value reach work in `mysql2` that grows faster than the value. */
     it(`answers within the timeout with ${option.slice(0, 20)} set to ${value.length} characters`, async () => {
       const started = performance.now();
       const answer = await probe({
@@ -58,7 +57,6 @@ describe("probe, with a URL value made to be slow", function () {
     expect(answer.outcome).to.not.equal("signed-in");
   });
 
-  /** Fails on a probe that lets `mysql2` look an `ssl` profile up under a name every object inherits. */
   it("refuses an ssl profile named after a property every object inherits, and leaves Object.prototype alone", async () => {
     for (const value of ["__proto__", '"constructor"', "toString"]) {
       const answer = await probe({
@@ -104,7 +102,6 @@ describe("probe, with a URL that reads one way raw and another parsed", function
   this.timeout(TIMEOUT_MS * 5);
 
   for (const [disguise, query] of DISGUISED) {
-    /** Fails on a probe that checks the raw query rather than the query `mysql2` reads. */
     it(`refuses ${disguise} before connecting`, async () => {
       const server = await SilentServer();
       try {

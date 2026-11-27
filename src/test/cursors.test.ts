@@ -174,12 +174,6 @@ describe("a cursor over a large result", function () {
     await Reconnect(restore);
   });
 
-  /**
-   * The server produces rows about as fast as a loop consumes them, so a loop that never waits
-   * would not tell a bounded buffer from an unbounded one. The consumer stalls for a second after
-   * the first row and after the middle one, long enough for a stream with no bound to take the
-   * whole result, which is what the control below measures.
-   */
   it("holds about one batch of it while 100000 rows are iterated, not the result", async () => {
     const base = Retained();
     let peak = 0;
@@ -306,11 +300,6 @@ describe("the cap on open cursors", function () {
     await Reconnect(restore);
   });
 
-  /**
-   * A cap that is only a count in the registry, and takes the connection anyway, would open the
-   * third cursor: it is refused before any connection is taken, which the statements the server
-   * is streaming show.
-   */
   it("refuses the cursor past maxOpenCursors, naming the setting, and serves the others", async () => {
     const first = items[Symbol.asyncIterator]();
     const second = items[Symbol.asyncIterator]();
@@ -369,11 +358,6 @@ describe("leaving a for-await early", function () {
     await Reconnect(restore);
   });
 
-  /**
-   * A cursor that kept its connection after `return()` would hold the only place `maxOpenCursors: 1`
-   * allows, so the second iteration would be refused, and the server would still show the
-   * statement streaming.
-   */
   it("releases the connection, so the next cursor opens and the statement is gone from the server", async () => {
     for (let round = 0; round < 5; round += 1) {
       for await (const row of items) {
@@ -420,10 +404,6 @@ describe("a cursor whose connection the server ends", function () {
     await Reconnect(restore);
   });
 
-  /**
-   * A read that waited on a stream its connection no longer feeds would never settle, and the
-   * cursor would hold the only place `maxOpenCursors: 1` allows for good.
-   */
   it("rejects the read that meets the lost connection, and frees its place under the cap", async () => {
     const cursor = items[Symbol.asyncIterator]();
     for (let row = 0; row < 10; row += 1) {

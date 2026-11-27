@@ -84,11 +84,6 @@ async function UntilAlterWaiting(waiting: boolean, what: string) {
   }
 }
 
-/**
- * Fails on a disconnect that ends the pool under a tables phase and keeps the failure for good, on
- * one that waits for a tables phase still queued behind another process's lock, and on a gate that
- * hands the first call after a reconnect a tables phase still running on the ended pool.
- */
 describe("a schema whose registration is still converging when the adapter reconnects", function () {
   this.timeout(60_000);
 

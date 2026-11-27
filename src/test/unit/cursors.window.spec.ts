@@ -68,16 +68,6 @@ describe("the cursor registry", () => {
     expect(CountOpenCursors()).to.equal(baseline);
   });
 
-  /**
-   * The forgotten range answers for a `reqId` the registry no longer holds, and for no other.
-   *
-   * A cursor is allocated its id when it is constructed and iterated whenever its consumer gets
-   * round to it, so a slow one's id sits inside a range that grew around it while it was reading.
-   * It is still live, still holding its connection, and the registry still has it, so the range is
-   * not the question being asked about it. Consulting the range first would end a cursor
-   * mid-iteration, one batch into a result the caller is still reading, and leave its connection
-   * checked out with nothing able to give it back.
-   */
   it("keeps serving a live cursor the forgotten range has grown around", async () => {
     const live = Recorder();
     const ended = Recorder();
@@ -96,16 +86,6 @@ describe("the cursor registry", () => {
     expect(CountOpenCursors()).to.equal(baseline);
   });
 
-  /**
-   * An open that failed ends its `reqId` without ever having held a connection, and is forgotten
-   * like any other ending.
-   *
-   * Nothing else can forget it. A state that ends while holding a connection is recorded when its
-   * source has closed, but a failed open has nothing to give back and reaches that point already
-   * empty-handed, so if the ending is not recorded where it happens the state stays resident for the
-   * life of the process, answering `done` over a query that never ran where a forgotten cursor is
-   * refused.
-   */
   it("refuses a reqId whose failed open it has forgotten, rather than answering done", async () => {
     const log = Recorder();
     const reqId = NextReqId();

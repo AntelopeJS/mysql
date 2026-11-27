@@ -65,7 +65,6 @@ describe("probe, against a server that asks for a local file", function () {
     ["the account's query", QUERY_COMMAND],
     ["the listing", EXECUTE_COMMAND],
   ] as const) {
-    /** Fails on a probe whose client streams a file of the probing host to the server. */
     it(`sends no local file the server asks for in answer to ${step}`, async () => {
       const sent: Buffer[] = [];
       const relay = await Relay(admin.hostname, Number(admin.port || 3306), {

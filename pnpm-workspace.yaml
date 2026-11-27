@@ -4,5 +4,6 @@ allowBuilds:
   lefthook: false
 overrides:
   "@antelopejs/postgres>@antelopejs/interface-database-catalog": ">=0.1.0 <0.2.0"
+minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
-  - "@antelopejs/interface-*"
+  - "@antelopejs/*"

@@ -12,7 +12,6 @@ function UrlOf(port: number): string {
 describe("probe, once its signal aborts", function () {
   this.timeout(TIMEOUT_MS * 5);
 
-  /** Fails on a probe that waits out its timeout, or keeps its socket, once the signal aborts. */
   it("answers at once and shuts its socket when the signal aborts", async () => {
     const server = await SilentServer();
     const controller = new AbortController();
@@ -33,7 +32,6 @@ describe("probe, once its signal aborts", function () {
     }
   });
 
-  /** Fails on a probe that opens a connection for a signal that has already aborted. */
   it("opens nothing for a signal that has already aborted", async () => {
     const server = await SilentServer();
     try {

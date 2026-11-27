@@ -1,12 +1,3 @@
-/**
- * Checks that the write gate of a schema never opens before its declared unique indexes exist, and
- * that a registration converges or refuses the writes it covers (see SKILL.md). Drives the real
- * `Schemas.register`, `WaitForUniqueIndexes`, `Connect` and `Disconnect` of `src/`, compiled with
- * this folder by `check.mjs`, over the fake driver and server of `driver.ts` and `server.ts`, on a
- * virtual clock. fast-check draws the scenarios, and each one runs once per placement of its events
- * among the server's statements. Exits 0 when every rule matches the record in SKILL.md, 1 when a
- * rule changed, and 2 when the check could not run.
- */
 import { parseArgs } from "node:util";
 import fc from "fast-check";
 import type { SchemaDefinition } from "@antelopejs/interface-database/schema";
@@ -18,6 +9,15 @@ import { installDriver } from "./driver";
 import { type Conditions, ModelError, MysqlServer } from "./server";
 import { type Declaration, type EventKind, type GateAnswer, RULES, type Run, type Scenario, scenarioArb, type Size } from "./rules";
 
+/**
+ * Checks that the write gate of a schema never opens before its declared unique indexes exist, and
+ * that a registration converges or refuses the writes it covers (see SKILL.md). Drives the real
+ * `Schemas.register`, `WaitForUniqueIndexes`, `Connect` and `Disconnect` of `src/`, compiled with
+ * this folder by `check.mjs`, over the fake driver and server of `driver.ts` and `server.ts`, on a
+ * virtual clock. fast-check draws the scenarios, and each one runs once per placement of its events
+ * among the server's statements. Exits 0 when every rule matches the record in SKILL.md, 1 when a
+ * rule changed, and 2 when the check could not run.
+ */
 const EXIT = { ok: 0, changed: 1, tool: 2 };
 const BOUNDS = {
   ci: { scenarios: 40, size: { events: 2 }, stride: 4 },

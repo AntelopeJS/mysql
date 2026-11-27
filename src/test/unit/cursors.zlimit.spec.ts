@@ -33,11 +33,6 @@ describe("the cursor registry's cap", () => {
   });
   GuardTheRegistry();
 
-  /**
-   * A registry with no cap, or one that checks the cap after it has opened, takes the pooled
-   * connection this refusal exists to leave free: the third cursor opens, which is what `opens`
-   * would show.
-   */
   it("refuses the cursor past maxOpenCursors, naming the setting, and opens nothing for it", async () => {
     const options = Room(2);
     const logs = [Recorder(), Recorder(), Recorder()];
@@ -65,10 +60,6 @@ describe("the cursor registry's cap", () => {
     expect(await Read(keptId, open, options)).to.deep.equal([4, 5, 6]);
   });
 
-  /**
-   * A registry that counted every state it remembers, rather than every state that holds a
-   * connection, would refuse here: the first cursor ended but is still remembered.
-   */
   it("admits a cursor again once one under the cap has ended", async () => {
     const options = Room(1);
     expect(
@@ -93,10 +84,6 @@ describe("the cursor registry's cap", () => {
     expect(log.opens).to.equal(1);
   });
 
-  /**
-   * Two first reads that arrive in the same turn both see the count below the cap, so a check that
-   * is separated from the claim by an await would let both open.
-   */
   it("lets exactly one of two racing first reads take the last place", async () => {
     const options = Room(1);
     const logs = [Recorder(), Recorder()];

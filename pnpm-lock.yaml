@@ -40,8 +40,8 @@ importers:
         specifier: '>=0.4.2 <0.5.0'
         version: 0.4.2
       '@antelopejs/tooling-configs':
-        specifier: '>=0.9.4 <0.10.0'
-        version: 0.9.4(knip@6.48.0)(oxfmt@0.77.0)(oxlint@1.81.0(oxlint-tsgolint@7.0.2008))
+        specifier: ^0.10.7
+        version: 0.10.7(knip@6.48.0)(oxfmt@0.77.0)(oxlint@1.81.0(oxlint-tsgolint@7.0.2008))
       '@testcontainers/mysql':
         specifier: ^12.2.1
         version: 12.2.2(bare-buffer@3.7.3)
@@ -147,8 +147,8 @@ packages:
     resolution: {integrity: sha512-oOdHK6PbEoBr2evXgn4+USg6EvKl1N3ggFhTKHWN8uti6smeYHH41WBEUlM2eMDSFZUh9+zuGafAkrzCs5o6bw==}
     engines: {node: '>=22'}
 
-  '@antelopejs/tooling-configs@0.9.4':
-    resolution: {integrity: sha512-cP2xhjJkxdwhaCRm3kDnZ4AS4GJ4LY7oDvd2MidYl2snFsW1UbUbCzhHcnrYQWifPZV8LCvO0xZMTvLM2OWDKQ==}
+  '@antelopejs/tooling-configs@0.10.7':
+    resolution: {integrity: sha512-13abD0BhsR9RF6LQoYYKa+XBknlmcrZVB6iW3BwdfHKu6pPG4ClhAQCLJSSPYtbTMuvNU4imI+dVFSB78TdTnQ==}
     engines: {node: '>=22.18.0'}
     hasBin: true
     peerDependencies:
@@ -3012,7 +3012,7 @@ snapshots:
     transitivePeerDependencies:
       - pg-native
 
-  '@antelopejs/tooling-configs@0.9.4(knip@6.48.0)(oxfmt@0.77.0)(oxlint@1.81.0(oxlint-tsgolint@7.0.2008))':
+  '@antelopejs/tooling-configs@0.10.7(knip@6.48.0)(oxfmt@0.77.0)(oxlint@1.81.0(oxlint-tsgolint@7.0.2008))':
     dependencies:
       '@oxlint/plugins': 1.94.0
       dts-bundle-generator: 9.5.1

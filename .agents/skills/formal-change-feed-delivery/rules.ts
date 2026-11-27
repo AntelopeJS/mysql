@@ -1,13 +1,14 @@
-/**
- * The scenarios the check draws and the rules it judges each run by. A scenario is the changes
- * that committed before it starts (`seeds`), then writers, sequencer ticks and reaper passes that
- * race one feed on the `shop.orders` table.
- */
 import fc from "fast-check";
 import type { ChangeOperation } from "../../../src/dialect";
 import type { Reaped } from "./innodb";
 
-/** Where a write lands: the feed's table and instance, another instance of it, or another table. */
+/**
+ * The scenarios the check draws and the rules it judges each run by. A scenario is the changes
+ * that committed before it starts (`seeds`), then writers, sequencer ticks and reaper passes that
+ * race one feed on the `shop.orders` table.
+ *
+ * Where a write lands: the feed's table and instance, another instance of it, or another table.
+ */
 export type Place = "feed" | "otherInstance" | "otherTable";
 
 export interface WriteSpec {

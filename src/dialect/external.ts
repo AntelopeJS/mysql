@@ -60,7 +60,6 @@ export interface CatalogIndex {
 /** The kinds of relation an engine lists, as the catalog interface names them. */
 export type ExternalRelationKind = "table" | "partitioned" | "view";
 
-/** One relation as a listing reads it: its kind, what the connected account may do, its estimate. */
 /** What the account may do with a relation, however the privileges reached it. */
 export interface RelationAccess {
   readonly schema: string;

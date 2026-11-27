@@ -129,16 +129,6 @@ async function Observed(
   }
 }
 
-/**
- * Every engine delivers the events of a feed over drawn stages as the reference does: the same
- * events in the order the writes committed, each with the old and new image the stages make of the
- * row, whether or not the filter lets that image through, and an `added` or `removed` event
- * with one image only.
- *
- * It fails on a feed whose second map reads the row the first one merged (unknown `ev.new_row`,
- * #75), and on one that delivers a null `oldValue` or `newValue` for an update that leaves or enters
- * the filter before two maps (#78).
- */
 describe("a change feed over a chain of stages on a real server", function () {
   this.timeout(1_800_000);
 

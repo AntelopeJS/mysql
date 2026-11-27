@@ -1,9 +1,3 @@
-/**
- * The statements of the change log, as `src/dialect/mysql/capture.ts` spells them, each turned
- * into one indivisible step on `InnoDb`, as one statement is on the server. A statement the table
- * does not know raises `ModelError`, so an edit to the SQL shows up as "could not run" until the
- * model learns it, never as a statement silently answered.
- */
 import type { Bound } from "../../../src/statement";
 import { IsString } from "../../../src/implementations/database/guards";
 import { type InnoDb, ModelError } from "./innodb";
@@ -28,6 +22,12 @@ import {
   unsequenced,
 } from "./steps";
 
+/**
+ * The statements of the change log, as `src/dialect/mysql/capture.ts` spells them, each turned
+ * into one indivisible step on `InnoDb`, as one statement is on the server. A statement the table
+ * does not know raises `ModelError`, so an edit to the SQL shows up as "could not run" until the
+ * model learns it, never as a statement silently answered.
+ */
 const LOG = "`__antelope_changes`";
 const CLOCK = "`__antelope_change_clock`";
 const REAPED = "`__antelope_change_reaped`";

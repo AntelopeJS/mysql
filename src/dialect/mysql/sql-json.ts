@@ -303,12 +303,16 @@ const WALK_COLUMNS = sql`COLUMNS (${ORDINAL} FOR ORDINALITY, ${VALUE} JSON PATH 
  * An object's keys and its member values come from the server's own order of the object, which is
  * the same for both, so a walk of each lines up element for element.
  */
-const WALK_ROWS: Record<WalkKind, (source: Sql) => Sql> = {
-  elements: (source) => sql`JSON_TABLE(${source}, '$[*]' ${WALK_COLUMNS})`,
-  keys: (source) =>
-    sql`JSON_TABLE(JSON_KEYS(${source}), '$[*]' ${WALK_COLUMNS})`,
-  members: (source) => sql`JSON_TABLE(${source}, '$.*' ${WALK_COLUMNS})`,
-};
+function WalkTable(kind: WalkKind, source: Sql): Sql {
+  switch (kind) {
+    case "elements":
+      return sql`JSON_TABLE(${source}, '$[*]' ${WALK_COLUMNS})`;
+    case "keys":
+      return sql`JSON_TABLE(JSON_KEYS(${source}), '$[*]' ${WALK_COLUMNS})`;
+    case "members":
+      return sql`JSON_TABLE(${source}, '$.*' ${WALK_COLUMNS})`;
+  }
+}
 
 /**
  * The rows of a walk as one FROM item. Where a subquery inside a table function's argument cannot
@@ -322,7 +326,7 @@ function WalkFrom(
   alias: string,
 ): Sql {
   if (flavour.outerInTableFunction) {
-    return WALK_ROWS[kind](source);
+    return WalkTable(kind, source);
   }
   const held: Held = {
     name: "source",
@@ -330,7 +334,7 @@ function WalkFrom(
     kind: "json",
   };
   const holder = `${alias}_s`;
-  const rows = WALK_ROWS[kind](HeldRead(flavour, holder, held));
+  const rows = WalkTable(kind, HeldRead(flavour, holder, held));
   return sql`(SELECT ${ORDINAL}, ${VALUE} FROM ${flavour.holdBare(held)} AS ${ident(holder)}, ${rows} AS ${ident(alias)})`;
 }
 
@@ -393,17 +397,17 @@ function KeyedMerge(leftSide: Sql, rightSide: Sql, alias: string): Sql {
   return sql`(SELECT COALESCE(JSON_OBJECTAGG(${name}, ${value}), ${EMPTY_OBJECT}) FROM ${names} WHERE ${kept})`;
 }
 
+/** What a split is written with: the flavour, to hold the text, and the members it builds the array with. */
+interface SplitSyntax extends Pick<JsonSyntax, "parse" | "of" | "collect"> {
+  readonly flavour: Flavour;
+}
+
 /**
  * The server has no split, so the text is counted for its separators and cut once for each piece
  * by `SUBSTRING_INDEX`, which matches in the binary collation like every other comparison here. A
  * row per piece comes from walking a list as long as the count. An empty separator occurs nowhere,
  * so the whole text is the one piece.
  */
-/** What a split is written with: the flavour, to hold the text, and the members it builds the array with. */
-interface SplitSyntax extends Pick<JsonSyntax, "parse" | "of" | "collect"> {
-  readonly flavour: Flavour;
-}
-
 function Split(
   json: SplitSyntax,
   text: Sql,

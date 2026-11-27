@@ -1,12 +1,3 @@
-/**
- * Checks that a MariaDB read never hands its caller a row the engine cut or nulled, and leaves no
- * warning behind on its connection (see SKILL.md). Drives the real `Read`, `Write` and
- * `OpenRowStream` of `src/`, compiled with this folder by `check.mjs`, over the fake driver and
- * MariaDB of `driver.ts` and `engine.ts`. fast-check draws the scenarios, and each one runs once
- * with no writer and then once per position of its writers among the engine's statements. Exits 0
- * when every rule matches the record in SKILL.md, 1 when a rule changed, and 2 when the check could
- * not run.
- */
 import { parseArgs } from "node:util";
 import fc from "fast-check";
 
@@ -18,6 +9,15 @@ import { installDriver } from "./driver";
 import { type Cell, type DocRow, MariaDb, ModelError, type Out, type Payload, tagOf } from "./engine";
 import { type Mutation, type Op, type Outcome, RULES, type Run, type Scenario, scenarioArb, type Size } from "./rules";
 
+/**
+ * Checks that a MariaDB read never hands its caller a row the engine cut or nulled, and leaves no
+ * warning behind on its connection (see SKILL.md). Drives the real `Read`, `Write` and
+ * `OpenRowStream` of `src/`, compiled with this folder by `check.mjs`, over the fake driver and
+ * MariaDB of `driver.ts` and `engine.ts`. fast-check draws the scenarios, and each one runs once
+ * with no writer and then once per position of its writers among the engine's statements. Exits 0
+ * when every rule matches the record in SKILL.md, 1 when a rule changed, and 2 when the check could
+ * not run.
+ */
 const EXIT = { ok: 0, changed: 1, tool: 2 };
 const BOUNDS = {
   ci: { scenarios: 150, size: { rows: 3, ops: 2, writers: 1 } },

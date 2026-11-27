@@ -1,9 +1,3 @@
-/**
- * The fake server the real code talks to: sessions that implement `ConvergenceSession` over
- * `InnoDb`, the writers whose transactions the capture triggers log, and the `FeedEnvironment` a
- * feed reads through. Every statement is one step of the schedule, but a step no other session can
- * observe runs at once.
- */
 import { Bind, type Sql } from "../../../src/statement";
 import type { Row } from "../../../src/connection";
 import { DIALECTS, type ChangeOperation } from "../../../src/dialect";
@@ -18,6 +12,12 @@ import { InnoDb, ModelError, POLLED, type Txn } from "./innodb";
 import { Parse } from "./statements";
 import { type Answer, type Op, type SessionState, TxnResources } from "./steps";
 
+/**
+ * The fake server the real code talks to: sessions that implement `ConvergenceSession` over
+ * `InnoDb`, the writers whose transactions the capture triggers log, and the `FeedEnvironment` a
+ * feed reads through. Every statement is one step of the schedule, but a step no other session can
+ * observe runs at once.
+ */
 export const SCHEMA_ID = "shop";
 export const TABLE_ID = "orders";
 export const FEED_INSTANCE = "default";

@@ -217,10 +217,6 @@ describe("planning a table's trigger swap", () => {
 });
 
 describe("installing a table's triggers for its first feed", () => {
-  /**
-   * A table no registration can create, so the install fails the same way with or without a live
-   * adapter in the process: there is no connection, or there is no such table.
-   */
   const absent: TablePlan = {
     ...Plan(ITEMS),
     schemaId: "__spec_absent",
@@ -284,7 +280,6 @@ describe("applying a table's trigger swap", () => {
     });
   }
 
-  /** A session that runs every statement except a trigger's creation, which fails with `failure`. */
   function Refusing(failure: Error, ran: string[]): ConvergenceSession {
     return {
       id: 1,

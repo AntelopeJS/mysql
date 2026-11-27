@@ -327,11 +327,6 @@ describe("eq on JSON numbers beyond the doubles", function () {
     ]);
   });
 
-  /**
-   * MariaDB's cast of such a number to a double warns that it truncated it, once for each row a
-   * read compares, so a read over enough rows raises more warnings than MariaDB lists and a cut
-   * aggregate or a too-deep document among them goes unseen.
-   */
   it("compares them without a warning", async () => {
     const overflows = () => schema.instance().table("overflows");
     const pairs = () => schema.instance().table("overflowPairs");
@@ -395,12 +390,6 @@ describe("eq on JSON numbers whose exponent passes a 64-bit integer", function (
     );
   });
 
-  /**
-   * MariaDB casts the first two to 0 and the next two to the greatest double, and the last keeps
-   * its text, so they make three values; a key that took `JSON_NORMALIZE`'s wrapped exponent for
-   * the number's would key the second as past the doubles, one that cast the next two would warn
-   * for each, and one that read the last one's exponent as a decimal would warn that it overflows.
-   */
   it("keys each as MariaDB's cast reads it, without a warning", async () => {
     const wrapped = () => schema.instance().table("wrapped");
     const held = await AcquireConnection();

@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { Query } from "@antelopejs/interface-database";
+import { IsQuery } from "@antelopejs/interface-database";
 import type { QueryStage } from "@antelopejs/interface-database/common";
 
 import type { Dialect } from "../../dialect";
@@ -237,7 +237,7 @@ function Materialize(side: UnionSide, type: SqlType) {
 function Concatenated(stage: QueryStage, context: DecodingContext): Relation {
   const other = StageOperand(stage, FIRST_OPERAND);
   assert(
-    other instanceof Query,
+    IsQuery(other),
     "The 'union' stage takes another query to concatenate",
   );
   return context.relation(other.build());

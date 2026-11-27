@@ -221,16 +221,6 @@ function KeyedBound(
   return key.rows === "set" ? sql`(${bound} OR ${key.absent})` : bound;
 }
 
-/**
- * Compares two operands already at their common type, through a key column where one holds an
- * operand.
- *
- * The key column's bound narrows the rows through its index, and the comparison of the values
- * themselves decides them: a prefix key holds a value's first characters only, a key `set` only
- * on some rows leaves the others to its NULL entries, and a test of the value itself is cheap on
- * the rows the index already chose. So an index never changes which rows match, only how fast they
- * are found.
- */
 /** The terms a value sorts by: a JSON value in the order JSON values compare in. */
 export function SortTerms(dialect: Dialect, value: Compiled): readonly Sql[] {
   return IsJsonBacked(value.type)

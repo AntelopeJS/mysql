@@ -209,10 +209,6 @@ describe("a change feed's events", () => {
     expect(event).to.have.nested.property("newValue._id", "b");
   });
 
-  /**
-   * A driver that hands over one event per read answers `first` alone; one that waits for a full
-   * `changeBatchSize` before answering never answers, since the poll scanned three.
-   */
   it("answers the events one poll admitted in a single read, in order", async () => {
     const { env } = Reader([
       {

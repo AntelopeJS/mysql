@@ -21,10 +21,6 @@ const schema = new Schema<{ rows: Doc }>("outer_row_mapped_key", {
 
 const Rows = () => schema.instance(INSTANCE).table("rows");
 
-/**
- * An engine that cannot read the outer row inside a table function's argument fails the walk of
- * the map's array with an unknown table; one that reads the wrong row sums the wrong members.
- */
 describe("a map over an array that reads the outer row by each element as a key", function () {
   this.timeout(60_000);
 

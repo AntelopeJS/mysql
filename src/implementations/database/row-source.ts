@@ -187,15 +187,22 @@ type TypedRead = Extract<
 >;
 
 /** The type each typed key column's read has. */
-const KEY_READ_TYPES: Record<TypedRead, SqlType> = {
-  text: TEXT,
-  string: TEXT,
-  double: FLOAT,
-  bool: BOOL,
-};
+function KeyReadType(read: TypedRead): SqlType {
+  switch (read) {
+    case "text":
+    case "string":
+      return TEXT;
+    case "double":
+      return FLOAT;
+    case "bool":
+      return BOOL;
+  }
+}
 
 function IsTypedRead(read: KeyColumn["read"]): read is TypedRead {
-  return Object.hasOwn(KEY_READ_TYPES, read);
+  return (
+    read === "text" || read === "string" || read === "double" || read === "bool"
+  );
 }
 
 /**
@@ -245,7 +252,7 @@ export class ColumnRowSource implements RowSource {
   private keyRead(read: TypedRead, value: Sql): Compiled {
     return {
       sql: this.dialect.sql.json.key(read, value),
-      type: KEY_READ_TYPES[read],
+      type: KeyReadType(read),
     };
   }
 

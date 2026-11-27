@@ -1,13 +1,13 @@
-/**
- * The steps the change log's statements become on `InnoDb`: what each one reads and changes, which
- * lock it waits on, and what it touches for the explorer. `statements.ts` maps the real SQL to them.
- */
 import type { SqlValue } from "../../../src/statement";
 import { IsString } from "../../../src/implementations/database/guards";
 import type { Row } from "../../../src/connection";
 import type { Footprint } from "./explore";
 import { type InnoDb, type LogRow, ModelError, NUMBERED, POLLED, type Txn, UNNUMBERED, type Version } from "./innodb";
 
+/**
+ * The steps the change log's statements become on `InnoDb`: what each one reads and changes, which
+ * lock it waits on, and what it touches for the explorer. `statements.ts` maps the real SQL to them.
+ */
 type Cell = string | number | null;
 
 /** What a step answered: its rows, the rows it matched, a note for the trace, and the statement's next step if it has one. */

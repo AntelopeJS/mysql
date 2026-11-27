@@ -141,10 +141,6 @@ describe("writes that contend for rows", function () {
     expect(await items().count().run()).to.equal(0);
   });
 
-  /**
-   * A filter after a slice reads the table in a block nested inside the write's own read. A block
-   * that read shared would leave every writer holding a shared lock that another waits to upgrade.
-   */
   it("applies every write through a target nested in the read, from writers ordering it either way", async () => {
     const outcomes = await Promise.allSettled(
       Array.from({ length: WRITERS }, (_, i) =>
@@ -190,11 +186,6 @@ describe("writes through a nested target over an indexed sort", function () {
 
   beforeEach(() => Seeded("sorted"));
 
-  /**
-   * With an index on the sort, the nested block reads the table in index order, ascending for one
-   * writer and descending for the next. A write that locked rows as that block reached them would
-   * deadlock past its retries.
-   */
   it("applies every write through a nested target over an indexed sort, from writers sorting it either way", async () => {
     const outcomes = await Promise.allSettled(
       Array.from({ length: WRITERS }, (_, i) =>
@@ -212,12 +203,6 @@ describe("writes through a nested target over an indexed sort", function () {
     expect(written).to.equal(NESTED_ROWS);
   });
 
-  /**
-   * Updaters select the first rows and deleters the last, each through a nested block that reads the
-   * whole table in index order, ascending for one writer and descending for the next, so they lock
-   * rows in opposite orders. A nested block that read its rows shared, or a deadlock run again at
-   * once or only a few times, would surface one.
-   */
   it("applies nested updates and deletes of different rows at once", async () => {
     const outcomes = await Promise.allSettled([
       ...Array.from({ length: WRITERS }, (_, i) =>
@@ -246,11 +231,6 @@ describe("writes through a nested target over an indexed sort", function () {
     expect(left).to.equal(0);
   });
 
-  /**
-   * Every writer selects the rows whose `g` is unset, and sets it. The first to hold them sets them,
-   * and every later one finds them gone from its selection once it holds them. A write that changed
-   * the rows a read selected before it locked them would set them again.
-   */
   it("writes no row that left a nested target while the write waited for it", async () => {
     const outcomes = await Promise.allSettled(
       Array.from({ length: WRITERS }, (_, i) =>
@@ -275,12 +255,6 @@ describe("writes through a nested target over an indexed sort", function () {
     expect(once).to.equal(NESTED_ROWS);
   });
 
-  /**
-   * Every writer claims the five lowest unclaimed rows, which other writers keep claiming first. A
-   * nested block that read the rows without locking them would select rows another writer holds and
-   * then finds claimed, or a write that locked its selection a fixed number of rounds would stop
-   * short, and either would answer fewer than five.
-   */
   it("claims as many rows as a queue taken one writer at a time, through a nested target", async () => {
     const outcomes = await Promise.allSettled(
       Array.from({ length: WRITERS }, () =>
@@ -307,11 +281,6 @@ describe("writes through a nested target over an indexed sort", function () {
     expect(claimed).to.equal(WRITERS * CLAIMED);
   });
 
-  /**
-   * `orderBy` and `slice` fold into the table's own block, so the write reads it in one block, in
-   * index order, ascending for one writer and descending for the next, and they lock rows in
-   * opposite orders. A deadlock run again at once, or only three times in all, would surface.
-   */
   it("applies every write through a sorted and sliced target, from writers sorting it either way", async () => {
     const outcomes = await Promise.allSettled(
       Array.from({ length: WRITERS }, (_, i) =>
@@ -334,12 +303,6 @@ describe("a write through a nested target of many rows", function () {
 
   beforeEach(() => Seeded("items", PAST_ONE_STATEMENT));
 
-  /**
-   * Each row is set to how many rows have no `g` yet, which is every row before the write. A write
-   * that changed the rows in several statements would give the rows of each later statement the
-   * count left after the earlier ones. MySQL refuses a write that reads the table it changes, and
-   * must refuse it through either target.
-   */
   it("writes what the same write through a flat target writes", async () => {
     const unset = () =>
       items()
@@ -375,11 +338,6 @@ const COMPUTED_ROUNDS = 5;
 describe("writes through a slice whose bound the query computes", function () {
   this.timeout(180_000);
 
-  /**
-   * A bound the query computes numbers the rows in a block of its own, which wraps the table's
-   * block. A numbering block that left out the table block's lock would read the rows shared, and
-   * writers sorting both ways would deadlock upgrading each other's shared locks past every retry.
-   */
   it("applies every write from twenty writers sorting the table either way", async () => {
     await Seeded("items", COMPUTED_ROWS);
     for (let round = 0; round < COMPUTED_ROUNDS; round += 1) {

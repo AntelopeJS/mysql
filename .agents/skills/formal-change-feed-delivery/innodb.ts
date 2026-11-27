@@ -1,3 +1,5 @@
+import type { ChangeOperation } from "../../../src/dialect";
+
 /**
  * The InnoDB state the change log lives in: the log, the clock and the reaped table, with READ
  * COMMITTED visibility and exclusive row locks. A transaction's changes stay pending on the rows it
@@ -5,10 +7,9 @@
  * a write of a row another transaction holds waits or skips it. Only what the change log's
  * statements need is modelled: no gap or next-key locks, since every statement of the log under READ
  * COMMITTED takes record locks only.
+ *
+ * A log row's columns that a statement changes after its insert.
  */
-import type { ChangeOperation } from "../../../src/dialect";
-
-/** A log row's columns that a statement changes after its insert. */
 export interface Version {
   readonly seq: bigint | null;
   readonly sequencedAt: number | null;

@@ -1,15 +1,16 @@
-/**
- * The driver the real code connects through: a `mysql2` pool whose connections are sessions of the
- * fake {@link MysqlServer}. `connection.ts` builds its pool with `createPool` from `mysql2/promise`,
- * so installing this replaces that one export.
- */
 import { EventEmitter } from "node:events";
 import { createRequire } from "node:module";
 
 import { IsDocument } from "../../../src/implementations/database/guards";
 import { LostConnection, ModelError, type MysqlServer, type Session } from "./server";
 
-/** The promise API's pooled connection over one server session. */
+/**
+ * The driver the real code connects through: a `mysql2` pool whose connections are sessions of the
+ * fake {@link MysqlServer}. `connection.ts` builds its pool with `createPool` from `mysql2/promise`,
+ * so installing this replaces that one export.
+ *
+ * The promise API's pooled connection over one server session.
+ */
 export class FakeConnection {
   readonly connection = new EventEmitter();
   readonly threadId: number;

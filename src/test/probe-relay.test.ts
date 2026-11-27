@@ -26,7 +26,6 @@ describe("probe, through a relay to a live server", function () {
   const host = admin.hostname;
   const port = Number(admin.port || 3306);
 
-  /** The module's own account, through a relay on `relayPort`. */
   function Through(relayPort: number): string {
     const url = new URL(admin);
     url.port = String(relayPort);
@@ -37,7 +36,6 @@ describe("probe, through a relay to a live server", function () {
     return probe({ url, timeoutMs: TIMEOUT_MS, signal: Unaborted() });
   }
 
-  /** Fails on a probe that answers a server error after the sign-in as a refused sign-in. */
   it("answers that it cannot list the relations when the server refuses the listing after the sign-in", async () => {
     const relay = await Relay(host, port, {
       answer: RefuseNthPrepare(
@@ -65,7 +63,6 @@ describe("probe, through a relay to a live server", function () {
     }
   });
 
-  /** Fails on a probe that leaves its connection open once it has answered, or shuts it before its goodbye goes out. */
   it("says goodbye and closes its connection once it has answered", async () => {
     const quits = CommandCounter(QUIT_COMMAND);
     const relay = await Relay(host, port, { answer: quits.answer });
@@ -79,7 +76,6 @@ describe("probe, through a relay to a live server", function () {
     }
   });
 
-  /** Fails on a probe that trusts `mysql2`'s `end` to have closed the socket. */
   it("answers, and shuts its socket, when the server ignores the goodbye", async () => {
     const relay = await Relay(host, port, {
       stall: Commands(QUIT_COMMAND),
@@ -94,7 +90,6 @@ describe("probe, through a relay to a live server", function () {
     }
   });
 
-  /** Fails on a probe that keeps what the server answered, or its socket, once the signal aborts. */
   it("answers aborted at once, and shuts its socket, when the signal aborts after the sign-in", async () => {
     const relay = await Relay(host, port, { stall: Commands(PREPARE_COMMAND) });
     const controller = new AbortController();

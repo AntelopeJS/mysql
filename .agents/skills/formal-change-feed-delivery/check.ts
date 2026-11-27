@@ -1,11 +1,3 @@
-/**
- * Checks that a change feed delivers every change committed after it opened, once and in per-row
- * order, or ends with a loss (see SKILL.md). Drives the real `ReadFeedEvents`, `Sequence` and
- * `ReapOnce` of `src/`, compiled with this folder by `check.mjs`, against the fake server of
- * `server.ts`. fast-check draws the scenarios and `explore.ts` runs each under every order of its
- * steps. Exits 0 when every rule matches the record in SKILL.md, 1 when a rule changed, and 2 when
- * the check could not run.
- */
 import { availableParallelism } from "node:os";
 import { parseArgs } from "node:util";
 import { isMainThread, parentPort } from "node:worker_threads";
@@ -34,6 +26,14 @@ import {
 } from "./server";
 import { type Counterexample, type Exploration, exploreShard, mergeResults, runShards, type ScenarioResult, type Shard } from "./shards";
 
+/**
+ * Checks that a change feed delivers every change committed after it opened, once and in per-row
+ * order, or ends with a loss (see SKILL.md). Drives the real `ReadFeedEvents`, `Sequence` and
+ * `ReapOnce` of `src/`, compiled with this folder by `check.mjs`, against the fake server of
+ * `server.ts`. fast-check draws the scenarios and `explore.ts` runs each under every order of its
+ * steps. Exits 0 when every rule matches the record in SKILL.md, 1 when a rule changed, and 2 when
+ * the check could not run.
+ */
 const EXIT = { ok: 0, changed: 1, tool: 2 };
 const BOUNDS = {
   ci: { scenarios: 100, orders: 20_000, size: { seeds: 1, writers: 2, writes: 1, ticks: 1, reapers: 1 } },

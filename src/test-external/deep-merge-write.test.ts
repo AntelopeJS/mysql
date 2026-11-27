@@ -44,7 +44,6 @@ describe("an external write filtered on a merge of a deep operand that spells a 
     await NativeWrite(CLEAR);
   });
 
-  /** Fails where the delete removes the rows it matched and then reports the refusal. */
   it("deletes the rows it matches, or fails as nested too deep and deletes none", async () => {
     const answer = await sales
       .instance()

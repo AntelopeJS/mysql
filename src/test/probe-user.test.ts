@@ -43,7 +43,6 @@ describe("probe, naming the account the server signed it in as", function () {
   );
   after(() => AsAdmin([`DROP DATABASE IF EXISTS ${DATABASE}`]));
 
-  /** Fails on a probe that answers the URL's user rather than the account the server reports. */
   it("answers the server's account, not the URL's user, when the server signs in another account", async () => {
     const anonymous = "''@'%'";
     try {
@@ -67,10 +66,6 @@ describe("probe, naming the account the server signed it in as", function () {
     }
   });
 
-  /**
-   * Fails on a probe that answers a sign-in over a local socket as the URL's credentials made it:
-   * the server signs in by the OS user of the process, whatever password the URL gives.
-   */
   it("answers the account a local socket signed in by the process's OS user, whatever password the URL gives", async function () {
     if (SOCKET === undefined) {
       this.skip();

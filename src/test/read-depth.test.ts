@@ -90,10 +90,6 @@ const batchedDepth = new Schema<{ rows: Row }>("read-depth-batched", {
 describe("a plain read that builds a document deeper than the server builds", function () {
   this.timeout(30_000);
 
-  /**
-   * MariaDB 11.8 answers SQL NULL with warning 4040 for such a document, so the read answered
-   * `null` as the row where MySQL fails it.
-   */
   it("fails with the engine's too-deep error, or answers the document where the server builds it", async () => {
     const inColumn = await DeepestInColumn();
     const rows = depth.instance().table("rows");
@@ -119,10 +115,6 @@ function Ones(rows: readonly ReadonlyMap<string, unknown>[]): number[] {
 describe("a table-less read after a too-deep read on the same connection", function () {
   this.timeout(30_000);
 
-  /**
-   * MariaDB 11.8 keeps the too-deep read's warning 4040 listed through every statement that reads
-   * no table, so a read that lists the warnings without clearing them fails the next one falsely.
-   */
   it("answers its rows on a held connection", async () => {
     const held = await AcquireConnection();
     try {
@@ -133,7 +125,6 @@ describe("a table-less read after a too-deep read on the same connection", funct
     }
   });
 
-  /** Fails where a pooled connection goes back to the pool still listing the warning. */
   it("answers its rows on pooled connections", async () => {
     for (let read = 0; read < 20; read += 1) {
       await Read(DEEP).catch(() => undefined);
@@ -163,16 +154,11 @@ describe("a cursor that builds a document deeper than the server builds", functi
       .map((row) => row.merge({ label: "merged" }));
   }
 
-  /**
-   * MariaDB 11.8 answers SQL NULL with warning 4040 for such a document, so the cursor answered
-   * `null` as the row where a plain read fails.
-   */
   it("fails with the engine's too-deep error, or answers the document where the server builds it", async () => {
     const expected = await Expected(inColumn);
     expect(await Answer(Iterated(Merged()))).to.deep.equal(expected);
   });
 
-  /** Fails where the cursor's connection goes back to the pool still listing the warning. */
   it("leaves its connection answering a table-less read", async () => {
     for (let read = 0; read < 20; read += 1) {
       await Iterated(Merged()).catch(() => undefined);
@@ -180,11 +166,6 @@ describe("a cursor that builds a document deeper than the server builds", functi
     }
   });
 
-  /**
-   * Fails where `close` pools the connection once its result ended, though no `next` read the end
-   * and listed the warning: a batch of one hands the row over in full, and the end arrives while
-   * the caller waits.
-   */
   it("leaves its connection answering a table-less read when closed after its last row", async () => {
     const restore = GetOptions();
     await Reconnect({ ...restore, cursorBatchSize: 1 });
@@ -222,10 +203,6 @@ describe("a cursor of batches of one over rows around a document deeper than the
       .run();
   });
 
-  /**
-   * MariaDB 11.8 answers SQL NULL with warning 4040 for the deepest row, so a cursor that lists the
-   * warnings only at its end hands `null` over in that row's place before it fails.
-   */
   it("hands over only rows it read whole before it fails with the engine's too-deep error", async () => {
     const merged = [
       { _id: "a", label: "merged", tree: Nested(1) },

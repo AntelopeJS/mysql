@@ -57,11 +57,6 @@ describe("a cursor's stream over a statement that raises many warnings", functio
     }
   });
 
-  /**
-   * Every row raises a truncation warning first, so MariaDB lists only the first 64 and not the
-   * 4040 of the last row; a cursor that read the warnings it lists as all it raised would hand
-   * the NULL over as the last row's value.
-   */
   it("hands over no row read wrong past the warnings MariaDB lists", async () => {
     const { seqs, nulls, failure } = await Drained(
       sql`SELECT s.seq AS seq, CAST(CONCAT(s.seq, 'x') AS INT) AS c, IF(s.seq = 100, JSON_EXTRACT(${param(TOO_DEEP)}, '$'), JSON_ARRAY()) AS j FROM seq_1_to_100 AS s ORDER BY s.seq`,
@@ -72,11 +67,6 @@ describe("a cursor's stream over a statement that raises many warnings", functio
     }).to.deep.equal({ nulls: 0, isAnswered: true });
   });
 
-  /**
-   * Every row raises a truncation warning first, more than the 64 MariaDB lists by default, so a
-   * session that kept that default would not list the 4040 of the last row and the read would
-   * answer the NULL as the last row's value.
-   */
   it("answers no read with a row read wrong past the warnings MariaDB lists", async () => {
     const answer = await Read(
       sql`SELECT s.seq AS seq, CAST(CONCAT(s.seq, 'x') AS INT) AS c, IF(s.seq = ${int(PAST_LISTED)}, JSON_EXTRACT(${param(TOO_DEEP)}, '$'), JSON_ARRAY()) AS j FROM seq_1_to_${int(PAST_LISTED)} AS s ORDER BY s.seq`,
@@ -90,10 +80,6 @@ describe("a cursor's stream over a statement that raises many warnings", functio
     expect(answer).to.deep.equal({ nulls: 0, isAnswered: true });
   });
 
-  /**
-   * Each row raises a truncation warning, more than the 64 MariaDB lists by default; a read that
-   * failed where its default list ran out would refuse rows it read whole.
-   */
   it("answers a read whose many warnings MariaDB lists", async () => {
     const rows = await Read(
       sql`SELECT s.seq AS seq, CAST(CONCAT(s.seq, 'x') AS INT) AS c, JSON_ARRAY() AS j FROM seq_1_to_1000 AS s ORDER BY s.seq`,
@@ -101,10 +87,6 @@ describe("a cursor's stream over a statement that raises many warnings", functio
     expect(rows.length).to.equal(1000);
   });
 
-  /**
-   * Each row raises a truncation warning, as many as MariaDB lists; a cursor that counted the
-   * check's own error among the warnings it cannot read would refuse rows a plain read answers.
-   */
   it("answers every row where MariaDB lists every warning its statement raised", async () => {
     const { seqs, failure } = await Drained(
       sql`SELECT s.seq AS seq, CAST(CONCAT(s.seq, 'x') AS INT) AS c, JSON_ARRAY() AS j FROM seq_1_to_64 AS s ORDER BY s.seq`,
@@ -115,10 +97,6 @@ describe("a cursor's stream over a statement that raises many warnings", functio
     });
   });
 
-  /**
-   * The read warns of a too-deep document, then runs past its timeout; a read that reported the
-   * listed warning in place of the server's error would hide the timeout.
-   */
   it("keeps the timeout of a read that warned of a too-deep document first", async () => {
     const held = await AcquireConnection();
     try {
@@ -138,11 +116,6 @@ describe("a cursor's stream over a statement that raises many warnings", functio
     }
   });
 
-  /**
-   * The statement streams as it is and fails at its 150th row after a warning on each row before;
-   * a cursor that read that failure as its check's would run it again, handing its first rows over
-   * twice, or report the warnings MariaDB does not list in its place.
-   */
   it("hands each row over once where its statement fails partway", async () => {
     const { seqs, failure } = await Drained(
       sql`SELECT s.seq AS seq, CAST(CONCAT(s.seq, 'x') AS INT) AS c, (SELECT 1 FROM seq_1_to_2 AS d WHERE s.seq >= 150) AS t FROM seq_1_to_200 AS s`,
@@ -199,11 +172,6 @@ describe("a cursor's stream over rows a write changes between its two runs", fun
     await Run(sql`DROP TABLE IF EXISTS ${ident(FLIPPED)}`);
   });
 
-  /**
-   * A first run that warns only of the fifth row's truncation runs again tolerating one warning;
-   * a second run that read the rows a write had flipped since would answer the too-deep NULL
-   * within that tolerance.
-   */
   it("hands over no row read wrong", async () => {
     let isDone = false;
     const flipping = Flipping(() => isDone);
@@ -279,10 +247,6 @@ describe("a checked cursor's stream read to its end and left open", function () 
   ];
 
   for (const [name, statement] of STATEMENTS) {
-    /**
-     * Fails where the cursor holds its tables' metadata locks after its result has ended, as a
-     * transaction it ends only when it closes does.
-     */
     it(`lets DDL run where its statement ${name}`, async () => {
       const source = await OpenRowStream(statement, BATCH);
       try {

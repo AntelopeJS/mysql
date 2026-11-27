@@ -25,7 +25,6 @@ function UrlOf(port: number, query = ""): string {
 describe("probe, against servers that never sign in", function () {
   this.timeout(TIMEOUT_MS * 5);
 
-  /** Fails on a probe that reads `ER_HOST_NOT_PRIVILEGED` as any other refusal. */
   it("answers a server that turns the client's host away as a refusal of the host", async () => {
     const server = await RefusingServer(HOST_NOT_PRIVILEGED, NOT_ALLOWED);
     try {
@@ -44,7 +43,6 @@ describe("probe, against servers that never sign in", function () {
     }
   });
 
-  /** Fails on a probe that answers a server error it has no refusal for as no server at all. */
   it("answers any other error the server refuses with as another refusal", async () => {
     const server = await RefusingServer(
       TOO_MANY_CONNECTIONS,
@@ -62,7 +60,6 @@ describe("probe, against servers that never sign in", function () {
     }
   });
 
-  /** Fails on a probe that connects to the URL's host and port when the URL names a socket path. */
   it("connects to the socket path the URL names, not to its host and port", async () => {
     const socketPath = LocalSocketPath();
     const server = await RefusingServer(
@@ -86,7 +83,6 @@ describe("probe, against servers that never sign in", function () {
     }
   });
 
-  /** Fails on a probe that rejects, or answers a refusal, when nothing listens. */
   it("answers a port nothing listens on as unreachable", async () => {
     const answer = await probe({
       url: UrlOf(await ClosedPort()),
@@ -96,7 +92,6 @@ describe("probe, against servers that never sign in", function () {
     expect(answer.outcome).to.equal("unreachable");
   });
 
-  /** Fails on a probe that answers a host of several addresses with an empty message. */
   it("answers a port nothing listens on at localhost with what failed", async () => {
     const answer = await probe({
       url: `mysql://reader:secret@localhost:${await ClosedPort()}/shop`,
@@ -107,7 +102,6 @@ describe("probe, against servers that never sign in", function () {
     expect(answer).to.have.property("message").that.has.length.above(0);
   });
 
-  /** Fails on a probe that rejects on a URL the driver cannot read. */
   it("answers a URL the driver cannot read as unreachable, without rejecting", async () => {
     const answer = await probe({
       url: "mysql://[::1",
@@ -117,7 +111,6 @@ describe("probe, against servers that never sign in", function () {
     expect(answer.outcome).to.equal("unreachable");
   });
 
-  /** Fails on a probe that leaves its connect unbounded, or its socket open, when a server never speaks. */
   it("answers a server that never speaks as unreachable within the timeout, and shuts its socket", async () => {
     const server = await SilentServer();
     try {
@@ -139,7 +132,6 @@ describe("probe, against servers that never sign in", function () {
 describe("probe, at socket paths nothing answers at", function () {
   this.timeout(TIMEOUT_MS * 5);
 
-  /** Fails on a probe whose answer tells whether a file exists at a socket path. */
   it("answers the same message for every socket path nothing answers at", async () => {
     const directory = await mkdtemp(
       path.join(os.tmpdir(), "ajs-mysql-probe-socket-"),

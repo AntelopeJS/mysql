@@ -1,8 +1,5 @@
 import { expect } from "chai";
-import {
-  DuplicateKeyError,
-  IsDuplicateKeyError,
-} from "@antelopejs/interface-database";
+import { IsDuplicateKeyError } from "@antelopejs/interface-database";
 import {
   Schema,
   type SchemaDefinition,
@@ -61,8 +58,7 @@ async function expectDuplicate(
 ): Promise<void> {
   const err = await Refusal(write);
   expect(IsDuplicateKeyError(err), String(err)).to.equal(true);
-  expect(err).to.be.instanceOf(DuplicateKeyError);
-  if (!(err instanceof DuplicateKeyError)) throw err;
+  if (!IsDuplicateKeyError(err)) throw err;
   expect(err.index).to.equal(index);
   expect(err.fields).to.deep.equal(fields);
 }

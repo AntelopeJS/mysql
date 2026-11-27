@@ -1,9 +1,3 @@
-/**
- * The driver the real code connects through: a `mysql2` pool whose connections are sessions of the
- * fake {@link MariaDb}. `connection.ts` builds its pool with `createPool` from `mysql2/promise`, so
- * installing this replaces that one export. A cursor's stream, which `row-stream.ts` takes from the
- * callback driver's pooled connection, is a `Readable` the engine fills as the driver does.
- */
 import { EventEmitter } from "node:events";
 import { createRequire } from "node:module";
 import { Readable } from "node:stream";
@@ -12,6 +6,12 @@ import { PoolConnection as CallbackPoolConnection } from "mysql2";
 import { IsDocument } from "../../../src/implementations/database/guards";
 import { type Answer, type MariaDb, ModelError, type Out, type Session } from "./engine";
 
+/**
+ * The driver the real code connects through: a `mysql2` pool whose connections are sessions of the
+ * fake {@link MariaDb}. `connection.ts` builds its pool with `createPool` from `mysql2/promise`, so
+ * installing this replaces that one export. A cursor's stream, which `row-stream.ts` takes from the
+ * callback driver's pooled connection, is a `Readable` the engine fills as the driver does.
+ */
 interface StreamOptions {
   readonly highWaterMark: number;
 }

@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 /**
  * Builds the module and runs `dist/test/formal-json-value-identity.test.js` against a MySQL or MariaDB server, passing `--full`,
  * `--runs <n>` and `--seed <n>` on as `FORMAL_RUNS` and `FORMAL_SEED`. The server is
@@ -7,10 +11,6 @@
  * `BROKEN JsonValueIdentity` with the failing seed, the shortest scenario and what each side read when it
  * does not, and exits 2 when the check could not run.
  */
-import { spawnSync } from "node:child_process";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
 const TOOL_ERROR = 2;
 const FULL_RUNS = "2000";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");

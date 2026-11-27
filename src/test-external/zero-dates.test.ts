@@ -61,10 +61,6 @@ describe("a zero date, or one with a zero month, in an external table", function
     ]);
   });
 
-  /**
-   * The order is the column's own, which its index serves: sorting a zero month or day with the
-   * absent values would sort by an expression, which no index on the column serves.
-   */
   it("sorts by its stored value: a zero date first, a zero month or day between the real dates around it", async () => {
     for (const field of ["d", "dt"]) {
       const up = (await Days().orderBy(field).run()).map((row) => row.id);

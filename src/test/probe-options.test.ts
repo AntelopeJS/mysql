@@ -134,7 +134,6 @@ describe("probe, with each option a URL's query may set", function () {
 
   after(() => relay.close());
 
-  /** Fails on a table row with no sample here, which would leave what the probe does with it unchecked. */
   it("has a sample for every option the probe sorts, of the kind its use allows", () => {
     for (const [option, use] of URL_OPTIONS) {
       const sample = SAMPLES.get(option);
@@ -151,7 +150,6 @@ describe("probe, with each option a URL's query may set", function () {
         [option, [value, "refused before connecting"]] as const,
     ),
   ]) {
-    /** Fails on a probe that lets the option reach `mysql2` when it overrides or refuses it, or drops one it keeps. */
     it(`answers ${expected} with ${option}=${value}`, async () => {
       const before = relay.accepted();
       const answer = await Probe(`?${option}=${encodeURIComponent(value)}`);

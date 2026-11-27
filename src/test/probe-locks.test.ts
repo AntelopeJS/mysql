@@ -58,11 +58,6 @@ describe("probe, on a relation another session holds a lock on", function () {
   before(() => AsAdmin(SETUP));
   after(() => AsAdmin(TEARDOWN));
 
-  /**
-   * Fails on a probe that leaves the server waiting on a metadata lock after it has answered:
-   * MySQL notices a closed client only once the wait ends, which `lock_wait_timeout` puts a year
-   * away by default.
-   */
   it("answers within the timeout and leaves no session of its own waiting on the server", async () => {
     const holder = await createConnection(admin.toString());
     const alterer = await createConnection(admin.toString());
