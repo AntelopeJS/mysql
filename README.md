@@ -130,7 +130,7 @@ This repository documents what is specific to the MySQL backend:
 
 | Package                                  | Supported        | Tested with |
 | ---------------------------------------- | ---------------- | ----------- |
-| `@antelopejs/interface-core`             | `>=0.5.1 <0.6.0` | `0.5.1`     |
+| `@antelopejs/interface-core`             | `>=0.5.1 <0.6.0` | `0.5.4`     |
 | `@antelopejs/interface-database`         | `>=0.4.4 <0.5.0` | `0.4.4`     |
 | `@antelopejs/interface-database-catalog` | `>=0.1.1 <0.2.0` | `0.1.1`     |
 
