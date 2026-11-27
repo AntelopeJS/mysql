@@ -44,10 +44,6 @@ describe("the ways a change feed ends", () => {
     expect(message).to.contain(`${SCHEMA_ID}.${TABLE_ID}`);
   });
 
-  /**
-   * A driver that leaves the state of a failed open live opens the feed again on the next read, and
-   * keeps the state in its registry with no ending to evict it by.
-   */
   it("releases a feed whose open rejected, so a later read answers an empty batch without opening again", async () => {
     const { env } = Reader([{}]);
     let opens = 0;

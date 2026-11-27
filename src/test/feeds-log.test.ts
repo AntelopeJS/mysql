@@ -37,10 +37,6 @@ async function RunText(statement: string): Promise<void> {
 describe("a change log dropped and created again", function () {
   this.timeout(30_000);
 
-  /**
-   * The events written before the drop went with the log. A clock that kept its epoch across the
-   * new log would let the feed read on from its watermark and skip them without a signal.
-   */
   it("ends an open feed with the loss instead of skipping what it had not read", async () => {
     const rows = logged.instance().table("rows");
     const feed = await Opened(rows, "probe");
@@ -60,7 +56,6 @@ describe("a change log dropped and created again", function () {
     }
   });
 
-  /** A dump or a schema copy writes the log's comment out, so a log created from it inherits that. */
   it("ends an open feed with the loss when the log is created again from its own definition", async () => {
     const rows = logged.instance().table("rows");
     const feed = await Opened(rows, "copied");
@@ -108,7 +103,6 @@ async function AnsweredAfter(probe: string, change: Sql): Promise<string> {
 describe("a change log emptied or altered under an open feed", function () {
   this.timeout(30_000);
 
-  /** `TRUNCATE` takes the rows the feed had not read and fires no trigger. */
   it("ends the feed with the loss when the log is truncated", async () => {
     const answer = await AnsweredAfter(
       "truncated",
@@ -119,7 +113,6 @@ describe("a change log emptied or altered under an open feed", function () {
     );
   });
 
-  /** An `ALTER` gives the log another creation time, which is all a recreated log shows either. */
   it("ends the feed with the loss when the log is altered", async () => {
     const answer = await AnsweredAfter(
       "altered",
@@ -130,7 +123,6 @@ describe("a change log emptied or altered under an open feed", function () {
     );
   });
 
-  /** A registration that took the altered log for a new one would end a feed that lost nothing. */
   it("keeps a feed opened after the log was altered and emptied open through a registration", async () => {
     await Pause(NEXT_SECOND_MS);
     await Run(

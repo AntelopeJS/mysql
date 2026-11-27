@@ -212,10 +212,6 @@ describe("a stage after an outer row's rows that outgrow an aggregate", function
   describe("through a cursor of batches of one over outer rows around the one that owns them", function () {
     InBatchesOfOne();
 
-    /**
-     * A cursor that lists the warnings only at its end hands the count read from the cut aggregate
-     * over before it fails, where every count it hands over is whole.
-     */
     for (const [name, rows, nested] of WALKS) {
       it(`${name}, handing over only whole counts`, async () => {
         const { rows: handed, failure } = await HandedOver(

@@ -76,7 +76,6 @@ function Unrotated(data: Buffer, scramble: Buffer): string {
 describe("probe, against a server that asks for credentials", function () {
   this.timeout(TIMEOUT_MS * 5);
 
-  /** Fails on a probe whose client takes a password, user or server from the probing process. */
   it("signs in with what the URL carries, never with MYSQL_PWD, MYSQL_HOST or ~/.my.cnf", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "ajs-mysql-probe-home-"));
     let response: HandshakeResponse | undefined;
@@ -117,7 +116,6 @@ describe("probe, against a server that asks for credentials", function () {
     }
   });
 
-  /** Fails on a probe that lets a URL, or the server, turn on `mysql_clear_password` without TLS. */
   it("never sends the password in clear when the server switches to mysql_clear_password", async () => {
     let client: ClientLine | undefined;
     const server = await HandshakeServer(
@@ -140,7 +138,6 @@ describe("probe, against a server that asks for credentials", function () {
     }
   });
 
-  /** Fails on a probe whose client sends anything but the URL's password, sealed with the server's key. */
   it("sends caching_sha2_password only the URL's password, encrypted with the key the server sends", async () => {
     const keys = generateKeyPairSync("rsa", {
       modulusLength: 2048,

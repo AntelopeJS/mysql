@@ -108,10 +108,6 @@ describe("probe, against a live server", function () {
     expect(answer).to.have.property("latencyMs").that.is.above(0);
   });
 
-  /**
-   * Fails on a probe that answers no read access to an account that sees no relation, or that
-   * answers write access on a database with no relation by anything but the right to create tables.
-   */
   it("answers read access to an account that sees no relation, and write access only if it may create tables", async () => {
     for (const [user, canWrite] of [
       ["probe_reader", false],
@@ -132,7 +128,6 @@ describe("probe, against a live server", function () {
     expect(answer).to.include({ canRead: true, canWrite: true });
   });
 
-  /** Fails on a probe that counts only INSERT and UPDATE as writes, as the column privileges tell them. */
   it("answers write access without read access to an account that may only DELETE", async () => {
     const answer = await Probe(Url("probe_deleter"));
     expect(answer).to.include({
@@ -142,7 +137,6 @@ describe("probe, against a live server", function () {
     });
   });
 
-  /** Fails on a probe that counts INSERT or UPDATE on a relation the account cannot read. */
   it("answers no access to an account that may only INSERT or UPDATE", async () => {
     for (const user of ["probe_inserter", "probe_updater"]) {
       const answer = await Probe(Url(user));
@@ -150,7 +144,6 @@ describe("probe, against a live server", function () {
     }
   });
 
-  /** Fails on a probe that matches grantees by the account's name instead of the session's privileges. */
   it("answers read access to an account named with @ that reads through a role another role holds", async () => {
     const answer = await Probe(Url(ROLE_USER));
     expect(answer).to.include({
@@ -161,7 +154,6 @@ describe("probe, against a live server", function () {
     });
   });
 
-  /** Fails on a probe that counts a relation readable when SELECT covers some of its columns only. */
   it("answers no access to an account granted some columns only", async () => {
     const answer = await Probe(Url("probe_blind"));
     expect(answer).to.include({ canRead: false, canWrite: false });
@@ -173,7 +165,6 @@ describe("probe, against a live server", function () {
     expect(JSON.stringify(answer)).to.not.include(WRONG_SECRET);
   });
 
-  /** Fails on a probe that answers a URL without the password the account needs as a wrong password. */
   it("answers a URL that gives no password for an account that has one as a sign-in it requires", async () => {
     expect(await Probe(Url("probe_reader", ""))).to.include({
       outcome: "refused",

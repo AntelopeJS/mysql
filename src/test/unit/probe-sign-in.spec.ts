@@ -31,7 +31,6 @@ describe("probe, against a server that greets and asks for what the probe cannot
   this.timeout(TIMEOUT_MS * 5);
 
   for (const plugin of ["client_ed25519", "mysql_old_password"]) {
-    /** Fails on a probe that answers a server that answered as if none had. */
     it(`answers a switch to ${plugin}, which mysql2 lacks, as a refusal`, async () => {
       const server = await HandshakeServer(
         "mysql_native_password",
@@ -48,7 +47,6 @@ describe("probe, against a server that greets and asks for what the probe cannot
     });
   }
 
-  /** Fails on a probe that answers a server without the TLS the URL asks for as no server. */
   it("answers a server that offers no TLS to a URL that asks for it as a refusal", async () => {
     const server = await HandshakeServer(
       "mysql_native_password",
@@ -66,10 +64,6 @@ describe("probe, against a server that greets and asks for what the probe cannot
     }
   });
 
-  /**
-   * Fails on a probe whose process ends on what `mysql2` throws outside any promise: here it reads
-   * an error packet too short to hold its code while no command waits for an answer.
-   */
   it("answers a server that sends a truncated packet with its sign-in, and its caller keeps running", async () => {
     const server = await HandshakeServer(
       "mysql_native_password",
@@ -89,7 +83,6 @@ describe("probe, against a server that greets and asks for what the probe cannot
     }
   });
 
-  /** Fails on a probe that calls a connection lost after the greeting a refusal. */
   it("answers a server that drops the connection after its greeting as unreachable", async () => {
     const server = await HandshakeServer("mysql_native_password", () =>
       Promise.reject(new Error("drop the client")),
@@ -119,7 +112,6 @@ describe("probe, telling the server's answer from this host's failure", function
       "Server requests authentication using unknown plugin client_ed25519.",
     ],
   ] as const) {
-    /** Fails on a probe that answers a server that answered as if none had. */
     it(`answers ${code ?? message} after the greeting as a refusal`, () => {
       expect(Failed(Coded(code, message), true, "greeted")).to.include({
         outcome: "refused",
@@ -136,7 +128,6 @@ describe("probe, telling the server's answer from this host's failure", function
     ],
     ["ERR_INVALID_PACKAGE_CONFIG", "Cannot read package config"],
   ] as const) {
-    /** Fails on a probe that blames the server for a failure of the probing host. */
     it(`answers ${code} after the greeting as no answer, not a refusal`, () => {
       expect(Failed(Coded(code, message), true, "greeted").outcome).to.equal(
         "unreachable",

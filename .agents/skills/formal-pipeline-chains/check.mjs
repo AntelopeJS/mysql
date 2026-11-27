@@ -1,15 +1,15 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
+
 /**
  * Builds the module and compiles this folder into `dist/formal-pipeline-chains`, then runs the two
  * properties of this check through `ajs module test`, one after the other, against the server `MYSQL_TEST_URL` names or else a `MYSQL_TEST_IMAGE`
  * container the run starts. Prints nothing when both hold. Exits 0 when both hold, 1 when one is
  * broken (`BROKEN <property>`, then the counterexample), and 2 when the check could not run.
  */
-import { spawn } from "node:child_process";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { parseArgs } from "node:util";
-
 const TOOL_ERROR = 2;
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const tsc = path.join(root, "node_modules", "typescript", "bin", "tsc");

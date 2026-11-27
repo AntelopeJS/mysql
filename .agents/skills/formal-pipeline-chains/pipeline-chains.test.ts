@@ -37,17 +37,6 @@ function Compared(value: Json, nested: boolean, ordered: boolean): Json {
     : value;
 }
 
-/**
- * Every engine answers a chain of stages as an in-memory evaluator of the documented semantics
- * does: row for row, and in order wherever the chain's order is defined. The chains are drawn
- * over filter, merge, orderBy, slice, nth, group, lookup, union, pluck and without, alone and for
- * each owner of a nested query that reads its outer row.
- *
- * It fails on a compiler that reads the outer row through a derived table MariaDB cannot correlate
- * (unknown column `t0.take`, #4 and #9), that loses the order of the rows a stage wraps (#16, #28),
- * that cannot resolve a walk of a merged object on MySQL 8.4 (#60, #68) or that reads another
- * group's rows (#86).
- */
 describe("a chain of stages on a real server", function () {
   this.timeout(600_000);
 
@@ -76,11 +65,6 @@ describe("a chain of stages on a real server", function () {
     );
   });
 
-  /**
-   * `pluck` drops a member that holds a JSON null, so `{ k: null }` comes back as `{}` where `k`
-   * holds the key of a group with no kind, the label of no owner or a lookup that found none.
-   * `draw.ts` keeps `pluck` off a field that can hold a null until the module answers `{ k: null }`.
-   */
   it("keeps a member that holds a null in the document a pluck answers", async () => {
     await ExpectedFailure(async () => {
       const rows = await fixture.handles
@@ -96,11 +80,6 @@ describe("a chain of stages on a real server", function () {
     });
   });
 
-  /**
-   * On MariaDB 11.8 `nth` of an ordered, merged chain that filters on the outer owner answers `null`
-   * for every owner but the first; MySQL answers each owner's row. `draw.ts` draws no `nth` after a
-   * `merge` and a `filterOuter` until MariaDB answers it.
-   */
   it("takes the nth row of a merged chain that filters on the outer owner", async () => {
     if ((await EngineOf()) !== "mariadb") {
       return;

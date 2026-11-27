@@ -52,7 +52,6 @@ describe("probe, with TLS options that name local files", function () {
 
   after(() => rm(directory, { recursive: true, force: true }));
 
-  /** Fails on a probe whose client opens a path the URL's `ca` names, which `mysql2` passes to TLS as PEM text. */
   it("reads no file the URL's ssl ca names", async () => {
     const lines: ClientLine[] = [];
     const server = await TlsServer(lines);
@@ -70,7 +69,6 @@ describe("probe, with TLS options that name local files", function () {
     }
   });
 
-  /** Fails on a probe whose client reads a device a URL names, whose content never ends. */
   it("answers within the timeout when the URL's ssl ca or socketPath names a device", async () => {
     const server = await TlsServer([]);
     try {
@@ -90,7 +88,6 @@ describe("probe, with TLS options that name local files", function () {
     }
   });
 
-  /** Fails on a probe that signs in with a client certificate, a credential beside the URL's user and password. */
   it("refuses a URL whose ssl presents a client certificate, before connecting", async () => {
     const server = await TlsServer([]);
     try {

@@ -19,10 +19,6 @@ describe("a feed open while its table is declared again", function () {
     await Schemas.register(SCHEMA_ID, UNDECLARED);
   });
 
-  /**
-   * Declaring `size` moves its values out of `_extra` into a column of its own. A feed that kept
-   * the declaration it opened with would read `_extra` alone, and lose `size` from every event.
-   */
   it("reads a field declared since it opened from its column", async () => {
     const rows = watched.instance().table("rows");
     const feed = await Opened(rows, "declared");
@@ -54,11 +50,6 @@ describe("a feed reading events logged before a field was declared", function ()
     await Schemas.register(LOGGED_ID, UNDECLARED);
   });
 
-  /**
-   * Both events are logged while `size` sits in `_extra`, and read once it is declared. A feed that
-   * read a declared field from its column alone would find no member for it, and drop `size` from
-   * every document of both events.
-   */
   it("keeps the field in those events' documents", async () => {
     const rows = logged.instance().table("rows");
     const feed = await Opened(rows, "logged");

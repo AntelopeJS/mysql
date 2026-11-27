@@ -77,10 +77,6 @@ describe("the cursor registry", () => {
     expect(CountOpenCursors()).to.equal(baseline);
   });
 
-  /**
-   * An opener that is not chained per `reqId` opens two streams, and one that hands both reads the
-   * same fetch answers `[1, 2, 3]` twice.
-   */
   it("answers two concurrent reads consecutive batches, over one open", async () => {
     const log = Recorder();
     const reqId = NextReqId();
@@ -196,11 +192,6 @@ describe("the cursor registry", () => {
     expect(log.statements).to.contain(`NEXT ${BATCH_SIZE}`);
   });
 
-  /**
-   * The statement reaches the source rendered, with its values still to bind, and the stream is
-   * told the batch size it must hold. A registry that opened the stream with the driver's default
-   * high-water mark would buffer 16 rows whatever `cursorBatchSize` says.
-   */
   it("opens the stream with the compiled statement and the configured batch size", async () => {
     const log = Recorder();
     const reqId = NextReqId();
@@ -217,14 +208,6 @@ describe("the cursor registry", () => {
 describe("the cursor registry", () => {
   GuardTheRegistry();
 
-  /**
-   * The one place this file asks the absolute question, because the sweep is the one global answer.
-   *
-   * Every other count is read against the baseline the spec started from, since these specs share
-   * their process with a live adapter. `CloseAllCursors` is the exception by contract: it is what
-   * runs before `pool.end()`, which does not resolve while any connection is checked out, so "none
-   * of ours" would be the wrong claim to make about it.
-   */
   it("closes every open cursor, and empties the registry", async () => {
     const first = Recorder();
     const second = Recorder();
@@ -346,15 +329,6 @@ describe("the cursor registry", () => {
     expect(log.closes).to.equal(1);
   });
 
-  /**
-   * `SettleBeforeDisconnect` is handed a probe in place of `EndPool`, so no pool is ever ended.
-   *
-   * That substitution is the whole reason this spec can exist here: the real teardown would take
-   * the adapter this process shares with the conformance suites down with it, while the probe runs
-   * at exactly the instant `pool.end()` would and reads what it would have found. What it reads is
-   * absolute, because `pool.end()` does not resolve while any connection is checked out, so the
-   * property the before-disconnect wire has to deliver is that nothing at all is still out.
-   */
   it("hands every connection back before the pool is ended", async () => {
     const log = Recorder();
     const reqId = NextReqId();

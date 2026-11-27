@@ -1,8 +1,3 @@
-/**
- * The scenarios the check draws and the rules it judges each run by. A scenario is a table, a few
- * operations on it through the real read paths, and writers that commit between the engine's
- * statements.
- */
 import fc from "fast-check";
 
 import {
@@ -16,6 +11,11 @@ import {
   TOO_DEEP,
 } from "./engine";
 
+/**
+ * The scenarios the check draws and the rules it judges each run by. A scenario is a table, a few
+ * operations on it through the real read paths, and writers that commit between the engine's
+ * statements.
+ */
 export type Mutation =
   | { readonly kind: "set"; readonly index: number; readonly row: DocRow }
   | { readonly kind: "insert"; readonly row: DocRow }

@@ -515,10 +515,6 @@ describe("a merge operand that spells a key escaped and nests deep", function ()
   describe("through a cursor of batches of one", function () {
     InBatchesOfOne();
 
-    /**
-     * MariaDB 11.8 answers `{}` with warning 4040 for the merge it refuses, so a cursor that lists
-     * the warnings only at its end hands `{}` over in that row's place before it fails.
-     */
     it("hands over only merges it read whole before it fails such a merge as nested too deep on MariaDB 11.8", async () => {
       const rows = Renamed(
         [DEEP_ROWS[0], DEEP_ROWS[2], DEEP_TWICE_ROWS[0]],

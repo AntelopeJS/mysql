@@ -1,13 +1,14 @@
+import { Worker } from "node:worker_threads";
+
 /**
  * Splits the drawn scenarios across worker threads and merges what they report. Each thread is its
  * own isolate with its own feed registry and fake server, so scenarios never share state. The
  * merge reads the results in scenario order, stops after the first scenario that breaks a rule
  * outside the findings, and gives each rule the counterexample of the shortest trace, the lowest
  * scenario on a tie: the output is the same for any `--jobs`.
+ *
+ * A rule's counterexample: the length of its trace, and the run as the check prints it.
  */
-import { Worker } from "node:worker_threads";
-
-/** A rule's counterexample: the length of its trace, and the run as the check prints it. */
 export interface Counterexample {
   readonly length: number;
   readonly text: string;

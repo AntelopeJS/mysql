@@ -52,7 +52,6 @@ describe("probe, with values mysql2 uses only on a socket event", function () {
   const admin = new URL(GetOptions().url ?? "");
 
   for (const [option, value] of HOSTILE) {
-    /** Fails on a probe whose process ends on a URL value `mysql2` throws on outside the probe's promises. */
     it(`answers, and its process exits normally, with ${option}=${value}`, async () => {
       const url = new URL(admin);
       url.search = `?${option}=${encodeURIComponent(value)}`;
@@ -62,11 +61,6 @@ describe("probe, with values mysql2 uses only on a socket event", function () {
     });
   }
 
-  /**
-   * Fails on a probe that passes `connectAttributes` on: with TLS, `mysql2` writes the handshake
-   * response from the TLS connect callback, outside its own try/catch, and a number among the
-   * attributes ends the process there.
-   */
   it("answers a TLS URL with a numeric connect attribute as if it had none, and its process exits normally", async () => {
     const url = new URL(admin);
     url.search = `?ssl=${encodeURIComponent('{"rejectUnauthorized":false}')}&connectAttributes=${encodeURIComponent('{"x":1}')}`;
@@ -75,7 +69,6 @@ describe("probe, with values mysql2 uses only on a socket event", function () {
     expect(output).to.match(/"outcome":"signed-in"/);
   });
 
-  /** Fails on a probe that rejects when the host forbids the worker thread it runs the driver in. */
   it("answers, and its process exits normally, where the host forbids worker threads", async () => {
     const { code, output } = await ProbeInProcess(admin.toString(), [
       PERMISSION,

@@ -1,12 +1,12 @@
+import fc from "fast-check";
+
+import type { Conditions, Fault } from "./server";
+
 /**
  * The scenarios the check draws and the rules it judges each run by. A scenario is a server in some
  * state and with some faults, a registration, and events that happen between the server's
  * statements: a reconnect, a restart, another registration, a write that waits at the gate.
  */
-import fc from "fast-check";
-
-import type { Conditions, Fault } from "./server";
-
 export type Declaration = "unique" | "uniqueTwo";
 export type EventKind = "reconnect" | "restart" | "reregister" | "writer";
 

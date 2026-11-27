@@ -1,3 +1,4 @@
+
 /**
  * Runs a scenario under every order of its steps that differs in an outcome, depth first, with
  * dynamic partial-order reduction and sleep sets (Flanagan and Godefroid, POPL 2005). A step is
@@ -11,9 +12,9 @@
  * already ordered by the steps between them marks the earlier point for another order that runs
  * the later actor first, and an order that only swaps commuting steps is never run. An order is
  * the list of picks, so a failing order replays exactly.
+ *
+ * What a step reads and writes, by resource name.
  */
-
-/** What a step reads and writes, by resource name. */
 export interface Footprint {
   readonly reads: readonly string[];
   readonly writes: readonly string[];

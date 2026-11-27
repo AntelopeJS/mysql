@@ -34,10 +34,6 @@ describe("a cursor's stream closed before its first read", function () {
   this.timeout(30_000);
 
   for (const [name, statement] of STATEMENTS) {
-    /**
-     * Fails where `close` ends the connection while the driver still has the statement's execute
-     * to send, which it then writes on the ended socket and reports as a failed connection.
-     */
     it(`logs no failed connection where the statement ${name}`, async () => {
       const warnings = await Warned(async () => {
         const source = await OpenRowStream(statement, 10);

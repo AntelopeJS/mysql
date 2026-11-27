@@ -37,7 +37,6 @@ describe("A driver error", () => {
     ).to.deep.equal({ kind: "duplicate", key: "directory__people.title" });
   });
 
-  /** A classifier that read both as one kind would give a lock wait the deadlock's many quick tries. */
   it("reads a deadlock and a lock wait apart", () => {
     expect(classify(ServerError(1213, "Deadlock found"))).to.deep.equal({
       kind: "deadlock",
@@ -47,7 +46,6 @@ describe("A driver error", () => {
     ).to.deep.equal({ kind: "lockWait" });
   });
 
-  /** Fails where errno 1665 reads as any server error, which leaves the write's refusal unexplained. */
   it("reads a refusal of the statement-format binary log as its own kind", () => {
     expect(
       classify(
@@ -126,7 +124,6 @@ describe("A failed write", () => {
 });
 
 describe("An atomic mutation's outcome", () => {
-  /** Fails where the refusal drops the server's errno, which reads as a lost connection and answers "unknown". */
   it("rethrows the statement-format binary log's refusal, which did not apply", async () => {
     const refusal = new BinlogFormatRefusal(
       ServerError(1665, "Cannot execute statement"),

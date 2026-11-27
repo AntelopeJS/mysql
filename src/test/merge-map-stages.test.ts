@@ -19,11 +19,6 @@ const Plucked = () => Rows().orderBy("_id").pluck("_id", "n");
 const Sorted = (lists: readonly (readonly unknown[])[]) =>
   lists.map((list) => list.map(String).sort());
 
-/**
- * An engine that cannot resolve a walk of a merged object, or of the row a merge reads, fails with
- * an unknown table or column, as MySQL 8.4 and 9.7 did before walks held their source and as MySQL
- * 8.4 did while a hold read a bare outer column; one that walks the wrong row answers its members.
- */
 describe("a map stage that walks a merged object", function () {
   this.timeout(60_000);
 

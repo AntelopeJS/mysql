@@ -171,13 +171,20 @@ export function UnifyOperands(
 }
 
 /** The operator as seen from the other side, for a native column on the right. */
-const MIRRORED: Record<Ordering, Ordering> = {
-  "=": "=",
-  "<": ">",
-  "<=": ">=",
-  ">": "<",
-  ">=": "<=",
-};
+function Mirrored(operator: Ordering): Ordering {
+  switch (operator) {
+    case "=":
+      return "=";
+    case "<":
+      return ">";
+    case "<=":
+      return ">=";
+    case ">":
+      return "<";
+    case ">=":
+      return "<=";
+  }
+}
 
 function NativeSide(native: NativeOperand, type: SqlType): Compiled {
   return { sql: native.sql, type };
@@ -219,7 +226,7 @@ function NativePair(
     };
   }
   if (right.native && type.kind === right.type.kind) {
-    const mirrored = MIRRORED[operator];
+    const mirrored = Mirrored(operator);
     return {
       left: { sql: right.native.bind(pair.left.sql, mirrored), type },
       right: NativeSide(right.native, type),

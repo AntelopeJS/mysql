@@ -1,4 +1,10 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 /**
  * Compiles this folder with the `src/` it imports into a scratch folder and
  * runs `check.ts` there, passing the arguments through. The scratch folder
@@ -8,12 +14,6 @@
  * changed, 2 when the check could not run. SIGINT, SIGTERM and SIGHUP stop
  * the compile or the check and remove the scratch folder.
  */
-import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
 const TOOL_ERROR = 2;
 const skill = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(skill, "../../..");

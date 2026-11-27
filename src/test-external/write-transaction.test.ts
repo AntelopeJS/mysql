@@ -83,7 +83,6 @@ describe("an external write where the server logs statements", function () {
   this.timeout(60_000);
   WithGlobal("binlog_format", "STATEMENT");
 
-  /** Fails where the write runs at READ COMMITTED, which a statement-format binary log refuses. */
   it("updates and deletes as with any binary log format", async () => {
     const updated = await Accounts()
       .update({ raw: { k: "1" } })
@@ -92,7 +91,6 @@ describe("an external write where the server logs statements", function () {
     expect({ updated, deleted }).to.deep.equal({ updated: 1, deleted: 1 });
   });
 
-  /** Fails where the insert's refusal is the server's errno alone, which names no remedy. */
   it("refuses an insert with an error that names binlog_format and the formats it takes", async () => {
     const refusal = await sales
       .instance()
@@ -114,7 +112,6 @@ describe("an external update of a row another transaction holds", function () {
   this.timeout(60_000);
   WithGlobal("innodb_lock_wait_timeout", 1);
 
-  /** Fails where a lock wait timeout runs the write again before it is refused. */
   it("is refused after one lock wait", async () => {
     const holder = await createConnection(GetOptions().url);
     try {

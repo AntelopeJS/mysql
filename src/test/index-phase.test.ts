@@ -396,13 +396,6 @@ describe("index phases waiting for another process's builds", function () {
   });
 });
 
-/**
- * Fails on an index phase that a reconnect stops while it builds a unique index or waits for
- * another process's phase, and is then never run on the next pool, so the duplicate is stored; and
- * on a stop that opens the unique-index gate, so a write held there stores its duplicate on the pool
- * being ended while the disconnect still waits on another connection, such as a cursor's; and on a
- * phase that starts on that pool after the stop, fails there, and is then never run again.
- */
 describe("an index phase a reconnect stops", function () {
   this.timeout(60_000);
   const running = "index_phase_reconnect_running";

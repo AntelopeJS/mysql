@@ -183,10 +183,6 @@ describe("a cursor over rows sorted by texts longer than the sort reads", functi
 
   after(Unseed);
 
-  /**
-   * MariaDB warns that it sorted by the leading bytes only, which no read fails on, so a cursor
-   * that fails wherever its statement warned refuses rows a plain read answers.
-   */
   it("answers every row in order where its statement calls a JSON function", async () => {
     const { rows, failure } = await HandedOver(
       schema.instance(INSTANCE).table("longer").orderBy("name").pluck("_id"),

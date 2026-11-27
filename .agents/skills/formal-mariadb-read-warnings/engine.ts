@@ -1,10 +1,10 @@
+
 /**
  * The MariaDB 11.8 server the real code talks to, reduced to the one channel this check is about:
  * the warnings a statement raises and where they stay. Every rule of its behaviour below was read
  * off a real `mariadb:11.8` session (see SKILL.md, "What the model assumes"). A statement it does
  * not know stops the check, so an edit to the SQL cannot pass unread.
  */
-
 export const PACKET = 1000;
 /** A JSON function reaches the engine's nesting limit, and answers NULL with warning 4040, at this many containers. */
 export const NEST_REACHED = 32;

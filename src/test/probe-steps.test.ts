@@ -69,7 +69,6 @@ describe("probe, at each step of a live server", function () {
 
   for (const [step, command, nth] of STEPS) {
     for (const behaviour of ["stall", "cut"] as const) {
-      /** Fails on a probe that leaves a step unbounded, keeps its socket once no server answers, or calls a lost server a refusal. */
       it(`answers unreachable within the timeout, and shuts its socket at once, when the server ${behaviour === "stall" ? "stops answering" : "drops the connection"} at ${step}`, async () => {
         const relay = await Relay(host, port, {
           [behaviour]: NthCommand(command, nth),
@@ -91,7 +90,6 @@ describe("probe, at each step of a live server", function () {
     }
   }
 
-  /** Fails on a probe that reads a server that cannot take up a relation's check as an account without the privilege. */
   it("answers that it cannot list the relations when the server cannot take up a relation's check", async () => {
     const relay = await Relay(host, port, {
       answer: RefuseNthPrepare(
@@ -117,7 +115,6 @@ describe("probe, at each step of a live server", function () {
     }
   });
 
-  /** Fails on a probe whose latency counts more than one round trip of its first query. */
   it("answers the first query's single round trip as the latency", async () => {
     const relay = await Relay(host, port, { delayMs: DELAY_MS });
     try {

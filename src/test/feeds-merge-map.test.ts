@@ -7,11 +7,6 @@ const chained = new Schema<{ rows: Row }>("feeds-merge-map", {
   rows: { fields: { label: "string" }, indexes: {} },
 });
 
-/**
- * MariaDB 11.8 failed the feed's poll with an unknown `ev.new_row` in `JSON_TABLE` when a second
- * merge stage read the row the first one merged, and the feed retried it forever without
- * delivering; a feed that delivers the first stage's row alone answers without `o`.
- */
 describe("a change feed over two chained merge maps", function () {
   this.timeout(30_000);
 
@@ -46,11 +41,6 @@ describe("a change feed over two chained merge maps", function () {
     }
   });
 
-  /**
-   * The second merge wrapped the filtered side, so an update that took the row out of the filter
-   * left that side without a row and was delivered with a null `newValue`, and one that brought it
-   * back with a null `oldValue`.
-   */
   it("delivers both documents of updates that leave and re-enter the filter", async () => {
     const rows = chained.instance().table("rows");
     const feed = await OpenedOver(

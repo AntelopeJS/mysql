@@ -1,13 +1,14 @@
-import { Query, ValueProxy } from "@antelopejs/interface-database";
+import { IsQuery, IsValueProxy } from "@antelopejs/interface-database";
 import {
   IsQueryStage,
   type QueryRecord,
   type QueryStage,
   type QueryValue,
-  StagedObject,
+  type StagedObject,
 } from "@antelopejs/interface-database/common";
 
 import { IsBoolean, IsNumber, IsString } from "./guards";
+import { IsStagedObject } from "./staged-object";
 import type { ConstantJson } from "./sql";
 
 /**
@@ -116,7 +117,7 @@ function IsConstantJson(value: QueryValue): value is ConstantJson {
   }
   if (
     value === undefined ||
-    value instanceof StagedObject ||
+    IsStagedObject(value) ||
     value instanceof Date ||
     !IsRecordLiteral(value)
   ) {
@@ -165,13 +166,13 @@ export function ClassifyMember(value: QueryValue): Member {
   if (value === null) {
     return of("null");
   }
-  if (value instanceof ValueProxy) {
+  if (IsValueProxy(value)) {
     return { ...of("proxy"), value, identity: value };
   }
-  if (value instanceof Query) {
+  if (IsQuery(value)) {
     return { ...of("query"), value, identity: value };
   }
-  if (value instanceof StagedObject) {
+  if (IsStagedObject(value)) {
     return { ...of("staged"), value, identity: value };
   }
   if (value instanceof Date) {
@@ -208,7 +209,7 @@ export function IsOperandRecord(value: QueryValue): value is QueryRecord {
     value !== null &&
     value !== undefined &&
     !IsList(value) &&
-    !(value instanceof StagedObject) &&
+    !IsStagedObject(value) &&
     !(value instanceof Date) &&
     !IsString(value) &&
     !IsNumber(value) &&

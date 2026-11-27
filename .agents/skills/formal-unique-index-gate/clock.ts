@@ -1,12 +1,12 @@
+import { createRequire } from "node:module";
+
+import { IsDocument } from "../../../src/implementations/database/guards";
+
 /**
  * Virtual time. The convergence code pauses with `setTimeout` of `node:timers/promises` between
  * its attempts, for seconds and up to minutes; installing this replaces that one export, so the
  * check advances the clock to the next pause once nothing else can run.
  */
-import { createRequire } from "node:module";
-
-import { IsDocument } from "../../../src/implementations/database/guards";
-
 interface Timer {
   readonly at: number;
   readonly resolve: () => void;

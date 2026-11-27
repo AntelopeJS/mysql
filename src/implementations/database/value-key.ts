@@ -8,11 +8,16 @@ import { type KeyReference, QualifiedColumn, type ValueReference } from "./sql";
 type TypedRead = Extract<KeyColumn["read"], "string" | "double" | "bool">;
 
 /** The kind of value each typed read reads, which a value key holds under that kind's tag. */
-const READ_KINDS: Record<TypedRead, JsonKind> = {
-  string: "string",
-  double: "number",
-  bool: "boolean",
-};
+function ReadKind(read: TypedRead): JsonKind {
+  switch (read) {
+    case "string":
+      return "string";
+    case "double":
+      return "number";
+    case "bool":
+      return "boolean";
+  }
+}
 
 function SamePath(left: readonly string[], right: readonly string[]): boolean {
   return (
@@ -64,7 +69,7 @@ export function ValueKeyRead(
   read: TypedRead,
 ): KeyReference {
   const json = dialect.sql.json;
-  const rank = json.ranks[READ_KINDS[read]];
+  const rank = json.ranks[ReadKind(read)];
   const absent = sql`${reference.text} IS NULL`;
   if (read === "string") {
     return {

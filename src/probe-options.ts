@@ -126,7 +126,7 @@ function IsKept(option: string, value: string): boolean {
     return true;
   }
   if (IsString(read)) {
-    return !(read in Object.prototype);
+    return !Object.hasOwn(Object.prototype, read);
   }
   if (!IsObject(read) || Array.isArray(read)) {
     return false;

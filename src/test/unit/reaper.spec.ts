@@ -48,6 +48,13 @@ interface Answers {
   readonly fails?: string;
 }
 
+function Own<T>(
+  table: Partial<Record<string, T>> | undefined,
+  kind: string,
+): T | undefined {
+  return Object.entries(table ?? {}).find(([key]) => key === kind)?.[1];
+}
+
 function Rows(objects: readonly Record<string, Cell>[]): Row[] {
   return objects.map((object) => new Map(Object.entries(object)));
 }
@@ -78,7 +85,7 @@ function Recording(answers: Answers) {
     read: (statement) =>
       Promise.resolve().then(() => {
         const kind = Record(statement);
-        return Rows(Next(answers.rows?.[kind], kind, []));
+        return Rows(Next(Own(answers.rows, kind), kind, []));
       }),
     apply: (statement) =>
       Promise.resolve().then(() => {
@@ -88,7 +95,7 @@ function Recording(answers: Answers) {
     write: (statement) =>
       Promise.resolve().then(() => {
         const kind = Record(statement);
-        return Next(answers.counts?.[kind], kind, 0);
+        return Next(Own(answers.counts, kind), kind, 0);
       }),
   };
   return { session, kinds: () => asked.map((one) => one.kind), asked };

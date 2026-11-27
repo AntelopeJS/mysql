@@ -55,10 +55,6 @@ describe("probe, against a database of many relations", function () {
   before(() => AsAdmin(SETUP));
   after(() => AsAdmin(TEARDOWN));
 
-  /**
-   * Fails on a probe that confirms every relation readable before it answers. A read-only account
-   * is the one whose every relation the write check asks the server about.
-   */
   it("asks about each relation once for a read-only account, within the deadline of the DMS check", async () => {
     const prepares = CommandCounter(PREPARE_COMMAND);
     const relay = await Relay(admin.hostname, Number(admin.port || 3306), {

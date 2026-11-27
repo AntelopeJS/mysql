@@ -117,13 +117,6 @@ describe("a sequencer pass reading the log while one document is written twice",
     sequencer.release();
   });
 
-  /**
-   * The first write commits after the pass began scanning the log, and the second one, already
-   * waiting on the document's lock, commits on the server as soon as the first does, while the pass
-   * still reads past the backlog. A pass that judges each row as it reaches it skips the first one,
-   * still open when read, and numbers the second, so the feed delivers the document's second write
-   * before its first.
-   */
   it("numbers the first write before the second, though both commit while the pass reads", async () => {
     await Run(sql`START TRANSACTION`, writer);
     await Run(Relabel("first"), writer);

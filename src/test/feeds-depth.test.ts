@@ -173,11 +173,6 @@ describe("a watched table holding JSON as deep as the server stores it", functio
     }
   });
 
-  /**
-   * MariaDB's poll reads an image inside one more array, so a field 29 containers deep whose
-   * innermost one is empty, which `JSON_DEPTH` measures as deep as one 28 containers deep around a
-   * string, failed the poll as nested too deep, and the feed ended at a document it builds.
-   */
   it("delivers a field whose innermost object is empty, at each depth a document around it holds", async () => {
     const rows = deep.instance().table("hollows");
     const feed = await Opened(rows, "hollows");
@@ -212,11 +207,6 @@ describe("a change feed reaching a document deeper than the server builds", func
     depths = await Depths();
   });
 
-  /**
-   * A document around a field as deep as the server stores is one level deeper still. MySQL fails
-   * the poll that builds it and MariaDB 11.8 builds SQL NULL, so the feed either retried until the
-   * event was reaped or delivered a null document. MariaDB 12.3 builds it, and delivers it.
-   */
   it("ends at once, naming where it stopped, at a document deeper than the server builds", async () => {
     const rows = deep.instance().table("ending");
     const feed = await Opened(rows, "ending");
@@ -245,12 +235,6 @@ describe("a change feed reaching a document deeper than the server builds", func
     }
   });
 
-  /**
-   * `JSON_DEPTH` counts no level inside an empty container, so such a field as deep as the server
-   * stores measures a level short. A feed that judged depth by it read on: MySQL failed the poll of
-   * the whole batch, losing the event committed ahead of it, and MariaDB 11.8 delivered a null
-   * document.
-   */
   it("ends after the events before it at a field whose innermost object is empty, as deep as the server stores", async () => {
     const rows = deep.instance().table("hollowed");
     const feed = await Opened(rows, "hollowed");
@@ -280,11 +264,6 @@ describe("a change feed reaching a document deeper than the server builds", func
     }
   });
 
-  /**
-   * A `map` that wraps a field nests it deeper than the row does. MySQL fails the poll of the batch
-   * holding it, and a feed that ended on that failure lost the events committed ahead of it in the
-   * same batch. MariaDB builds it, since no function it passes through reads it, so only MySQL ends.
-   */
   it("delivers the events a map builds ahead of one it nests too deep", async () => {
     const rows = deep.instance().table("mapped");
     const wrapped = rows
@@ -325,11 +304,6 @@ describe("a change feed whose stages build a document deeper than the server bui
     depths = await Depths();
   });
 
-  /**
-   * A `pluck` that keeps a field as deep as the server stores, or a `without` that drops another,
-   * builds a document as deep as the row's. MariaDB 11.8 answers SQL NULL for it, with a warning
-   * rather than an error, and the feed delivered `null` as the document.
-   */
   it("ends, naming where it stopped, at a projection deeper than the server builds", async () => {
     const rows = deep.instance().table("plucks");
     const plucked = await OpenedOver(
@@ -369,10 +343,6 @@ describe("a change feed whose stages build a document deeper than the server bui
     }
   });
 
-  /**
-   * MariaDB held each operand of a `merge` inside one more array, so a row as deep as a document
-   * holds failed as nested too deep, and the feed ended at a merged document the server builds.
-   */
   it("delivers a map that merges into a row as deep as a document holds", async () => {
     const rows = deep.instance().table("merges");
     const merged = await OpenedOver(
@@ -405,11 +375,6 @@ describe("a change feed whose stages never build a deep row's document", functio
     depths = await Depths();
   });
 
-  /**
-   * A `pluck` that leaves the deep field out never builds it, and a `filter` the row fails never
-   * delivers its event. A feed that ended at every event holding a field as deep as the server
-   * stores, or that built the document of an event it does not deliver, ended at the row.
-   */
   it("reads past a row as deep as the server stores through stages that never build its document", async () => {
     const rows = deep.instance().table("projected");
     const plucked = await OpenedOver(

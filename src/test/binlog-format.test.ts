@@ -69,7 +69,6 @@ describe("an owned write or change feed where the server logs statements", funct
     }
   });
 
-  /** Fails where the refusal is the server's errno alone, which names no remedy. */
   it("is refused with an error that names binlog_format and the formats it takes", async () => {
     const err = await Refusal(
       Items().get("before").update({ name: "during" }).run(),
@@ -84,7 +83,6 @@ describe("an owned write or change feed where the server logs statements", funct
     }).to.deep.equal({ setting: true, remedy: true, errno: 1665 });
   });
 
-  /** Fails where the feed's numbering of its log fails with the server's errno alone. */
   it("refuses to open a change feed with an error that names binlog_format and the formats it takes", async () => {
     const feed = Items().changes().cursor();
     const err = await Refusal(feed.next());
