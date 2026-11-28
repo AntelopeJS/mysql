@@ -4,7 +4,7 @@ description: Reference for running the MySQL module on MariaDB 11.8 LTS and 12.3
 mode: reference
 ---
 
-The module runs on MariaDB 11.8 LTS and MariaDB 12.3 LTS as well as on the `mysql:8.4` and `mysql:9.7` images. `pnpm test` runs the owned, external and decorators suites on all four servers, and CI does the same. This page lists every behaviour that differs between the two engines. Anything it does not name behaves as the rest of the documentation describes.
+The module runs on MariaDB 11.8 LTS and MariaDB 12.3 LTS as well as on the `mysql:8.4` and `mysql:9.7` images. `pnpm test` runs the owned, external and decorators suites on all four servers, and CI does the same. This page lists each behaviour that differs between the two engines. Anything it does not name behaves as the rest of the documentation describes.
 
 ## Detection
 
