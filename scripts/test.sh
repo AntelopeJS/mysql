@@ -4,7 +4,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root" || exit 1
 images=${MYSQL_TEST_IMAGES:-mysql:8.4 mysql:9.7 mariadb:11.8 mariadb:12.3}
 parallel=${MYSQL_TEST_PARALLEL:-2}
-servers=${MYSQL_TEST_SERVERS:-3}
+servers=${MYSQL_TEST_SERVERS:-4}
 record=${MYSQL_TEST_TIMES:-}
 prefix=${MYSQL_TEST_CONTAINER_PREFIX:-ajs-mysql-test}
 password=antelopejs-test
