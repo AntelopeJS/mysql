@@ -94,7 +94,7 @@ run_unit() {
 }
 
 run_bin() {
-  local url=$1 label=$2 bin=$3 unit owned=() suites=() batch passing started
+  local url=$1 label=$2 bin=$3 b unit owned=() suites=() batch passing started
   while IFS=$'\t' read -r b unit; do
     [[ $b == "$bin" ]] || continue
     case "$unit" in
