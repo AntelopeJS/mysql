@@ -9,6 +9,26 @@ password=antelopejs-test
 suites=(owned external decorators chains)
 logs=$(mktemp -d "${TMPDIR:-/tmp}/ajs-mysql-test.XXXXXX")
 ajs="$root/node_modules/.bin/ajs"
+shard=${ANTELOPEJS_CI_SHARD:-1/1}
+if [[ ! $shard =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]] || ((BASH_REMATCH[1] > BASH_REMATCH[2])); then
+  echo "ANTELOPEJS_CI_SHARD must be <shard>/<count>, such as 2/4, not $shard" >&2
+  exit 2
+fi
+shard_index=$((BASH_REMATCH[1] - 1)) shard_count=${BASH_REMATCH[2]}
+read -ra all_images <<<"$images"
+images=""
+for i in "${!all_images[@]}"; do
+  ((i % shard_count == shard_index)) && images+="${all_images[i]} "
+done
+if [[ ${1:-} == --build ]]; then
+  if [[ -z ${MYSQL_TEST_URL:-} ]]; then
+    for image in $images; do
+      docker pull -q "$image" >/dev/null 2>&1 &
+    done
+  fi
+  pnpm run --silent build || exit 1
+  wait
+fi
 
 run_suite() {
   case "$2" in
@@ -20,9 +40,13 @@ run_suite() {
 }
 
 run_suites() {
-  local url=$1 label=$2 suite
+  local url=$1 label=$2 suite passing
   for suite in "${suites[@]}"; do
     run_suite "$url" "$suite" >"$logs/$label.$suite.log" 2>&1 || echo "$label.$suite" >>"$logs/failed"
+    if [[ -n ${GITHUB_ACTIONS:-} ]]; then
+      passing=$(grep -aoE '[0-9]+ passing' "$logs/$label.$suite.log" | awk '{ sum += $1 } END { print sum + 0 }')
+      echo "::notice title=Tests of shard $shard::$label $suite: $passing passing"
+    fi
   done
 }
 
@@ -75,7 +99,7 @@ trap 'finish 143' TERM
 trap 'finish 129' HUP
 
 if [[ -n "${MYSQL_TEST_URL:-}" ]]; then
-  run_suites "$MYSQL_TEST_URL" server
+  ((shard_index == 0)) && run_suites "$MYSQL_TEST_URL" server
   finish 0
 fi
 set -m

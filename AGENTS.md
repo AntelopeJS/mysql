@@ -21,7 +21,7 @@ pnpm run build
 MYSQL_TEST_URL=mysql://root:<password>@127.0.0.1:<port>/mysql pnpm exec ajs module test . -f dist/test/<file>.test.js
 ```
 
-Without `MYSQL_TEST_URL`, the run starts a `MYSQL_TEST_IMAGE` container, `mysql:8.4` by default. Prefix the command with `MYSQL_TEST_MODE=external` for a file of `dist/test-external/`. A change to SQL is proven on MySQL and on MariaDB. `pnpm test` runs every suite on four images in Docker, which is CI's job. `pnpm run test:unit` runs the unit specs with no server.
+Without `MYSQL_TEST_URL`, the run starts a `MYSQL_TEST_IMAGE` container, `mysql:8.4` by default. Prefix the command with `MYSQL_TEST_MODE=external` for a file of `dist/test-external/`. A change to SQL is proven on MySQL and on MariaDB. `pnpm run test:images` runs every suite on four images in Docker, which is CI's job, one image per `Extra` leg. `pnpm test` runs the unit specs only. `pnpm run test:unit` runs the unit specs with no server.
 
 <!-- antelopejs-guardrails:start -->
 <!-- Managed by @antelopejs/tooling-configs. `antelopejs-sync` rewrites everything between these markers; write repository-specific guidance outside them. -->
