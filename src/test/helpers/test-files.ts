@@ -43,14 +43,15 @@ function PackageRoot(name: string): string {
 /**
  * The `<unit>\t<file>` line `scripts/test.sh` deals a test file by, for a `file` named the way
  * `platform` names paths: a file directly under `dist/test` is a unit of its own, by its name, and
- * any other file belongs to the `rest` unit.
+ * any other file belongs to the `rest` unit. The line writes the file with `/` on every platform,
+ * the separator test.sh matches and Git Bash passes on to `ajs`.
  */
 export function UnitLine(file: string, platform: PlatformPath): string {
   const unit =
     platform.dirname(file) === platform.join("dist", "test")
       ? platform.basename(file)
       : "rest";
-  return `${unit}\t${file}`;
+  return `${unit}\t${file.split(platform.sep).join("/")}`;
 }
 
 /**
