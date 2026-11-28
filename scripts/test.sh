@@ -36,27 +36,10 @@ if [[ ${1:-} == --build ]]; then
   wait
 fi
 
-node -e '
-const fs = require("node:fs");
-const path = require("node:path");
-const pattern = /\.(test|spec)\.(js|ts)$/;
-const walk = (dir) =>
-  fs.existsSync(dir)
-    ? fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-        const file = path.join(dir, entry.name);
-        return entry.isDirectory() ? walk(file) : pattern.test(entry.name) ? [file] : [];
-      })
-    : [];
-for (const file of walk("dist/test")) {
-  console.log(`${path.dirname(file) === path.join("dist", "test") ? path.basename(file) : "rest"}\t${file}`);
-}
-for (const name of require("./package.json").antelopeJs?.implements ?? []) {
-  let dir = path.dirname(require.resolve(name, { paths: ["."] }));
-  while (!fs.existsSync(path.join(dir, "package.json"))) dir = path.dirname(dir);
-  for (const file of walk(path.join(dir, "dist", "tests"))) console.log(`rest\t${file}`);
-}
-' >"$logs/files" || exit 1
-if ! grep -q $'\t'dist/test/ "$logs/files"; then
+if [[ -f dist/test/helpers/test-files.js ]]; then
+  node dist/test/helpers/test-files.js >"$logs/files" || exit 1
+fi
+if ! grep -qs $'\t'dist/test/ "$logs/files"; then
   echo "no test files under dist/test; run pnpm run build first" >&2
   exit 1
 fi
