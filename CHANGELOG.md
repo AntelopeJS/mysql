@@ -1,5 +1,40 @@
 # Changelog
 
+## v0.2.10
+
+[compare changes](https://github.com/AntelopeJS/mysql/compare/v0.2.9...v0.2.10)
+
+### 🔥 Performance
+
+- **ci:** Run each database image's suites in its own Extra leg ([#154](https://github.com/AntelopeJS/mysql/pull/154))
+- **test:** Deal each image's test files over four servers, slowest first ([#157](https://github.com/AntelopeJS/mysql/pull/157))
+- **ci:** Shard the tests with test-shards, one image per Test leg ([#158](https://github.com/AntelopeJS/mysql/pull/158))
+
+### 🩹 Fixes
+
+- **test:** Hold the cursor test's table lock past the runner's socket buffers ([#151](https://github.com/AntelopeJS/mysql/pull/151))
+- **ci:** Run the Windows tests again and stream the cursor tests past the host's socket buffers ([#163](https://github.com/AntelopeJS/mysql/pull/163))
+
+### 📦 Build
+
+- **deps:** Update @antelopejs/tooling-configs to 0.10.12 and sync ([#160](https://github.com/AntelopeJS/mysql/pull/160))
+- **deps:** Update @antelopejs/tooling-configs to 0.10.14 and sync ([#164](https://github.com/AntelopeJS/mysql/pull/164))
+
+### 🏡 Chore
+
+- **deps:** Update dependency @antelopejs/api to v1.7.9 ([#143](https://github.com/AntelopeJS/mysql/pull/143))
+- **deps:** Update dependency knip to v6.48.0 ([#144](https://github.com/AntelopeJS/mysql/pull/144))
+- **deps:** Update tooling-configs to 0.10.7 and set the release age ([#145](https://github.com/AntelopeJS/mysql/pull/145))
+- **deps:** Update antelopejs tooling configs ([#136](https://github.com/AntelopeJS/mysql/pull/136))
+- **deps:** Land the open Renovate updates and fix the flaky feed chain test ([#150](https://github.com/AntelopeJS/mysql/pull/150))
+- **deps:** Update antelopejs packages ([#152](https://github.com/AntelopeJS/mysql/pull/152))
+- **deps:** Update dependency @types/node to ^22.20.5 ([#155](https://github.com/AntelopeJS/mysql/pull/155))
+- **deps:** Update dependency typescript to v7 ([#156](https://github.com/AntelopeJS/mysql/pull/156))
+
+### ❤️ Contributors
+
+- Antony Rizzitelli
+
 ## v0.2.9
 
 [compare changes](https://github.com/AntelopeJS/mysql/compare/v0.2.8...v0.2.9)
