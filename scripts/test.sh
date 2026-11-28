@@ -189,7 +189,7 @@ if [[ -n "${MYSQL_TEST_URL:-}" ]]; then
   if ((shard_index == 0)); then
     servers=1
     awk -F'\t' '{ print "1\t" $2 }' "$logs/plan" >"$logs/plan.one" && mv "$logs/plan.one" "$logs/plan"
-    run_bin "$MYSQL_TEST_URL" server 1
+    run_bin "$MYSQL_TEST_URL" url 1
   fi
   finish 0
 fi
