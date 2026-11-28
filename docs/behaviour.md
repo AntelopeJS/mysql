@@ -80,7 +80,7 @@ The message is `A group's stream is read in {where}, which MariaDB answers with 
 
 ## Atomic single-record mutations
 
-`table.atomicMutation(id, request)` implements the atomic contract of `@antelopejs/interface-database`, in the range that the README compatibility table lists. `pnpm run test:images` runs the interface's shared conformance suite against the `mysql:8.4` and `mysql:9.7` images, beside this module's own tests.
+`table.atomicMutation(id, request)` implements the atomic contract of `@antelopejs/interface-database`, in the range that the README compatibility table lists. `pnpm test` runs the interface's shared conformance suite against the `mysql:8.4` and `mysql:9.7` images, beside this module's own tests.
 
 The adapter puts the instance, the identity, and the revision or scalar equality condition in the `WHERE` clause of one `UPDATE` or `DELETE`, and reads the rows it matched: one is `applied`, none is `not-applied`. MySQL checks the condition against the row it locks, so a competing writer cannot slip between the test and the write. An error the server answered throws, since the statement did not apply. Any other failure, such as a lost connection or a lost acknowledgement after commit, returns `unknown`. Callers must reconcile an `unknown` outcome and must not treat it as a failed match.
 

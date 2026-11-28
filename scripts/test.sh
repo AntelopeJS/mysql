@@ -185,6 +185,9 @@ trap 'finish 130' INT
 trap 'finish 143' TERM
 trap 'finish 129' HUP
 
+if ((shard_index == 0)); then
+  "$root/node_modules/.bin/mocha" "dist/test/unit/**/*.spec.js" >"$logs/unit.log" 2>&1 || echo unit >>"$logs/failed"
+fi
 if [[ -n "${MYSQL_TEST_URL:-}" ]]; then
   if ((shard_index == 0)); then
     servers=1
