@@ -304,58 +304,102 @@ describe("a DDL statement on a table with an open cursor", function () {
   });
 });
 
-describe("the cap on open cursors", function () {
-  this.timeout(120_000);
-  const schemaId = "cursors_cap";
-  let restore: Options;
+describe("a cursor whose statement the server still streams", function () {
+  this.timeout(180_000);
+  const schemaId = "cursors_streaming";
   let items: ItemsTable;
 
   before(async () => {
-    restore = await Reconnected({ maxOpenCursors: 2, cursorBatchSize: BATCH });
-    items = (await SeededPastSocketBuffers(schemaId)).instance().table("items");
+    items = (await SeededPastHostSocketBuffers(schemaId))
+      .instance()
+      .table("items");
   });
 
-  after(async () => {
+  after(() => {
     Schemas.unregister(schemaId);
-    await Reconnect(restore);
   });
 
-  it("refuses the cursor past maxOpenCursors, naming the setting, and serves the others", async () => {
-    const first = items[Symbol.asyncIterator]();
-    const second = items[Symbol.asyncIterator]();
-    const third = items[Symbol.asyncIterator]();
-    expect((await first.next()).done).to.equal(false);
-    expect((await second.next()).done).to.equal(false);
-    let refusal = "";
-    try {
-      await third.next();
-    } catch (err) {
-      refusal = String(err);
-    }
-    expect(refusal).to.contain("maxOpenCursors");
-    expect(CountOpenCursors()).to.equal(2);
-    expect(
-      await StreamingStatements(PhysicalTable(schemaId, "items")),
-    ).to.equal(2);
-    expect((await first.next()).done).to.equal(false);
-    await first.return?.();
-    const later = items[Symbol.asyncIterator]();
-    expect((await later.next()).done).to.equal(false);
-    await later.return?.();
-    await second.return?.();
-    await third.return?.();
-    expect(CountOpenCursors()).to.equal(0);
+  describe("the cap on open cursors", () => {
+    let restore: Options;
+
+    before(async () => {
+      restore = await Reconnected({
+        maxOpenCursors: 2,
+        cursorBatchSize: BATCH,
+      });
+    });
+
+    after(async () => {
+      await Reconnect(restore);
+    });
+
+    it("refuses the cursor past maxOpenCursors, naming the setting, and serves the others", async () => {
+      const first = items[Symbol.asyncIterator]();
+      const second = items[Symbol.asyncIterator]();
+      const third = items[Symbol.asyncIterator]();
+      expect((await first.next()).done).to.equal(false);
+      expect((await second.next()).done).to.equal(false);
+      let refusal = "";
+      try {
+        await third.next();
+      } catch (err) {
+        refusal = String(err);
+      }
+      expect(refusal).to.contain("maxOpenCursors");
+      expect(CountOpenCursors()).to.equal(2);
+      expect(
+        await StreamingStatements(PhysicalTable(schemaId, "items")),
+      ).to.equal(2);
+      expect((await first.next()).done).to.equal(false);
+      await first.return?.();
+      const later = items[Symbol.asyncIterator]();
+      expect((await later.next()).done).to.equal(false);
+      await later.return?.();
+      await second.return?.();
+      await third.return?.();
+      expect(CountOpenCursors()).to.equal(0);
+    });
+
+    it("leaves the pool free for ordinary statements while the cap is reached", async () => {
+      const first = items[Symbol.asyncIterator]();
+      const second = items[Symbol.asyncIterator]();
+      await first.next();
+      await second.next();
+      const rows = await Read(sql`SELECT 1 AS one`);
+      expect(rows).to.have.length(1);
+      await first.return?.();
+      await second.return?.();
+    });
   });
 
-  it("leaves the pool free for ordinary statements while the cap is reached", async () => {
-    const first = items[Symbol.asyncIterator]();
-    const second = items[Symbol.asyncIterator]();
-    await first.next();
-    await second.next();
-    const rows = await Read(sql`SELECT 1 AS one`);
-    expect(rows).to.have.length(1);
-    await first.return?.();
-    await second.return?.();
+  describe("a cursor whose connection the server ends", () => {
+    let restore: Options;
+
+    before(async () => {
+      restore = await Reconnected({
+        maxOpenCursors: 1,
+        cursorBatchSize: BATCH,
+      });
+    });
+
+    after(async () => {
+      await Reconnect(restore);
+    });
+
+    it("rejects the read that meets the lost connection, and frees its place under the cap", async () => {
+      const cursor = items[Symbol.asyncIterator]();
+      for (let row = 0; row < 10; row += 1) {
+        expect((await cursor.next()).done).to.equal(false);
+      }
+      await KillStreaming(PhysicalTable(schemaId, "items"));
+      expect(await Ending(cursor, COMPLETES_WITHIN_MS)).to.match(/^rejected: /);
+      await cursor.return?.();
+      expect(CountOpenCursors()).to.equal(0);
+      for await (const row of items) {
+        expect(row.n).to.equal(0);
+        break;
+      }
+    });
   });
 });
 
@@ -400,38 +444,6 @@ describe("leaving a for-await early", function () {
       failure = String(err);
     }
     expect(failure).to.contain("stopped at 0");
-    expect(CountOpenCursors()).to.equal(0);
-    for await (const row of items) {
-      expect(row.n).to.equal(0);
-      break;
-    }
-  });
-});
-
-describe("a cursor whose connection the server ends", function () {
-  this.timeout(120_000);
-  const schemaId = "cursors_killed";
-  let restore: Options;
-  let items: ItemsTable;
-
-  before(async () => {
-    restore = await Reconnected({ maxOpenCursors: 1, cursorBatchSize: BATCH });
-    items = (await SeededPastSocketBuffers(schemaId)).instance().table("items");
-  });
-
-  after(async () => {
-    Schemas.unregister(schemaId);
-    await Reconnect(restore);
-  });
-
-  it("rejects the read that meets the lost connection, and frees its place under the cap", async () => {
-    const cursor = items[Symbol.asyncIterator]();
-    for (let row = 0; row < 10; row += 1) {
-      expect((await cursor.next()).done).to.equal(false);
-    }
-    await KillStreaming(PhysicalTable(schemaId, "items"));
-    expect(await Ending(cursor, COMPLETES_WITHIN_MS)).to.match(/^rejected: /);
-    await cursor.return?.();
     expect(CountOpenCursors()).to.equal(0);
     for await (const row of items) {
       expect(row.n).to.equal(0);
