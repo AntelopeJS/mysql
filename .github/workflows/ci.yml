@@ -9,6 +9,11 @@ on:
   schedule:
     - cron: "17 2 * * *"
   workflow_dispatch:
+    inputs:
+      nightly:
+        description: Run the nightly tier, with the Windows jobs and Stress
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -24,9 +29,6 @@ jobs:
       renovate-sync: false
       test-shards: 4
       extra-commands: |
-        node .agents/skills/formal-change-feed-delivery/check.mjs
-        node .agents/skills/formal-mariadb-read-warnings/check.mjs
-        node .agents/skills/formal-unique-index-gate/check.mjs
         pnpm run test:bench
       test-job: true
       setup-commands: |
@@ -51,6 +53,16 @@ jobs:
           echo "MYSQL_TEST_URL=mysql://root@127.0.0.1:3306/mysql" >> "$GITHUB_ENV"
         fi
       affected-tests: true
+      nightly: ${{ inputs.nightly == true }}
+      formal-checks: |
+        [
+          {"skill": "formal-change-feed-delivery", "paths": ["src/dialect/mysql/capture.ts", "src/implementations/database/change-loop.ts", "src/implementations/database/feed-poll.ts", "src/implementations/database/feeds.ts", "src/implementations/database/reaper.ts", "src/implementations/database/sequencer.ts"]},
+          {"skill": "formal-json-value-identity", "paths": ["src/dialect/mariadb/json-text.ts", "src/dialect/mariadb/numbers.ts", "src/dialect/mysql/flavour.ts", "src/dialect/mysql/sql-json-kinds.ts", "src/dialect/mysql/sql-json.ts", "src/implementations/database/grouped.ts", "src/implementations/database/join-key.ts", "src/implementations/database/ranked-key.ts", "src/implementations/database/stages-aggregate.ts", "src/implementations/database/stages-group.ts", "src/implementations/database/value-key.ts"]},
+          {"skill": "formal-mariadb-read-warnings", "paths": ["src/connection.ts", "src/dialect/mariadb/index.ts", "src/dialect/mysql/capture.ts", "src/dialect/mysql/checked-rows.ts", "src/implementations/database/row-stream.ts", "src/warnings.ts"]},
+          {"skill": "formal-merge-repeated-keys", "paths": ["src/dialect/mariadb/containers.ts", "src/dialect/mariadb/escaped-keys.ts", "src/dialect/mariadb/json-text.ts", "src/dialect/mysql/sql-last-members.ts", "src/implementations/database/member.ts", "src/implementations/database/paths.ts", "src/implementations/database/stages-object.ts"]},
+          {"skill": "formal-pipeline-chains"},
+          {"skill": "formal-unique-index-gate", "paths": ["src/connection.ts", "src/implementations/database/convergence.ts", "src/implementations/database/locks.ts", "src/implementations/database/migrate-indexes.ts", "src/implementations/database/migrate-tables.ts", "src/implementations/database/schema.ts", "src/implementations/database/unbuilt-unique.ts"]}
+        ]
     permissions:
       contents: read
   renovate-sync:
@@ -61,3 +73,19 @@ jobs:
       actions: write
       statuses: write
     uses: AntelopeJS/.github/.github/workflows/ci-renovate-sync.yml@v2
+  verdict:
+    needs: [ci, renovate-sync]
+    if: ${{ !cancelled() }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Fail when a job failed or was cancelled
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          failed=$(jq -r 'to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | "\(.key): \(.value.result)"' <<< "$NEEDS")
+          if [ -n "$failed" ]; then
+            echo "$failed"
+            exit 1
+          fi

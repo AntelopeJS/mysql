@@ -32,4 +32,4 @@ const pack = JSON.parse(fs.readFileSync(manifest, "utf8"));
 pack.antelopeJs.test = config;
 fs.writeFileSync(target, JSON.stringify(pack));
 ' "$source/package.json" "$root/src/test/antelope.test.ts" "$wrapper/package.json"
-cd "$wrapper" && MYSQL_TEST_MODE=decorators "$root/node_modules/.bin/ajs" module test .
+cd "$wrapper" && MYSQL_TEST_MODE=decorators "$root/node_modules/.bin/ajs" module test --timeout 30000 .

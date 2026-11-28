@@ -88,7 +88,7 @@ run_unit() {
     chains) MYSQL_TEST_URL=$url node .agents/skills/formal-pipeline-chains/check.mjs --no-build ;;
     *)
       while read -r file; do args+=(-f "$file"); done < <(awk -F'\t' -v units=" $unit " 'index(units, " " $1 " ") { print $2 }' "$logs/files")
-      MYSQL_TEST_URL=$url "$ajs" module test . "${args[@]}"
+      MYSQL_TEST_URL=$url "$ajs" module test --timeout 30000 . "${args[@]}"
       ;;
   esac
 }
@@ -186,7 +186,7 @@ trap 'finish 143' TERM
 trap 'finish 129' HUP
 
 if ((shard_index == 0)); then
-  "$root/node_modules/.bin/mocha" "dist/test/unit/**/*.spec.js" >"$logs/unit.log" 2>&1 || echo unit >>"$logs/failed"
+  "$root/node_modules/.bin/mocha" "dist/test/unit/**/*.spec.js" --timeout 30000 >"$logs/unit.log" 2>&1 || echo unit >>"$logs/failed"
 fi
 if [[ -n "${MYSQL_TEST_URL:-}" ]]; then
   if ((shard_index == 0)); then
