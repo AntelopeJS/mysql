@@ -380,6 +380,7 @@ describe("a cursor whose statement the server still streams", function () {
         maxOpenCursors: 1,
         cursorBatchSize: BATCH,
       });
+      await UntilNoneStreaming(PhysicalTable(schemaId, "items"));
     });
 
     after(async () => {
